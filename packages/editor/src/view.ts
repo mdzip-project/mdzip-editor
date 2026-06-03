@@ -61,7 +61,8 @@ const IMAGE_ICON_SVG = `<svg viewBox="0 0 20 20" aria-hidden="true" focusable="f
 type Layout = 'preview' | 'source' | 'split';
 
 export interface MdzipWorkspaceViewOptions {
-  onSaved?: (bytes: Uint8Array) => void;
+  onChanged?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
+  onSaved?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
   onFailed?: (error: unknown) => void;
 }
 
@@ -207,6 +208,7 @@ export class MdzipWorkspaceView {
   private cmEditor: EditorView | null = null;
   private readonly readOnlyCompartment = new Compartment();
   private updatingCm = false;
+  private syncing = false;
 
   private readonly elRoot: HTMLElement;
   private readonly elToolbar: HTMLElement;
@@ -288,8 +290,12 @@ export class MdzipWorkspaceView {
       this.layout = 'split';
       const snap = ws.snapshot();
       this.cmEditor = this.createCmEditor(this.elEditPane, snap.currentText, snap.mode);
-      this.unsub = ws.subscribe(() => this.render());
+      this.unsub = ws.subscribe(() => {
+        this.render();
+        void this.notifyChanged();
+      });
       this.render();
+      void this.notifyChanged();
     } catch (error) {
       this.options.onFailed?.(error);
     }
@@ -342,7 +348,15 @@ export class MdzipWorkspaceView {
       ],
     });
 
-    return new EditorView({ state, parent });
+    const editor = new EditorView({ state, parent });
+
+    // Attach scroll listener to sync with preview
+    const scroller = editor.dom.querySelector('.cm-scroller');
+    if (scroller) {
+      scroller.addEventListener('scroll', () => self.syncScrollToPreview());
+    }
+
+    return editor;
   }
 
   private render(): void {
@@ -592,6 +606,8 @@ export class MdzipWorkspaceView {
     this.elOrphanMenu.addEventListener('click', (e) => e.stopPropagation());
     this.elOrphanMenu.querySelector('[data-action="remove-orphan"]')!
       .addEventListener('click', () => { void this.removeOrphan(); });
+
+    this.elPreviewPane.addEventListener('scroll', () => this.syncScrollFromPreview());
   }
 
   private async openPath(path: string): Promise<void> {
@@ -613,10 +629,14 @@ export class MdzipWorkspaceView {
 
   private async save(): Promise<void> {
     try {
-      const bytes = await this.workspace?.saveToBytes();
+      const workspace = this.workspace;
+      if (!workspace) {
+        return;
+      }
+      const bytes = await workspace.saveToBytes();
       if (bytes) {
         this.render();
-        this.options.onSaved?.(bytes);
+        this.options.onSaved?.(bytes, workspace.snapshot());
       }
     } catch (error) {
       this.options.onFailed?.(error);
@@ -664,6 +684,17 @@ export class MdzipWorkspaceView {
     }
   }
 
+  private async notifyChanged(): Promise<void> {
+    if (!this.workspace || !this.options.onChanged) {
+      return;
+    }
+    try {
+      this.options.onChanged(await this.workspace.exportBytes(), this.workspace.snapshot());
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
   private setZoom(value: number): void {
     this.zoom = Math.max(0.5, Math.min(2.5, Math.round(value * 100) / 100));
     this.render();
@@ -696,6 +727,36 @@ export class MdzipWorkspaceView {
     } catch (error) {
       this.options.onFailed?.(error);
     }
+  }
+
+  private syncScrollFromPreview(): void {
+    if (this.syncing || !this.cmEditor || this.layout !== 'split') {
+      return;
+    }
+    this.syncing = true;
+    const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
+    const scrollRatio = previewHeight > 0 ? this.elPreviewPane.scrollTop / previewHeight : 0;
+    const cmScroller = this.cmEditor.dom.querySelector('.cm-scroller');
+    if (cmScroller) {
+      const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
+      cmScroller.scrollTop = scrollRatio * editorHeight;
+    }
+    this.syncing = false;
+  }
+
+  private syncScrollToPreview(): void {
+    if (this.syncing || !this.cmEditor || this.layout !== 'split') {
+      return;
+    }
+    this.syncing = true;
+    const cmScroller = this.cmEditor.dom.querySelector('.cm-scroller');
+    if (cmScroller) {
+      const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
+      const scrollRatio = editorHeight > 0 ? cmScroller.scrollTop / editorHeight : 0;
+      const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
+      this.elPreviewPane.scrollTop = scrollRatio * previewHeight;
+    }
+    this.syncing = false;
   }
 }
 
