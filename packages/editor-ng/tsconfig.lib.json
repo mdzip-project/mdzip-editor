@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../out-tsc/lib",
+    "declaration": true,
+    "declarationMap": true,
+    "inlineSources": true,
+    "paths": {
+      "@mdzip/editor": ["../editor/dist/index.d.ts"]
+    },
+    "types": []
+  },
+  "angularCompilerOptions": {
+    "strictTemplates": true
+  },
+  "exclude": ["**/*.spec.ts"],
+  "include": ["src/**/*.ts"]
+}

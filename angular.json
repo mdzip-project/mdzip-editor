@@ -1,0 +1,66 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "newProjectRoot": "packages",
+  "projects": {
+    "@mdzip/editor-ng": {
+      "projectType": "library",
+      "root": "packages/editor-ng",
+      "sourceRoot": "packages/editor-ng/src",
+      "prefix": "mdzip",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:ng-packagr",
+          "options": {
+            "project": "packages/editor-ng/ng-package.json",
+            "tsConfig": "packages/editor-ng/tsconfig.lib.json"
+          }
+        }
+      }
+    },
+    "demo": {
+      "projectType": "application",
+      "root": "demo",
+      "sourceRoot": "demo/src",
+      "prefix": "demo",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:application",
+          "options": {
+            "outputPath": "dist/demo",
+            "index": "demo/src/index.html",
+            "browser": "demo/src/main.ts",
+            "tsConfig": "demo/tsconfig.app.json",
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "demo/src/assets",
+                "output": "assets"
+              }
+            ],
+            "styles": ["demo/src/styles.css"]
+          },
+          "configurations": {
+            "production": {
+              "optimization": true,
+              "sourceMap": false,
+              "extractLicenses": true
+            },
+            "development": {
+              "optimization": false,
+              "sourceMap": true,
+              "extractLicenses": false
+            }
+          },
+          "defaultConfiguration": "development"
+        },
+        "serve": {
+          "builder": "@angular-devkit/build-angular:dev-server",
+          "options": {
+            "buildTarget": "demo:build:development"
+          }
+        }
+      }
+    }
+  }
+}

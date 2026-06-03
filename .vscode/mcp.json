@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "MDZip": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "c:\\Users\\KMW\\.vscode\\extensions\\mdzip-project.mdzip-vscode-0.1.112\\dist\\mdz-mcp-server.js"
+      ]
+    }
+  }
+}

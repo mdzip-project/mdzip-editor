@@ -1,0 +1,32 @@
+{
+  "name": "@mdzip/editor",
+  "version": "0.1.0",
+  "description": "Framework-independent MDZip workspace engine.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-markdown": "^6.3.2",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.37.2",
+    "@lezer/highlight": "^1.2.1",
+    "marked": "^15.0.12",
+    "mdzip-core-js": "^1.1.1"
+  }
+}

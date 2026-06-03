@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.angular/
+.vite/
+coverage/
+*.tgz
+*.log
+
+# Generated package outputs belong in dist/, not source directories.
+packages/editor/src/**/*.js
+packages/editor/src/**/*.d.ts
+packages/editor/src/**/*.map
