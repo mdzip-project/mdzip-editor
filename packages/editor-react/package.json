@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@mdzip/editor": "0.1.1"
+    "mdzip-editor": "0.1.1"
   },
   "peerDependencies": {
     "react": ">=18.0.0",

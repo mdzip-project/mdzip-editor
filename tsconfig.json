@@ -11,7 +11,7 @@
     "useDefineForClassFields": false,
     "lib": ["ES2022", "DOM"],
     "paths": {
-      "@mdzip/editor": ["./packages/editor/src/index.ts"],
+      "mdzip-editor": ["./packages/editor/src/index.ts"],
       "@mdzip/editor-ng": ["./packages/editor-ng/src/public-api.ts"]
     }
   },

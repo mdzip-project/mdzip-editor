@@ -1,5 +1,5 @@
 {
-  "name": "@mdzip/editor",
+  "name": "mdzip-editor",
   "version": "0.1.1",
   "description": "Framework-independent MDZip workspace engine.",
   "license": "Apache-2.0",

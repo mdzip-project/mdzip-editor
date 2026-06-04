@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { MdzipWorkspaceComponent } from '@mdzip/editor-ng';
-import type { MdzipWorkspaceMode, MdzipWorkspaceSave } from '@mdzip/editor';
+import type { MdzipWorkspaceMode, MdzipWorkspaceSave } from 'mdzip-editor';
 import type { TabController } from '../tab-controller.js';
 
 let _onSaved: (b: Uint8Array) => void = () => {};

@@ -1,6 +1,6 @@
 import { createApp, h } from 'vue';
 import { MdzipWorkspace } from '@mdzip/editor-vue';
-import type { MdzipWorkspaceSave } from '@mdzip/editor';
+import type { MdzipWorkspaceSave } from 'mdzip-editor';
 import type { TabController } from '../tab-controller.js';
 
 export function initVue(

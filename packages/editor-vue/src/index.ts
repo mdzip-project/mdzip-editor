@@ -1,11 +1,11 @@
 import { defineComponent, h, onMounted, onUnmounted, ref, watch, type PropType } from 'vue';
-import { MdzipWorkspaceView } from '@mdzip/editor';
+import { MdzipWorkspaceView } from 'mdzip-editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipWorkspaceLayout,
   MdzipWorkspaceMode,
-} from '@mdzip/editor';
+} from 'mdzip-editor';
 
 export const MdzipWorkspace = defineComponent({
   name: 'MdzipWorkspace',

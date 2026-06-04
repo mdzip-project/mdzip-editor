@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { MdzipWorkspaceView } from '@mdzip/editor';
+import { MdzipWorkspaceView } from 'mdzip-editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
@@ -7,7 +7,7 @@ import type {
   MdzipWorkspaceLayout,
   MdzipWorkspaceMode,
   MdzipWorkspaceSave,
-} from '@mdzip/editor';
+} from 'mdzip-editor';
 
 export interface MdzipWorkspaceProps {
   bytes?: Uint8Array | null;

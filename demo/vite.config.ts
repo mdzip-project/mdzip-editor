@@ -12,7 +12,7 @@ export default defineConfig({
   plugins: [angular({ tsconfig: demoTsconfig })],
   resolve: {
     alias: {
-      '@mdzip/editor': editorDist,
+      'mdzip-editor': editorDist,
       '@mdzip/editor-ng': editorNgDist,
     },
   },

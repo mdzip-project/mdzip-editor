@@ -11,7 +11,7 @@ import {
   SimpleChanges,
   ViewChild,
 } from '@angular/core';
-import { MdzipWorkspaceView } from '@mdzip/editor';
+import { MdzipWorkspaceView } from 'mdzip-editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
@@ -19,7 +19,7 @@ import type {
   MdzipWorkspaceLayout,
   MdzipWorkspaceMode,
   MdzipWorkspaceSave,
-} from '@mdzip/editor';
+} from 'mdzip-editor';
 
 @Component({
   selector: 'mdzip-workspace',

@@ -1,4 +1,4 @@
-import { MdzipWorkspaceView, type MdzipControlPreset } from '@mdzip/editor';
+import { MdzipWorkspaceView, type MdzipControlPreset } from 'mdzip-editor';
 import type { TabController } from '../tab-controller.js';
 
 export function initRaw(
