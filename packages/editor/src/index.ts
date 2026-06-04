@@ -1,5 +1,6 @@
 export * from './archive-utils.js';
 export * from './browser.js';
+export * from './diff.js';
 export * from './metadata.js';
 export * from './rendering.js';
 export * from './theme.js';

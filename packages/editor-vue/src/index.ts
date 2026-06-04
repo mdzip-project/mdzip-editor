@@ -1,6 +1,11 @@
 import { defineComponent, h, onMounted, onUnmounted, ref, watch, type PropType } from 'vue';
 import { MdzipWorkspaceView } from '@mdzip/editor';
-import type { MdzipWorkspaceMode } from '@mdzip/editor';
+import type {
+  MdzipControlPolicy,
+  MdzipControlPreset,
+  MdzipWorkspaceLayout,
+  MdzipWorkspaceMode,
+} from '@mdzip/editor';
 
 export const MdzipWorkspace = defineComponent({
   name: 'MdzipWorkspace',
@@ -8,22 +13,34 @@ export const MdzipWorkspace = defineComponent({
     bytes:    { type: Object as PropType<Uint8Array | null>, default: null },
     fileName: { type: String, default: 'document.mdz' },
     mode:     { type: String as PropType<MdzipWorkspaceMode>, default: 'read-only' },
-    onSaved:  { type: Function as PropType<(b: Uint8Array) => void> },
-    onFailed: { type: Function as PropType<(e: unknown) => void> },
+    controls: {
+      type: [String, Object] as PropType<MdzipControlPreset | MdzipControlPolicy>,
+      default: 'viewer'
+    },
+    initialLayout: String as PropType<MdzipWorkspaceLayout>,
   },
-  setup(props) {
+  emits: ['changed', 'saved', 'failed'],
+  setup(props, { emit }) {
     const hostRef = ref<HTMLElement | null>(null);
     let view: MdzipWorkspaceView | null = null;
 
-    onMounted(() => {
+    const createView = (): void => {
       if (!hostRef.value) return;
+      view?.destroy();
       view = new MdzipWorkspaceView(hostRef.value, {
-        onSaved: (b) => props.onSaved?.(b),
-        onFailed: (e) => props.onFailed?.(e),
+        controls: props.controls,
+        initialLayout: props.initialLayout,
+        onChanged: (bytes, snapshot) => emit('changed', { bytes, snapshot }),
+        onSaved: (bytes, snapshot) => emit('saved', { bytes, snapshot }),
+        onFailed: (e) => emit('failed', e),
       });
       if (props.bytes) {
         void view.open(props.bytes, { mode: props.mode, fileName: props.fileName });
       }
+    };
+
+    onMounted(() => {
+      createView();
     });
 
     watch(
@@ -37,6 +54,10 @@ export const MdzipWorkspace = defineComponent({
         }
       }
     );
+
+    watch([() => props.controls, () => props.initialLayout], () => {
+      createView();
+    });
 
     onUnmounted(() => { view?.destroy(); view = null; });
 

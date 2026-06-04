@@ -299,7 +299,7 @@ export const WORKSPACE_CSS = `
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 19px;
+  font-size: 14px;
   text-align: left;
 }
 
@@ -327,19 +327,19 @@ export const WORKSPACE_CSS = `
 .mdzip-root .nav-directory-children > .nav-directory > summary::before {
   content: "";
   position: absolute;
-  left: -14px;
+  left: 6px;
   top: 0;
   bottom: 0;
-  width: 12px;
+  width: 22px;
   background: var(--mdzip-tree-guide-color);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 7 V17.5 H12' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 12px 100% no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 7 V17.5 H12' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 12px 100% no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
 }
 
 .mdzip-root .nav-directory-children > .nav-file:not(:last-child)::before,
 .mdzip-root .nav-directory-children > .nav-directory:not(:last-child) > summary::before {
-  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V34 M0.5 17.5 H12' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 12px 100% no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V34 M0.5 17.5 H12' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 12px 100% no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V34 M0.5 17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V34 M0.5 17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
 }
 
 .mdzip-root .nav-caret {
@@ -591,7 +591,7 @@ export const WORKSPACE_CSS = `
   margin: 0 auto;
   padding: 36px 32px 48px;
   line-height: 1.55;
-  font-size: calc(20px * var(--mdz-zoom));
+  font-size: calc(16px * var(--mdz-zoom));
 }
 
 .mdzip-root .preview-content h1,

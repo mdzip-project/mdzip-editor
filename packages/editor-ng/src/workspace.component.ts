@@ -12,7 +12,14 @@ import {
   ViewChild,
 } from '@angular/core';
 import { MdzipWorkspaceView } from '@mdzip/editor';
-import type { MdzipWorkspaceMode } from '@mdzip/editor';
+import type {
+  MdzipControlPolicy,
+  MdzipControlPreset,
+  MdzipWorkspaceChange,
+  MdzipWorkspaceLayout,
+  MdzipWorkspaceMode,
+  MdzipWorkspaceSave,
+} from '@mdzip/editor';
 
 @Component({
   selector: 'mdzip-workspace',
@@ -25,21 +32,26 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
   @Input() bytes: Uint8Array | null = null;
   @Input() fileName = 'document.mdz';
   @Input() mode: MdzipWorkspaceMode = 'read-only';
-  @Output() readonly saved = new EventEmitter<Uint8Array>();
+  @Input() controls: MdzipControlPreset | MdzipControlPolicy = 'viewer';
+  @Input() initialLayout?: MdzipWorkspaceLayout;
+  @Output() readonly changed = new EventEmitter<MdzipWorkspaceChange>();
+  @Output() readonly saved = new EventEmitter<MdzipWorkspaceSave>();
   @Output() readonly failed = new EventEmitter<unknown>();
 
   @ViewChild('host') private readonly hostRef!: ElementRef<HTMLDivElement>;
   private view: MdzipWorkspaceView | null = null;
 
   ngAfterViewInit(): void {
-    this.view = new MdzipWorkspaceView(this.hostRef.nativeElement, {
-      onSaved: (b) => this.saved.emit(b),
-      onFailed: (e) => this.failed.emit(e),
-    });
+    this.createView();
     this.syncView();
   }
 
   ngOnChanges(changes: SimpleChanges): void {
+    if (this.view && (changes['controls'] || changes['initialLayout'])) {
+      this.createView();
+      this.syncView();
+      return;
+    }
     if (this.view && (changes['bytes'] || changes['mode'] || changes['fileName'])) {
       this.syncView();
     }
@@ -53,5 +65,16 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
     if (this.view && this.bytes) {
       void this.view.open(this.bytes, { mode: this.mode, fileName: this.fileName });
     }
+  }
+
+  private createView(): void {
+    this.view?.destroy();
+    this.view = new MdzipWorkspaceView(this.hostRef.nativeElement, {
+      controls: this.controls,
+      initialLayout: this.initialLayout,
+      onChanged: (bytes, snapshot) => this.changed.emit({ bytes, snapshot }),
+      onSaved: (bytes, snapshot) => this.saved.emit({ bytes, snapshot }),
+      onFailed: (e) => this.failed.emit(e),
+    });
   }
 }

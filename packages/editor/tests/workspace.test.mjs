@@ -7,7 +7,8 @@ import {
   buildMdzipNavTree,
   canEditMdzipPath,
   openMdzArchive,
-  readTextFileFromArchive
+  readTextFileFromArchive,
+  resolveMdzipControlPolicy
 } from '../dist/index.js';
 
 const PNG_1X1 = Uint8Array.from(
@@ -97,4 +98,35 @@ test('provides workspace view helpers outside framework wrappers', async () => {
   const tree = buildMdzipNavTree(snapshot.content.paths);
   assert.equal(tree.some((node) => node.name === 'images'), true);
   assert.equal(tree.some((node) => node.name === 'index.md'), true);
+});
+
+test('resolves control policy presets for common host scenarios', () => {
+  assert.deepEqual(resolveMdzipControlPolicy('viewer'), {
+    preset: 'viewer',
+    toolbar: true,
+    navigation: true,
+    title: false,
+    layout: true,
+    save: false,
+    zoom: true,
+    orphanActions: false
+  });
+
+  assert.equal(resolveMdzipControlPolicy('standalone-editor').save, true);
+  assert.equal(resolveMdzipControlPolicy('hosted-editor').save, false);
+  assert.equal(resolveMdzipControlPolicy(undefined).preset, 'standalone-editor');
+});
+
+test('resolves custom control policy overrides', () => {
+  const policy = resolveMdzipControlPolicy({
+    preset: 'hosted-editor',
+    toolbar: false,
+    zoom: false
+  });
+
+  assert.equal(policy.preset, 'hosted-editor');
+  assert.equal(policy.toolbar, false);
+  assert.equal(policy.save, false);
+  assert.equal(policy.navigation, true);
+  assert.equal(policy.zoom, false);
 });

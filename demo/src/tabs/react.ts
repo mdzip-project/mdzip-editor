@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MdzipWorkspace } from '@mdzip/editor-react';
+import type { MdzipWorkspaceSave } from '@mdzip/editor';
 import type { TabController } from '../tab-controller.js';
 
 export function initReact(
@@ -17,7 +18,8 @@ export function initReact(
       bytes: currentBytes,
       mode: currentMode as 'editable' | 'read-only',
       fileName: currentFileName,
-      onSaved,
+      controls: 'standalone-editor',
+      onSaved: (event: MdzipWorkspaceSave) => onSaved(event.bytes),
       onFailed,
     }));
   }

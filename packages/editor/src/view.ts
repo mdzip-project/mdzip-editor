@@ -58,23 +58,144 @@ const IMAGE_ICON_SVG = `<svg viewBox="0 0 20 20" aria-hidden="true" focusable="f
   <path d="M6 3a3 3 0 0 0-3 3v8c0 .65.2 1.25.56 1.74l5.39-5.3a1.5 1.5 0 0 1 2.1 0l5.4 5.3c.34-.49.55-1.1.55-1.74V6a3 3 0 0 0-3-3H6Zm0 14c-.65 0-1.24-.2-1.73-.55l5.38-5.3c.2-.2.5-.2.7 0l5.38 5.3c-.49.35-1.08.55-1.73.55H6Zm6.5-8.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5Z"/>
 </svg>`;
 
-type Layout = 'preview' | 'source' | 'split';
+const SOURCE_EDIT_ICON_HTML = `<svg class="toggle-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+  <path d="M17.18 2.93a2.97 2.97 0 0 0-4.26-.06l-9.37 9.38c-.33.33-.56.74-.66 1.2l-.88 3.94a.5.5 0 0 0 .6.6l3.93-.87c.46-.1.9-.34 1.23-.68l9.36-9.36a2.97 2.97 0 0 0 .05-4.15Zm-3.55.65a1.97 1.97 0 1 1 2.8 2.8l-.68.66-2.8-2.79.68-.67Zm-1.38 1.38 2.8 2.8-7.99 7.97c-.2.2-.46.35-.74.41l-3.16.7.7-3.18c.07-.27.2-.51.4-.7l8-8Z"/>
+</svg>`;
+
+const SOURCE_MARKDOWN_ICON_HTML = '#';
+
+export type MdzipWorkspaceLayout = 'preview' | 'source' | 'split';
+
+export type MdzipControlPreset =
+  | 'preview'
+  | 'viewer'
+  | 'standalone-editor'
+  | 'hosted-editor'
+  | 'custom';
+
+export interface MdzipControlPolicy {
+  preset?: MdzipControlPreset;
+  toolbar?: boolean;
+  navigation?: boolean;
+  title?: boolean;
+  layout?: boolean;
+  save?: boolean;
+  zoom?: boolean;
+  orphanActions?: boolean;
+}
+
+export interface MdzipResolvedControlPolicy {
+  preset: MdzipControlPreset;
+  toolbar: boolean;
+  navigation: boolean;
+  title: boolean;
+  layout: boolean;
+  save: boolean;
+  zoom: boolean;
+  orphanActions: boolean;
+}
+
+export interface MdzipWorkspaceChange {
+  bytes: Uint8Array;
+  snapshot: MdzipWorkspaceSnapshot;
+}
+
+export interface MdzipWorkspaceSave {
+  bytes: Uint8Array;
+  snapshot: MdzipWorkspaceSnapshot;
+}
 
 export interface MdzipWorkspaceViewOptions {
+  controls?: MdzipControlPreset | MdzipControlPolicy;
+  initialLayout?: MdzipWorkspaceLayout;
+  navigationButtonActive?: boolean;
   onChanged?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
   onSaved?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
   onFailed?: (error: unknown) => void;
 }
 
+const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolvedControlPolicy> = {
+  preview: {
+    preset: 'preview',
+    toolbar: false,
+    navigation: false,
+    title: false,
+    layout: false,
+    save: false,
+    zoom: false,
+    orphanActions: false
+  },
+  viewer: {
+    preset: 'viewer',
+    toolbar: true,
+    navigation: true,
+    title: false,
+    layout: true,
+    save: false,
+    zoom: true,
+    orphanActions: false
+  },
+  'standalone-editor': {
+    preset: 'standalone-editor',
+    toolbar: true,
+    navigation: true,
+    title: true,
+    layout: true,
+    save: true,
+    zoom: true,
+    orphanActions: true
+  },
+  'hosted-editor': {
+    preset: 'hosted-editor',
+    toolbar: true,
+    navigation: true,
+    title: true,
+    layout: true,
+    save: false,
+    zoom: true,
+    orphanActions: true
+  }
+};
+
+export function resolveMdzipControlPolicy(
+  controls: MdzipControlPreset | MdzipControlPolicy | undefined
+): MdzipResolvedControlPolicy {
+  if (!controls) {
+    return { ...CONTROL_PRESETS['standalone-editor'] };
+  }
+
+  if (typeof controls === 'string') {
+    if (controls === 'custom') {
+      return { ...CONTROL_PRESETS['standalone-editor'], preset: 'custom' };
+    }
+    return { ...CONTROL_PRESETS[controls] };
+  }
+
+  const preset = controls.preset ?? 'custom';
+  const base = preset === 'custom'
+    ? CONTROL_PRESETS['standalone-editor']
+    : CONTROL_PRESETS[preset];
+
+  return {
+    ...base,
+    ...controls,
+    preset
+  };
+}
+
+function defaultLayoutForPolicy(policy: MdzipResolvedControlPolicy): MdzipWorkspaceLayout {
+  return policy.preset === 'viewer' ? 'preview' : 'split';
+}
+
 const mdzipEditorTheme = EditorView.theme({
   '&': {
     height: '100%',
-    fontSize: 'calc(20px * var(--mdz-zoom, 1))',
+    fontSize: 'calc(16px * var(--mdz-zoom, 1))',
     fontFamily: '"Cascadia Code", Consolas, monospace',
     background: 'var(--mdzip-editor-background-color)',
   },
   '.cm-scroller': {
-    lineHeight: '1.7',
+    lineHeight: '1.5',
     overflow: 'auto',
   },
   '.cm-content': {
@@ -138,7 +259,11 @@ function injectStyles(doc: Document): void {
   (doc.head ?? doc.documentElement).appendChild(style);
 }
 
-function renderNavNode(node: MdzipNavNode, state: MdzipWorkspaceSnapshot): string {
+function renderNavNode(
+  node: MdzipNavNode,
+  state: MdzipWorkspaceSnapshot,
+  allowOrphanActions: boolean
+): string {
   if (node.entry) {
     const isCurrent = node.entry.path === state.currentPath;
     const isOrphaned = isOrphanedMdzipAsset(node.entry, state);
@@ -158,7 +283,7 @@ function renderNavNode(node: MdzipNavNode, state: MdzipWorkspaceSnapshot): strin
       : isImageFile(node.entry.path)
       ? IMAGE_ICON_SVG
       : escapeHtml(label);
-    const orphanBtnHtml = isOrphaned ? `
+    const orphanBtnHtml = isOrphaned && allowOrphanActions ? `
       <span class="nav-orphan-button" role="button" tabindex="0"
         title="Orphaned asset" aria-label="Orphaned asset actions"
         data-orphan-path="${safePath}">
@@ -176,7 +301,7 @@ function renderNavNode(node: MdzipNavNode, state: MdzipWorkspaceSnapshot): strin
       <span class="nav-label">${safeName}</span>
     </button>`;
   }
-  const children = node.children.map(c => renderNavNode(c, state)).join('');
+  const children = node.children.map(c => renderNavNode(c, state, allowOrphanActions)).join('');
   return `<details class="nav-directory" open>
     <summary>
       <span class="nav-caret" aria-hidden="true"></span>
@@ -192,9 +317,10 @@ export class MdzipWorkspaceView {
   private workspace: MdzipWorkspaceService | null = null;
   private unsub: (() => void) | null = null;
   private readonly options: MdzipWorkspaceViewOptions;
+  private readonly controlPolicy: MdzipResolvedControlPolicy;
   private pendingOrphanPath: string | null = null;
 
-  private layout: Layout = 'split';
+  private layout: MdzipWorkspaceLayout = 'split';
   private navVisible = true;
   private zoom = 1;
   private zoomOpen = false;
@@ -212,11 +338,15 @@ export class MdzipWorkspaceView {
 
   private readonly elRoot: HTMLElement;
   private readonly elToolbar: HTMLElement;
+  private readonly elToolbarLeft: HTMLElement;
+  private readonly elLayoutControls: HTMLElement;
+  private readonly elToolbarControls: HTMLElement;
   private readonly elNavBtn: HTMLButtonElement;
   private readonly elTitleBtn: HTMLButtonElement;
   private readonly elPreviewBtn: HTMLButtonElement;
   private readonly elSplitBtn: HTMLButtonElement;
   private readonly elSourceBtn: HTMLButtonElement;
+  private readonly elSourceIcon: HTMLElement;
   private readonly elSaveBtn: HTMLButtonElement;
   private readonly elZoomBtn: HTMLButtonElement;
   private readonly elZoomPopover: HTMLElement;
@@ -240,6 +370,9 @@ export class MdzipWorkspaceView {
 
   public constructor(container: HTMLElement, options: MdzipWorkspaceViewOptions = {}) {
     this.options = options;
+    this.controlPolicy = resolveMdzipControlPolicy(options.controls);
+    this.layout = options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy);
+    this.navVisible = options.navigationButtonActive ?? this.navVisible;
     injectStyles(container.ownerDocument);
     container.innerHTML = SHELL_HTML;
 
@@ -248,11 +381,15 @@ export class MdzipWorkspaceView {
 
     this.elRoot = q('.mdzip-root');
     this.elToolbar = q('[data-ref="toolbar"]');
+    this.elToolbarLeft = q('.toolbar-left');
+    this.elLayoutControls = q('[data-ref="layout-controls"]');
+    this.elToolbarControls = q('[data-ref="toolbar-controls"]');
     this.elNavBtn = q('[data-ref="nav-btn"]');
     this.elTitleBtn = q('[data-ref="title-btn"]');
     this.elPreviewBtn = q('[data-ref="preview-btn"]');
     this.elSplitBtn = q('[data-ref="split-btn"]');
     this.elSourceBtn = q('[data-ref="source-btn"]');
+    this.elSourceIcon = q('[data-ref="source-icon"]');
     this.elSaveBtn = q('[data-ref="save-btn"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
     this.elZoomPopover = q('[data-ref="zoom-popover"]');
@@ -287,8 +424,11 @@ export class MdzipWorkspaceView {
     try {
       const ws = await MdzipWorkspaceService.open(bytes, options);
       this.workspace = ws;
-      this.layout = 'split';
       const snap = ws.snapshot();
+      this.layout = this.validLayoutForSnapshot(
+        this.options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy),
+        snap
+      );
       this.cmEditor = this.createCmEditor(this.elEditPane, snap.currentText, snap.mode);
       this.unsub = ws.subscribe(() => {
         this.render();
@@ -363,12 +503,33 @@ export class MdzipWorkspaceView {
     const snapshot = this.workspace?.snapshot() ?? null;
 
     this.elEmptyState.hidden = snapshot !== null;
-    this.elToolbar.hidden = snapshot === null;
     this.elWorkspaceShell.hidden = snapshot === null;
 
     if (!snapshot) {
+      this.elToolbar.hidden = true;
       return;
     }
+
+    const canEdit = canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, snapshot.mode);
+    const showNavigationControl = this.controlPolicy.navigation;
+    const showTitleControl = this.controlPolicy.title && snapshot.mode !== 'read-only';
+    const showLayoutControls = this.controlPolicy.layout;
+    const showSaveControl = this.controlPolicy.save && snapshot.mode !== 'read-only';
+    const showZoomControl = this.controlPolicy.zoom;
+    const showToolbar = this.controlPolicy.toolbar
+      && (showNavigationControl || showTitleControl || showLayoutControls || showSaveControl || showZoomControl);
+
+    this.elToolbar.hidden = !showToolbar;
+    this.elToolbarLeft.hidden = !showNavigationControl && !showTitleControl;
+    this.elLayoutControls.hidden = !showLayoutControls;
+    this.elToolbarControls.hidden = !showSaveControl && !showZoomControl;
+    this.elNavBtn.hidden = !showNavigationControl;
+    this.elTitleBtn.hidden = !showTitleControl;
+    this.elPreviewBtn.hidden = !showLayoutControls;
+    this.elSplitBtn.hidden = !showLayoutControls;
+    this.elSourceBtn.hidden = !showLayoutControls;
+    this.elSaveBtn.hidden = !showSaveControl;
+    this.elZoomBtn.hidden = !showZoomControl;
 
     this.elRoot.style.setProperty('--mdz-zoom', String(this.zoom));
     this.elRoot.style.setProperty('--nav-pane-width', `${this.navPaneWidth}px`);
@@ -378,10 +539,20 @@ export class MdzipWorkspaceView {
     this.elTitleBtn.textContent = snapshot.displayTitle;
     this.elTitleBtn.disabled = snapshot.mode === 'read-only';
 
-    const canEdit = canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, snapshot.mode);
     this.elSaveBtn.disabled = snapshot.mode === 'read-only' || !snapshot.dirty;
-    this.elSplitBtn.disabled = !canEdit;
-    this.elSourceBtn.disabled = !canEdit;
+    this.elSplitBtn.disabled = !showLayoutControls;
+    this.elSourceBtn.disabled = !showLayoutControls;
+
+    // Update button labels based on mode
+    if (snapshot.mode === 'read-only') {
+      this.elSourceBtn.setAttribute('title', 'Raw markdown');
+      this.elSourceBtn.setAttribute('aria-label', 'Raw markdown');
+      this.elSourceIcon.innerHTML = SOURCE_MARKDOWN_ICON_HTML;
+    } else {
+      this.elSourceBtn.setAttribute('title', 'Edit only');
+      this.elSourceBtn.setAttribute('aria-label', 'Edit only');
+      this.elSourceIcon.innerHTML = SOURCE_EDIT_ICON_HTML;
+    }
 
     this.elPreviewBtn.classList.toggle('active', this.layout === 'preview');
     this.elSplitBtn.classList.toggle('active', this.layout === 'split');
@@ -390,16 +561,19 @@ export class MdzipWorkspaceView {
     this.elSplitBtn.setAttribute('aria-pressed', String(this.layout === 'split'));
     this.elSourceBtn.setAttribute('aria-pressed', String(this.layout === 'source'));
     this.elNavBtn.classList.toggle('active', this.navVisible);
+    this.elNavBtn.setAttribute('aria-pressed', String(this.navVisible));
     this.elZoomBtn.classList.toggle('active', this.zoomOpen);
 
     this.elZoomPopover.hidden = !this.zoomOpen;
     this.elZoomLevel.textContent = `${Math.round(this.zoom * 100)}%`;
 
-    this.elNavPane.classList.toggle('hidden', !this.navVisible);
-    this.elNavResizer.classList.toggle('hidden', !this.navVisible);
+    const showNavigationPane = this.controlPolicy.navigation && this.navVisible;
+    this.elNavPane.classList.toggle('hidden', !showNavigationPane);
+    this.elNavResizer.classList.toggle('hidden', !showNavigationPane);
 
     const navTree = buildMdzipNavTree(snapshot.content.paths);
-    this.elNavTree.innerHTML = navTree.map(n => renderNavNode(n, snapshot)).join('');
+    const allowOrphanActions = this.controlPolicy.orphanActions && snapshot.mode !== 'read-only';
+    this.elNavTree.innerHTML = navTree.map(n => renderNavNode(n, snapshot, allowOrphanActions)).join('');
 
     if (this.cmEditor) {
       this.updatingCm = true;
@@ -428,12 +602,20 @@ export class MdzipWorkspaceView {
     this.elPreviewPane.classList.toggle('active', showPreview);
     this.elPaneStack.classList.toggle('split-mode', this.layout === 'split');
 
+    if (!showTitleControl) {
+      this.titleDialogOpen = false;
+    }
     this.elTitleDialog.hidden = !this.titleDialogOpen;
     if (this.titleDialogOpen) {
       this.elTitleInput.value = this.titleDraft;
       const valid = this.titleDraft.trim().length > 0;
       this.elTitleValidation.hidden = valid;
       this.elTitleSaveBtn.disabled = !valid;
+    }
+
+    if (!allowOrphanActions) {
+      this.orphanMenuState = null;
+      this.pendingOrphanPath = null;
     }
 
     if (this.orphanMenuState) {
@@ -458,13 +640,16 @@ export class MdzipWorkspaceView {
     });
 
     this.elNavBtn.addEventListener('click', () => {
+      if (!this.controlPolicy.navigation) {
+        return;
+      }
       this.navVisible = !this.navVisible;
       this.render();
     });
 
     this.elTitleBtn.addEventListener('click', () => {
       const snapshot = this.workspace?.snapshot();
-      if (!snapshot || snapshot.mode === 'read-only') {
+      if (!this.controlPolicy.title || !snapshot || snapshot.mode === 'read-only') {
         return;
       }
       this.titleDraft = snapshot.displayTitle;
@@ -473,13 +658,24 @@ export class MdzipWorkspaceView {
       requestAnimationFrame(() => this.elTitleInput.select());
     });
 
-    this.elPreviewBtn.addEventListener('click', () => { this.layout = 'preview'; this.render(); });
-    this.elSplitBtn.addEventListener('click', () => { this.layout = 'split'; this.render(); });
-    this.elSourceBtn.addEventListener('click', () => { this.layout = 'source'; this.render(); });
+    this.elPreviewBtn.addEventListener('click', () => {
+      if (this.controlPolicy.layout) { this.layout = 'preview'; this.render(); }
+    });
+    this.elSplitBtn.addEventListener('click', () => {
+      if (this.controlPolicy.layout) { this.layout = 'split'; this.render(); }
+    });
+    this.elSourceBtn.addEventListener('click', () => {
+      if (this.controlPolicy.layout) { this.layout = 'source'; this.render(); }
+    });
 
-    this.elSaveBtn.addEventListener('click', () => { void this.save(); });
+    this.elSaveBtn.addEventListener('click', () => {
+      if (this.controlPolicy.save) { void this.save(); }
+    });
 
     this.elZoomBtn.addEventListener('click', (e) => {
+      if (!this.controlPolicy.zoom) {
+        return;
+      }
       e.stopPropagation();
       this.zoomOpen = !this.zoomOpen;
       this.render();
@@ -497,6 +693,9 @@ export class MdzipWorkspaceView {
       const target = e.target as HTMLElement;
       const orphanBtn = target.closest<HTMLElement>('[data-orphan-path]');
       if (orphanBtn) {
+        if (!this.controlPolicy.orphanActions) {
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         this.showOrphanMenu(orphanBtn.getAttribute('data-orphan-path')!, e);
@@ -510,7 +709,7 @@ export class MdzipWorkspaceView {
 
     this.elNavTree.addEventListener('contextmenu', (e) => {
       const navFile = (e.target as HTMLElement).closest<HTMLElement>('[data-nav-path]');
-      if (navFile?.getAttribute('data-orphan') === 'true') {
+      if (this.controlPolicy.orphanActions && navFile?.getAttribute('data-orphan') === 'true') {
         e.preventDefault();
         this.showOrphanMenu(navFile.getAttribute('data-nav-path')!, e);
       }
@@ -519,7 +718,7 @@ export class MdzipWorkspaceView {
     this.elNavTree.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         const orphanBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-orphan-path]');
-        if (orphanBtn) {
+        if (this.controlPolicy.orphanActions && orphanBtn) {
           this.showOrphanMenu(orphanBtn.getAttribute('data-orphan-path')!, e);
         }
       }
@@ -605,7 +804,9 @@ export class MdzipWorkspaceView {
 
     this.elOrphanMenu.addEventListener('click', (e) => e.stopPropagation());
     this.elOrphanMenu.querySelector('[data-action="remove-orphan"]')!
-      .addEventListener('click', () => { void this.removeOrphan(); });
+      .addEventListener('click', () => {
+        if (this.controlPolicy.orphanActions) { void this.removeOrphan(); }
+      });
 
     this.elPreviewPane.addEventListener('scroll', () => this.syncScrollFromPreview());
   }
@@ -617,9 +818,7 @@ export class MdzipWorkspaceView {
     try {
       const opened = await this.workspace.openPath(path);
       if (opened) {
-        if (!canEditMdzipPath(this.workspace.currentPathType, this.workspace.currentPath, this.workspace.mode)) {
-          this.layout = 'preview';
-        }
+        this.layout = this.validLayoutForSnapshot(this.layout, this.workspace.snapshot());
         this.render();
       }
     } catch (error) {
@@ -701,6 +900,9 @@ export class MdzipWorkspaceView {
   }
 
   private showOrphanMenu(path: string, event: Event): void {
+    if (!this.controlPolicy.orphanActions) {
+      return;
+    }
     const bounds = (event.target as HTMLElement | null)?.getBoundingClientRect();
     const clientX = event instanceof MouseEvent ? event.clientX : (bounds?.left ?? 0);
     const clientY = event instanceof MouseEvent ? event.clientY : (bounds?.bottom ?? 0);
@@ -711,6 +913,17 @@ export class MdzipWorkspaceView {
       y: Math.max(4, Math.min(clientY, window.innerHeight - 44))
     };
     this.render();
+  }
+
+  private validLayoutForSnapshot(
+    requested: MdzipWorkspaceLayout,
+    snapshot: MdzipWorkspaceSnapshot
+  ): MdzipWorkspaceLayout {
+    const canEdit = canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, snapshot.mode);
+    if (requested === 'source' || requested === 'split') {
+      return canEdit ? requested : 'preview';
+    }
+    return requested;
   }
 
   private async removeOrphan(): Promise<void> {
@@ -775,7 +988,7 @@ const SHELL_HTML = `
       <button type="button" class="title-button" data-ref="title-btn"></button>
     </div>
 
-    <div class="toolbar-buttons view-mode-toggle-group" role="group" aria-label="Editor layout">
+    <div class="toolbar-buttons view-mode-toggle-group" data-ref="layout-controls" role="group" aria-label="Editor layout">
       <button type="button" class="icon-toggle view-mode-toggle" data-ref="preview-btn" title="Preview only" aria-label="Preview only" aria-pressed="false">
         <span class="commandbar-flex-container">
           <svg class="toggle-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
@@ -791,15 +1004,11 @@ const SHELL_HTML = `
         </span>
       </button>
       <button type="button" class="icon-toggle view-mode-toggle" data-ref="source-btn" title="Edit only" aria-label="Edit only" aria-pressed="false">
-        <span class="commandbar-flex-container">
-          <svg class="toggle-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-            <path d="M17.18 2.93a2.97 2.97 0 0 0-4.26-.06l-9.37 9.38c-.33.33-.56.74-.66 1.2l-.88 3.94a.5.5 0 0 0 .6.6l3.93-.87c.46-.1.9-.34 1.23-.68l9.36-9.36a2.97 2.97 0 0 0 .05-4.15Zm-3.55.65a1.97 1.97 0 1 1 2.8 2.8l-.68.66-2.8-2.79.68-.67Zm-1.38 1.38 2.8 2.8-7.99 7.97c-.2.2-.46.35-.74.41l-3.16.7.7-3.18c.07-.27.2-.51.4-.7l8-8Z"/>
-          </svg>
-        </span>
+        <span class="commandbar-flex-container" data-ref="source-icon">${SOURCE_EDIT_ICON_HTML}</span>
       </button>
     </div>
 
-    <div class="toolbar-controls">
+    <div class="toolbar-controls" data-ref="toolbar-controls">
       <button type="button" class="icon-toggle" data-ref="save-btn" title="Save" aria-label="Save">
         <svg class="toggle-icon" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M2.5 2h9.2L14 4.3V14H2V2h.5zm1 1.5v9h9v-7L11 3.5H3.5zM5 4h5v3H5V4zm.5 5h5v2.5h-5V9z"/>

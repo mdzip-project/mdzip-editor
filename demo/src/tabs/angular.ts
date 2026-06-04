@@ -10,7 +10,7 @@ import {
 } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { MdzipWorkspaceComponent } from '@mdzip/editor-ng';
-import type { MdzipWorkspaceMode } from '@mdzip/editor';
+import type { MdzipWorkspaceMode, MdzipWorkspaceSave } from '@mdzip/editor';
 import type { TabController } from '../tab-controller.js';
 
 let _onSaved: (b: Uint8Array) => void = () => {};
@@ -31,6 +31,7 @@ const _fileName = signal('document.mdz');
       [bytes]="bytes()"
       [mode]="mode()"
       [fileName]="fileName()"
+      controls="standalone-editor"
       (saved)="onSaved($event)"
       (failed)="onFailed($event)"
     />
@@ -42,8 +43,8 @@ class AngularTabComponent {
   readonly mode = _mode;
   readonly fileName = _fileName;
 
-  onSaved(bytes: Uint8Array): void {
-    _onSaved(bytes);
+  onSaved(event: MdzipWorkspaceSave): void {
+    _onSaved(event.bytes);
   }
 
   onFailed(error: unknown): void {
