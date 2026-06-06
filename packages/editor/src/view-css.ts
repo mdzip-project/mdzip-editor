@@ -52,9 +52,10 @@ export const WORKSPACE_CSS = `
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 30px;
-  padding: 3px 12px;
-  background: var(--mdzip-toolbar-background-color);
+  min-height: 36px;
+  padding: 6px 12px;
+  background: var(--mdzip-editor-background-color);
+  border-bottom: 1px solid var(--mdzip-border-color);
   flex: 0 0 auto;
 }
 
@@ -110,17 +111,21 @@ export const WORKSPACE_CSS = `
   background: transparent;
   padding: 0;
   margin: 0;
-  color: var(--mdzip-link-color);
+  color: var(--mdzip-editor-foreground-color);
   font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 2px;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
   cursor: pointer;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mdzip-root .title-button:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .mdzip-root .title-button:disabled {
