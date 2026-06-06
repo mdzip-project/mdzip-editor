@@ -943,7 +943,15 @@ export class MdzipWorkspaceView {
     this.elRoot.classList.toggle('mdzip-theme-dark', this.colorScheme === 'dark');
     this.elRoot.classList.toggle('mdzip-theme-light', this.colorScheme === 'light');
 
-    this.elTitleBtn.innerHTML = `${escapeHtml(snapshot.displayTitle)}<span class="title-filename">${escapeHtml(snapshot.fileName)}</span>`;
+    let titleContent: string;
+    if (snapshot.sourceFormat === 'markdown') {
+      titleContent = escapeHtml(snapshot.fileName);
+    } else if (snapshot.displayTitle === snapshot.fileName) {
+      titleContent = escapeHtml(snapshot.fileName);
+    } else {
+      titleContent = `${escapeHtml(snapshot.displayTitle)}<span class="title-filename"> (${escapeHtml(snapshot.fileName)})</span>`;
+    }
+    this.elTitleBtn.innerHTML = titleContent;
     this.elTitleBtn.disabled = snapshot.mode === 'read-only'
       || snapshot.sourceFormat === 'markdown'
       || !this.controlPolicy.title.editable;

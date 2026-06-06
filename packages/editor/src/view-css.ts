@@ -131,7 +131,6 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .title-filename {
-  margin-left: 8px;
   font-weight: 400;
   opacity: 0.6;
 }
