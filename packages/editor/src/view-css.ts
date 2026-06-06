@@ -48,6 +48,17 @@ export const WORKSPACE_CSS = `
   display: none !important;
 }
 
+.mdzip-root .document-strip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 3px 12px;
+  border-bottom: 1px solid var(--mdzip-border-color);
+  background: var(--mdzip-toolbar-background-color);
+  flex: 0 0 auto;
+}
+
 .mdzip-root .toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -84,7 +95,7 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .toolbar-left {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   overflow: hidden;
 }
 
@@ -95,14 +106,15 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .title-button {
+  flex: 1 1 auto;
   border: 0;
   background: transparent;
   padding: 0;
   margin: 0;
   color: var(--mdzip-link-color);
   font: inherit;
-  font-size: 20px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 600;
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
@@ -116,6 +128,39 @@ export const WORKSPACE_CSS = `
   color: var(--mdzip-editor-foreground-color);
   text-decoration: none;
   cursor: default;
+}
+
+.mdzip-root .title-filename {
+  margin-left: 8px;
+  font-weight: 400;
+  opacity: 0.6;
+}
+
+.mdzip-root .document-info-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--mdzip-muted-foreground-color);
+  cursor: pointer;
+}
+
+.mdzip-root .document-info-button:hover,
+.mdzip-root .document-info-button:focus-visible {
+  outline: none;
+  background: var(--mdzip-control-hover-background-color);
+  color: var(--mdzip-control-foreground-color);
+}
+
+.mdzip-root .document-info-icon {
+  width: 15px;
+  height: 15px;
 }
 
 .mdzip-root .toolbar-buttons {
@@ -134,11 +179,7 @@ export const WORKSPACE_CSS = `
   left: calc((100% + var(--workspace-pane-offset)) / 2);
   top: 50%;
   transform: translate(-50%, -50%);
-  gap: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
+  gap: 2px;
 }
 
 .mdzip-root .icon-toggle {
@@ -1069,6 +1110,34 @@ export const WORKSPACE_CSS = `
   color: var(--mdzip-accent-foreground-color);
 }
 
+.mdzip-root .metadata-dialog dl {
+  margin: 12px 0 0;
+}
+
+.mdzip-root .metadata-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--mdzip-border-color);
+  font-size: 12px;
+}
+
+.mdzip-root .metadata-row:last-child {
+  border-bottom: 0;
+}
+
+.mdzip-root .metadata-row dt {
+  color: var(--mdzip-muted-foreground-color);
+  font-weight: 600;
+}
+
+.mdzip-root .metadata-row dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 900px) {
   .mdzip-root { --nav-pane-width: 220px; }
   .mdzip-root .toolbar {
@@ -1076,11 +1145,16 @@ export const WORKSPACE_CSS = `
     row-gap: 4px;
   }
   .mdzip-root .toolbar-start {
+    display: contents;
+  }
+  .mdzip-root .toolbar-left {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .mdzip-root .edit-toolbar {
     grid-column: 1 / -1;
     grid-row: 2;
     justify-self: start;
-  }
-  .mdzip-root .edit-toolbar {
     position: static;
     transform: none;
   }
@@ -1106,9 +1180,7 @@ export const WORKSPACE_CSS = `
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     row-gap: 6px;
   }
-  .mdzip-root .toolbar-start {
-    grid-column: 1 / -1;
-    grid-row: 2;
+  .mdzip-root .edit-toolbar {
     overflow-x: auto;
   }
   .mdzip-root .toolbar-controls {
