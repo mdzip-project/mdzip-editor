@@ -19,6 +19,7 @@ import {
   Hash,
   Heading1,
   ImagePlus,
+  Info,
   Italic,
   Link2Off,
   Link,
@@ -87,10 +88,31 @@ const QUOTE_ICON_HTML = lucideIcon(Quote, FORMAT_ICON_CLASS);
 const LINK_ICON_HTML = lucideIcon(Link, FORMAT_ICON_CLASS);
 const IMAGE_FORMAT_ICON_HTML = lucideIcon(ImagePlus, FORMAT_ICON_CLASS);
 const CHEVRON_ICON_HTML = lucideIcon(ChevronDown, 'format-chevron');
+const INFO_ICON_HTML = lucideIcon(Info, 'document-info-icon');
 
 export type MdzipWorkspaceLayout = 'preview' | 'source' | 'split';
 export type MdzipNavigationMode = 'editor' | 'host' | 'none';
 export type MdzipColorScheme = 'light' | 'dark';
+export type MdzipHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
+
+export type MdzipEditorCommand =
+  | 'bold'
+  | 'italic'
+  | 'strikethrough'
+  | 'paragraph'
+  | `heading-${MdzipHeadingLevel}`
+  | 'bullet-list'
+  | 'ordered-list'
+  | 'inline-code'
+  | 'code-block'
+  | 'blockquote'
+  | 'link'
+  | 'insert-image';
+
+type MdzipConversionAction =
+  | { kind: 'navigation' }
+  | { kind: 'image-picker' }
+  | { kind: 'image-file'; file: File };
 
 export type MdzipControlPreset =
   | 'preview'
@@ -99,24 +121,80 @@ export type MdzipControlPreset =
   | 'hosted-editor'
   | 'custom';
 
+export interface MdzipTitleControlPolicy {
+  visible?: boolean;
+  editable?: boolean;
+}
+
+export interface MdzipLayoutControlPolicy {
+  enabled?: boolean;
+  source?: boolean;
+  split?: boolean;
+  preview?: boolean;
+}
+
+export interface MdzipFormattingControlPolicy {
+  enabled?: boolean;
+  bold?: boolean;
+  italic?: boolean;
+  strikethrough?: boolean;
+  headings?: boolean | MdzipHeadingLevel[];
+  bulletList?: boolean;
+  orderedList?: boolean;
+  inlineCode?: boolean;
+  codeBlock?: boolean;
+  blockquote?: boolean;
+  link?: boolean;
+  image?: boolean;
+}
+
 export interface MdzipControlPolicy {
   preset?: MdzipControlPreset;
   toolbar?: boolean;
   navigation?: boolean;
-  title?: boolean;
-  layout?: boolean;
+  title?: boolean | MdzipTitleControlPolicy;
+  layout?: boolean | MdzipLayoutControlPolicy;
+  formatting?: boolean | MdzipFormattingControlPolicy;
+  lineNumbers?: boolean;
   save?: boolean;
   zoom?: boolean;
   colorScheme?: boolean;
   orphanActions?: boolean;
 }
 
+export interface MdzipResolvedTitleControlPolicy {
+  visible: boolean;
+  editable: boolean;
+}
+
+export interface MdzipResolvedLayoutControlPolicy {
+  source: boolean;
+  split: boolean;
+  preview: boolean;
+}
+
+export interface MdzipResolvedFormattingControlPolicy {
+  bold: boolean;
+  italic: boolean;
+  strikethrough: boolean;
+  headings: MdzipHeadingLevel[];
+  bulletList: boolean;
+  orderedList: boolean;
+  inlineCode: boolean;
+  codeBlock: boolean;
+  blockquote: boolean;
+  link: boolean;
+  image: boolean;
+}
+
 export interface MdzipResolvedControlPolicy {
   preset: MdzipControlPreset;
   toolbar: boolean;
   navigation: boolean;
-  title: boolean;
-  layout: boolean;
+  title: MdzipResolvedTitleControlPolicy;
+  layout: MdzipResolvedLayoutControlPolicy;
+  formatting: MdzipResolvedFormattingControlPolicy;
+  lineNumbers: boolean;
   save: boolean;
   zoom: boolean;
   colorScheme: boolean;
@@ -149,13 +227,48 @@ export interface MdzipWorkspaceViewOptions {
   onFailed?: (error: unknown) => void;
 }
 
+const ALL_HEADINGS: MdzipHeadingLevel[] = [1, 2, 3, 4, 5, 6];
+const ALL_LAYOUT_CONTROLS: MdzipResolvedLayoutControlPolicy = {
+  source: true,
+  split: true,
+  preview: true
+};
+const ALL_FORMATTING_CONTROLS: MdzipResolvedFormattingControlPolicy = {
+  bold: true,
+  italic: true,
+  strikethrough: true,
+  headings: ALL_HEADINGS,
+  bulletList: true,
+  orderedList: true,
+  inlineCode: true,
+  codeBlock: true,
+  blockquote: true,
+  link: true,
+  image: true
+};
+const NO_FORMATTING_CONTROLS: MdzipResolvedFormattingControlPolicy = {
+  bold: false,
+  italic: false,
+  strikethrough: false,
+  headings: [],
+  bulletList: false,
+  orderedList: false,
+  inlineCode: false,
+  codeBlock: false,
+  blockquote: false,
+  link: false,
+  image: false
+};
+
 const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolvedControlPolicy> = {
   preview: {
     preset: 'preview',
     toolbar: false,
     navigation: false,
-    title: false,
-    layout: false,
+    title: { visible: false, editable: false },
+    layout: { source: false, split: false, preview: false },
+    formatting: { ...NO_FORMATTING_CONTROLS },
+    lineNumbers: false,
     save: false,
     zoom: false,
     colorScheme: false,
@@ -165,8 +278,10 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     preset: 'viewer',
     toolbar: true,
     navigation: true,
-    title: false,
-    layout: true,
+    title: { visible: true, editable: false },
+    layout: { ...ALL_LAYOUT_CONTROLS },
+    formatting: { ...NO_FORMATTING_CONTROLS },
+    lineNumbers: true,
     save: false,
     zoom: true,
     colorScheme: true,
@@ -176,8 +291,10 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     preset: 'standalone-editor',
     toolbar: true,
     navigation: true,
-    title: true,
-    layout: true,
+    title: { visible: true, editable: true },
+    layout: { ...ALL_LAYOUT_CONTROLS },
+    formatting: { ...ALL_FORMATTING_CONTROLS },
+    lineNumbers: true,
     save: true,
     zoom: true,
     colorScheme: true,
@@ -187,8 +304,10 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     preset: 'hosted-editor',
     toolbar: true,
     navigation: true,
-    title: true,
-    layout: true,
+    title: { visible: true, editable: true },
+    layout: { ...ALL_LAYOUT_CONTROLS },
+    formatting: { ...ALL_FORMATTING_CONTROLS },
+    lineNumbers: true,
     save: false,
     zoom: true,
     colorScheme: true,
@@ -200,14 +319,17 @@ export function resolveMdzipControlPolicy(
   controls: MdzipControlPreset | MdzipControlPolicy | undefined
 ): MdzipResolvedControlPolicy {
   if (!controls) {
-    return { ...CONTROL_PRESETS['standalone-editor'] };
+    return cloneResolvedControlPolicy(CONTROL_PRESETS['standalone-editor']);
   }
 
   if (typeof controls === 'string') {
     if (controls === 'custom') {
-      return { ...CONTROL_PRESETS['standalone-editor'], preset: 'custom' };
+      return {
+        ...cloneResolvedControlPolicy(CONTROL_PRESETS['standalone-editor']),
+        preset: 'custom'
+      };
     }
-    return { ...CONTROL_PRESETS[controls] };
+    return cloneResolvedControlPolicy(CONTROL_PRESETS[controls]);
   }
 
   const preset = controls.preset ?? 'custom';
@@ -216,14 +338,91 @@ export function resolveMdzipControlPolicy(
     : CONTROL_PRESETS[preset];
 
   return {
-    ...base,
+    ...cloneResolvedControlPolicy(base),
     ...controls,
-    preset
+    preset,
+    title: resolveTitleControls(base.title, controls.title),
+    layout: resolveLayoutControls(base.layout, controls.layout),
+    formatting: resolveFormattingControls(base.formatting, controls.formatting)
   };
 }
 
 function defaultLayoutForPolicy(policy: MdzipResolvedControlPolicy): MdzipWorkspaceLayout {
-  return policy.preset === 'viewer' ? 'preview' : 'split';
+  const preferred = policy.preset === 'viewer'
+    ? ['preview', 'split', 'source'] as const
+    : ['split', 'source', 'preview'] as const;
+  return preferred.find(layout => policy.layout[layout]) ?? 'preview';
+}
+
+function cloneResolvedControlPolicy(policy: MdzipResolvedControlPolicy): MdzipResolvedControlPolicy {
+  return {
+    ...policy,
+    title: { ...policy.title },
+    layout: { ...policy.layout },
+    formatting: {
+      ...policy.formatting,
+      headings: [...policy.formatting.headings]
+    }
+  };
+}
+
+function resolveTitleControls(
+  base: MdzipResolvedTitleControlPolicy,
+  override: boolean | MdzipTitleControlPolicy | undefined
+): MdzipResolvedTitleControlPolicy {
+  if (typeof override === 'boolean') {
+    return { visible: override, editable: override && base.editable };
+  }
+  return { ...base, ...override };
+}
+
+function resolveLayoutControls(
+  base: MdzipResolvedLayoutControlPolicy,
+  override: boolean | MdzipLayoutControlPolicy | undefined
+): MdzipResolvedLayoutControlPolicy {
+  if (typeof override === 'boolean') {
+    return { source: override, split: override, preview: override };
+  }
+  if (!override) {
+    return { ...base };
+  }
+  const { enabled, ...controls } = override;
+  const resolvedBase = enabled === false
+    ? { source: false, split: false, preview: false }
+    : enabled === true
+      ? { ...ALL_LAYOUT_CONTROLS }
+      : base;
+  return { ...resolvedBase, ...controls };
+}
+
+function resolveFormattingControls(
+  base: MdzipResolvedFormattingControlPolicy,
+  override: boolean | MdzipFormattingControlPolicy | undefined
+): MdzipResolvedFormattingControlPolicy {
+  if (typeof override === 'boolean') {
+    return override
+      ? { ...ALL_FORMATTING_CONTROLS, headings: [...ALL_HEADINGS] }
+      : { ...NO_FORMATTING_CONTROLS, headings: [] };
+  }
+  const { enabled, headings, ...controls } = override ?? {};
+  const resolvedBase = enabled === false
+    ? NO_FORMATTING_CONTROLS
+    : enabled === true
+      ? ALL_FORMATTING_CONTROLS
+      : base;
+  return {
+    ...resolvedBase,
+    ...controls,
+    headings: headings === undefined
+      ? [...resolvedBase.headings]
+      : headings === true
+        ? [...ALL_HEADINGS]
+        : headings === false
+          ? []
+          : [...new Set(headings)].filter(
+            (level): level is MdzipHeadingLevel => ALL_HEADINGS.includes(level)
+          ).sort()
+  };
 }
 
 const mdzipEditorTheme = EditorView.theme({
@@ -376,7 +575,9 @@ export class MdzipWorkspaceView {
   private zoomOpen = false;
   private colorScheme: MdzipColorScheme;
   private titleDialogOpen = false;
+  private metadataDialogOpen = false;
   private titleDraft = '';
+  private conversionAction: MdzipConversionAction | null = null;
   private navPaneWidth = 280;
   private splitRatio = 0.5;
   private resizing = false;
@@ -391,12 +592,14 @@ export class MdzipWorkspaceView {
   private syncing = false;
 
   private readonly elRoot: HTMLElement;
+  private readonly elDocumentStrip: HTMLElement;
   private readonly elToolbar: HTMLElement;
   private readonly elToolbarLeft: HTMLElement;
   private readonly elLayoutControls: HTMLElement;
   private readonly elToolbarControls: HTMLElement;
   private readonly elNavBtn: HTMLButtonElement;
   private readonly elTitleBtn: HTMLButtonElement;
+  private readonly elDocumentInfoBtn: HTMLButtonElement;
   private readonly elPreviewBtn: HTMLButtonElement;
   private readonly elSplitBtn: HTMLButtonElement;
   private readonly elSourceBtn: HTMLButtonElement;
@@ -425,6 +628,10 @@ export class MdzipWorkspaceView {
   private readonly elTitleValidation: HTMLElement;
   private readonly elTitleSaveBtn: HTMLButtonElement;
   private readonly elTitleResetBtn: HTMLButtonElement;
+  private readonly elMetadataDialog: HTMLElement;
+  private readonly elMetadataList: HTMLElement;
+  private readonly elConversionDialog: HTMLElement;
+  private readonly elConversionConfirmBtn: HTMLButtonElement;
   private readonly elOrphanMenu: HTMLElement;
   private readonly elTooltip: HTMLElement;
   private readonly elEmptyState: HTMLElement;
@@ -446,12 +653,14 @@ export class MdzipWorkspaceView {
       container.querySelector<T>(sel) as T;
 
     this.elRoot = q('.mdzip-root');
+    this.elDocumentStrip = q('[data-ref="document-strip"]');
     this.elToolbar = q('[data-ref="toolbar"]');
     this.elToolbarLeft = q('.toolbar-left');
     this.elLayoutControls = q('[data-ref="layout-controls"]');
     this.elToolbarControls = q('[data-ref="toolbar-controls"]');
     this.elNavBtn = q('[data-ref="nav-btn"]');
     this.elTitleBtn = q('[data-ref="title-btn"]');
+    this.elDocumentInfoBtn = q('[data-ref="document-info-btn"]');
     this.elPreviewBtn = q('[data-ref="preview-btn"]');
     this.elSplitBtn = q('[data-ref="split-btn"]');
     this.elSourceBtn = q('[data-ref="source-btn"]');
@@ -480,6 +689,10 @@ export class MdzipWorkspaceView {
     this.elTitleValidation = q('[data-ref="title-validation"]');
     this.elTitleSaveBtn = q('[data-ref="title-save-btn"]');
     this.elTitleResetBtn = q('[data-ref="title-reset-btn"]');
+    this.elMetadataDialog = q('[data-ref="metadata-dialog"]');
+    this.elMetadataList = q('[data-ref="metadata-list"]');
+    this.elConversionDialog = q('[data-ref="conversion-dialog"]');
+    this.elConversionConfirmBtn = q('[data-ref="conversion-confirm-btn"]');
     this.elOrphanMenu = q('[data-ref="orphan-menu"]');
     this.elTooltip = q('[data-ref="tooltip"]');
     this.elEmptyState = q('[data-ref="empty-state"]');
@@ -503,6 +716,9 @@ export class MdzipWorkspaceView {
       const ws = await MdzipWorkspaceService.open(bytes, options);
       this.workspace = ws;
       const snap = ws.snapshot();
+      if (snap.sourceFormat === 'markdown') {
+        this.navVisible = false;
+      }
       this.layout = this.validLayoutForSnapshot(
         this.options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy),
         snap
@@ -557,10 +773,59 @@ export class MdzipWorkspaceView {
     return this.workspace?.getCurrentSnapshot() ?? null;
   }
 
+  public canExecuteCommand(command: MdzipEditorCommand): boolean {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot || !this.cmEditor || snapshot.mode === 'read-only'
+      || snapshot.currentPathType !== 'markdown') {
+      return false;
+    }
+    return true;
+  }
+
+  public async executeCommand(command: MdzipEditorCommand, file?: File): Promise<boolean> {
+    if (!this.canExecuteCommand(command)) {
+      return false;
+    }
+    if (command === 'insert-image') {
+      if (this.workspace?.sourceFormat === 'markdown') {
+        this.requestMdzConversion(file
+          ? { kind: 'image-file', file }
+          : { kind: 'image-picker' });
+        return true;
+      }
+      if (file) {
+        await this.insertImageFile(file);
+      } else {
+        this.elImageInput.click();
+      }
+      return true;
+    }
+    this.applyMarkdownFormat(command);
+    return true;
+  }
+
+  public async convertToMdz(): Promise<boolean> {
+    if (!this.workspace || this.workspace.mode === 'read-only') {
+      return false;
+    }
+    try {
+      const converted = await this.workspace.convertToMdz();
+      this.render();
+      return converted;
+    } catch (error) {
+      this.options.onFailed?.(error);
+      return false;
+    }
+  }
+
+  public focus(): void {
+    this.cmEditor?.focus();
+  }
+
   public destroy(): void {
     this.unsub?.();
     this.cmEditor?.destroy();
-    this.elRoot.remove();
+    this.elRoot?.remove();
   }
 
   private createCmEditor(
@@ -574,7 +839,7 @@ export class MdzipWorkspaceView {
     const state = EditorState.create({
       doc: initialText,
       extensions: [
-        lineNumbers(),
+        ...(this.controlPolicy.lineNumbers ? [lineNumbers()] : []),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         markdown(),
@@ -622,6 +887,7 @@ export class MdzipWorkspaceView {
     this.elWorkspaceShell.hidden = snapshot === null;
 
     if (!snapshot) {
+      this.elDocumentStrip.hidden = true;
       this.elToolbar.hidden = true;
       return;
     }
@@ -630,28 +896,29 @@ export class MdzipWorkspaceView {
     const canEdit = canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, snapshot.mode);
     const canShowSource = canShowSourceLayout(snapshot);
     const showNavigationControl = this.controlPolicy.navigation;
-    const showTitleControl = this.controlPolicy.title && snapshot.mode !== 'read-only';
-    const showLayoutControls = this.controlPolicy.layout;
+    const showTitleControl = this.controlPolicy.title.visible;
+    const showLayoutControls = Object.values(this.controlPolicy.layout).some(Boolean);
     const showSaveControl = this.controlPolicy.save && snapshot.mode !== 'read-only';
     const showZoomControl = this.controlPolicy.zoom;
     const showColorSchemeControl = this.controlPolicy.colorScheme;
     const showEditControls = canEdit
       && snapshot.currentPathType === 'markdown'
-      && this.layout !== 'preview';
+      && this.layout !== 'preview'
+      && hasFormattingControls(this.controlPolicy.formatting);
     const showToolbar = this.controlPolicy.toolbar
-      && (showNavigationControl || showTitleControl || showLayoutControls
+      && (showNavigationControl || showLayoutControls
         || showSaveControl || showZoomControl || showColorSchemeControl || showEditControls);
 
+    this.elDocumentStrip.hidden = !showTitleControl;
     this.elToolbar.hidden = !showToolbar;
-    this.elToolbarLeft.hidden = !showNavigationControl && !showTitleControl;
+    this.elToolbarLeft.hidden = !showNavigationControl;
     this.elEditToolbar.hidden = !showEditControls;
     this.elLayoutControls.hidden = !showLayoutControls;
     this.elToolbarControls.hidden = !showSaveControl && !showZoomControl && !showColorSchemeControl;
     this.elNavBtn.hidden = !showNavigationControl;
-    this.elTitleBtn.hidden = !showTitleControl;
-    this.elPreviewBtn.hidden = !showLayoutControls;
-    this.elSplitBtn.hidden = !showLayoutControls;
-    this.elSourceBtn.hidden = !showLayoutControls;
+    this.elPreviewBtn.hidden = !this.controlPolicy.layout.preview;
+    this.elSplitBtn.hidden = !this.controlPolicy.layout.split;
+    this.elSourceBtn.hidden = !this.controlPolicy.layout.source;
     this.elSaveBtn.hidden = !showSaveControl;
     this.elZoomBtn.hidden = !showZoomControl;
     this.elThemeControls.hidden = !showColorSchemeControl;
@@ -664,11 +931,15 @@ export class MdzipWorkspaceView {
     this.elRoot.classList.toggle('mdzip-theme-light', this.colorScheme === 'light');
 
     this.elTitleBtn.textContent = snapshot.displayTitle;
-    this.elTitleBtn.disabled = snapshot.mode === 'read-only';
+    this.elTitleBtn.disabled = snapshot.mode === 'read-only'
+      || snapshot.sourceFormat === 'markdown'
+      || !this.controlPolicy.title.editable;
+    this.renderMetadata(snapshot);
 
     this.elSaveBtn.disabled = snapshot.mode === 'read-only' || !snapshot.dirty;
-    this.elSplitBtn.disabled = !showLayoutControls || !canShowSource;
-    this.elSourceBtn.disabled = !showLayoutControls || !canShowSource;
+    this.elSplitBtn.disabled = !this.controlPolicy.layout.split || !canShowSource;
+    this.elSourceBtn.disabled = !this.controlPolicy.layout.source || !canShowSource;
+    this.renderFormattingControls();
 
     // Update button labels based on mode
     if (snapshot.mode === 'read-only') {
@@ -698,12 +969,17 @@ export class MdzipWorkspaceView {
     this.elZoomPopover.hidden = !this.zoomOpen;
     this.elZoomLevel.textContent = `${Math.round(this.zoom * 100)}%`;
 
-    const showNavigationPane = this.controlPolicy.navigation && this.navVisible && this.navigationMode === 'editor';
+    const showNavigationPane = this.controlPolicy.navigation
+      && snapshot.sourceFormat === 'mdz'
+      && this.navVisible
+      && this.navigationMode === 'editor';
     this.elRoot.classList.toggle('navigation-pane-visible', showNavigationPane);
     this.elNavPane.classList.toggle('hidden', !showNavigationPane);
     this.elNavResizer.classList.toggle('hidden', !showNavigationPane);
 
-    const navTree = buildMdzipNavTree(snapshot.content.paths);
+    const navTree = snapshot.sourceFormat === 'mdz'
+      ? buildMdzipNavTree(snapshot.content.paths)
+      : [];
     const allowOrphanActions = this.controlPolicy.orphanActions && snapshot.mode !== 'read-only';
     this.elNavTree.innerHTML = navTree.map(n => renderNavNode(n, snapshot, allowOrphanActions)).join('');
     this.prepareTooltips();
@@ -737,6 +1013,7 @@ export class MdzipWorkspaceView {
 
     if (!showTitleControl) {
       this.titleDialogOpen = false;
+      this.metadataDialogOpen = false;
     }
     this.elTitleDialog.hidden = !this.titleDialogOpen;
     if (this.titleDialogOpen) {
@@ -745,6 +1022,8 @@ export class MdzipWorkspaceView {
       this.elTitleValidation.hidden = valid;
       this.elTitleSaveBtn.disabled = !valid;
     }
+    this.elConversionDialog.hidden = this.conversionAction === null;
+    this.elMetadataDialog.hidden = !this.metadataDialogOpen;
 
     if (!allowOrphanActions) {
       this.orphanMenuState = null;
@@ -777,13 +1056,21 @@ export class MdzipWorkspaceView {
       if (!this.controlPolicy.navigation) {
         return;
       }
+      const snapshot = this.workspace?.snapshot();
+      if (snapshot?.sourceFormat === 'markdown') {
+        if (snapshot.mode !== 'read-only') {
+          this.requestMdzConversion({ kind: 'navigation' });
+        }
+        return;
+      }
       this.navVisible = !this.navVisible;
       this.render();
     });
 
     this.elTitleBtn.addEventListener('click', () => {
       const snapshot = this.workspace?.snapshot();
-      if (!this.controlPolicy.title || !snapshot || snapshot.mode === 'read-only') {
+      if (!this.controlPolicy.title.visible || !this.controlPolicy.title.editable
+        || !snapshot || snapshot.mode === 'read-only') {
         return;
       }
       this.titleDraft = snapshot.displayTitle;
@@ -791,15 +1078,19 @@ export class MdzipWorkspaceView {
       this.render();
       requestAnimationFrame(() => this.elTitleInput.select());
     });
+    this.elDocumentInfoBtn.addEventListener('click', () => {
+      this.metadataDialogOpen = true;
+      this.render();
+    });
 
     this.elPreviewBtn.addEventListener('click', () => {
-      if (this.controlPolicy.layout) { this.setLayout('preview'); }
+      if (this.controlPolicy.layout.preview) { this.setLayout('preview'); }
     });
     this.elSplitBtn.addEventListener('click', () => {
-      if (this.controlPolicy.layout) { this.setLayout('split'); }
+      if (this.controlPolicy.layout.split) { this.setLayout('split'); }
     });
     this.elSourceBtn.addEventListener('click', () => {
-      if (this.controlPolicy.layout) { this.setLayout('source'); }
+      if (this.controlPolicy.layout.source) { this.setLayout('source'); }
     });
 
     this.elSaveBtn.addEventListener('click', () => {
@@ -843,10 +1134,13 @@ export class MdzipWorkspaceView {
       this.closeFormatMenus();
       const format = button.dataset['format'] ?? '';
       if (format === 'image') {
-        this.elImageInput.click();
+        void this.executeCommand('insert-image');
         return;
       }
-      this.applyMarkdownFormat(format);
+      const command = markdownCommandFromToolbarFormat(format);
+      if (command) {
+        void this.executeCommand(command);
+      }
     });
     this.elImageInput.addEventListener('change', () => {
       const file = this.elImageInput.files?.[0];
@@ -991,6 +1285,19 @@ export class MdzipWorkspaceView {
       .addEventListener('click', () => { this.titleDialogOpen = false; this.render(); });
 
     this.elTitleSaveBtn.addEventListener('click', () => { void this.saveTitle(); });
+    this.elMetadataDialog.querySelector<HTMLButtonElement>('[data-action="close-metadata"]')!
+      .addEventListener('click', () => {
+        this.metadataDialogOpen = false;
+        this.render();
+      });
+    this.elConversionDialog.querySelector<HTMLButtonElement>('[data-action="cancel-conversion"]')!
+      .addEventListener('click', () => {
+        this.conversionAction = null;
+        this.render();
+      });
+    this.elConversionConfirmBtn.addEventListener('click', () => {
+      void this.confirmMdzConversion();
+    });
 
     this.elOrphanMenu.addEventListener('click', (e) => e.stopPropagation());
     this.elOrphanMenu.querySelector('[data-action="remove-orphan"]')!
@@ -1171,6 +1478,59 @@ export class MdzipWorkspaceView {
     }
   }
 
+  private renderMetadata(snapshot: MdzipWorkspaceSnapshot): void {
+    const manifest = snapshot.content.manifest;
+    const fields: Array<[string, string]> = [
+      ['Filename', snapshot.fileName],
+      ['Format', snapshot.sourceFormat === 'mdz' ? 'MDZ package' : 'Markdown'],
+      ['Document title', snapshot.displayTitle],
+      ['First heading', snapshot.headingFallback ?? 'Not found'],
+      ['Created', formatMetadataValue(manifest?.created)],
+      ['Modified', formatMetadataValue(manifest?.modified)],
+      ['Entry point', snapshot.sourceFormat === 'mdz' ? snapshot.content.entryPoint : 'Not applicable']
+    ];
+
+    this.elMetadataList.replaceChildren(...fields.map(([label, value]) => {
+      const row = this.elRoot.ownerDocument.createElement('div');
+      row.className = 'metadata-row';
+      const term = this.elRoot.ownerDocument.createElement('dt');
+      term.textContent = label;
+      const detail = this.elRoot.ownerDocument.createElement('dd');
+      detail.textContent = value;
+      row.append(term, detail);
+      return row;
+    }));
+  }
+
+  private requestMdzConversion(action: MdzipConversionAction): void {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot || snapshot.mode === 'read-only' || snapshot.sourceFormat !== 'markdown') {
+      return;
+    }
+    this.conversionAction = action;
+    this.render();
+    requestAnimationFrame(() => this.elConversionConfirmBtn.focus());
+  }
+
+  private async confirmMdzConversion(): Promise<void> {
+    const action = this.conversionAction;
+    this.conversionAction = null;
+    if (!action || !await this.convertToMdz()) {
+      this.render();
+      return;
+    }
+    if (action.kind === 'navigation') {
+      this.navVisible = true;
+      this.render();
+      return;
+    }
+    if (action.kind === 'image-file') {
+      await this.insertImageFile(action.file);
+      return;
+    }
+    this.elImageInput.click();
+  }
+
   private async handlePaste(event: ClipboardEvent): Promise<void> {
     const snapshot = this.workspace?.snapshot();
     if (!snapshot || snapshot.mode === 'read-only' || snapshot.currentPathType !== 'markdown') {
@@ -1220,7 +1580,7 @@ export class MdzipWorkspaceView {
     }
   }
 
-  private applyMarkdownFormat(format: string): void {
+  private applyMarkdownFormat(format: Exclude<MdzipEditorCommand, 'insert-image'>): void {
     const editor = this.cmEditor;
     const snapshot = this.workspace?.snapshot();
     if (!editor || !snapshot || snapshot.mode === 'read-only' || snapshot.currentPathType !== 'markdown') {
@@ -1234,7 +1594,7 @@ export class MdzipWorkspaceView {
       case 'italic':
         this.wrapSelection('_', '_', 'italic text');
         break;
-      case 'strike':
+      case 'strikethrough':
         this.wrapSelection('~~', '~~', 'strikethrough text');
         break;
       case 'paragraph':
@@ -1257,13 +1617,13 @@ export class MdzipWorkspaceView {
       case 'ordered-list':
         this.numberSelectedLines();
         break;
-      case 'code':
+      case 'inline-code':
         this.wrapSelection('`', '`', 'code');
         break;
       case 'code-block':
         this.wrapSelection('```\n', '\n```', 'code');
         break;
-      case 'quote':
+      case 'blockquote':
         this.prefixSelectedLines('> ', /^(\s*)>\s?/);
         break;
       case 'link':
@@ -1272,6 +1632,46 @@ export class MdzipWorkspaceView {
       default:
         return;
     }
+  }
+
+  private renderFormattingControls(): void {
+    const formatting = this.controlPolicy.formatting;
+    const visibility: Record<string, boolean> = {
+      bold: formatting.bold,
+      italic: formatting.italic,
+      strikethrough: formatting.strikethrough,
+      headings: formatting.headings.length > 0,
+      bulletList: formatting.bulletList,
+      orderedList: formatting.orderedList,
+      code: formatting.inlineCode || formatting.codeBlock,
+      blockquote: formatting.blockquote,
+      link: formatting.link,
+      image: formatting.image
+    };
+
+    this.elEditToolbar.querySelectorAll<HTMLElement>('[data-format-control]').forEach((element) => {
+      element.hidden = !visibility[element.dataset['formatControl'] ?? ''];
+    });
+    this.elEditToolbar.querySelectorAll<HTMLElement>('[data-heading-level]').forEach((element) => {
+      const level = Number(element.dataset['headingLevel']) as MdzipHeadingLevel;
+      element.hidden = !formatting.headings.includes(level);
+    });
+    this.elEditToolbar.querySelector<HTMLElement>('[data-code-kind="inline"]')!.hidden =
+      !formatting.inlineCode;
+    this.elEditToolbar.querySelector<HTMLElement>('[data-code-kind="block"]')!.hidden =
+      !formatting.codeBlock;
+
+    const groups = Array.from(this.elEditToolbar.querySelectorAll<HTMLElement>('.edit-toolbar-group'));
+    groups.forEach((group) => {
+      group.hidden = !Array.from(group.children).some(
+        child => child instanceof HTMLElement && !child.hidden && child.matches('[data-format-control]')
+      );
+    });
+    this.elEditToolbar.querySelectorAll<HTMLElement>('.edit-toolbar-divider').forEach((divider, index) => {
+      const hasVisibleBefore = groups.slice(0, index + 1).some(group => !group.hidden);
+      const hasVisibleAfter = groups.slice(index + 1).some(group => !group.hidden);
+      divider.hidden = !hasVisibleBefore || !hasVisibleAfter;
+    });
   }
 
   private toggleFormatMenu(toggle: HTMLButtonElement): void {
@@ -1506,6 +1906,47 @@ function canShowSourceLayout(snapshot: MdzipWorkspaceSnapshot): boolean {
   return canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, 'editable');
 }
 
+function hasFormattingControls(policy: MdzipResolvedFormattingControlPolicy): boolean {
+  return policy.bold
+    || policy.italic
+    || policy.strikethrough
+    || policy.headings.length > 0
+    || policy.bulletList
+    || policy.orderedList
+    || policy.inlineCode
+    || policy.codeBlock
+    || policy.blockquote
+    || policy.link
+    || policy.image;
+}
+
+function markdownCommandFromToolbarFormat(format: string): MdzipEditorCommand | null {
+  switch (format) {
+    case 'bold':
+    case 'italic':
+    case 'paragraph':
+    case 'heading-1':
+    case 'heading-2':
+    case 'heading-3':
+    case 'heading-4':
+    case 'heading-5':
+    case 'heading-6':
+    case 'bullet-list':
+    case 'ordered-list':
+    case 'code-block':
+    case 'link':
+      return format;
+    case 'strike':
+      return 'strikethrough';
+    case 'code':
+      return 'inline-code';
+    case 'quote':
+      return 'blockquote';
+    default:
+      return null;
+  }
+}
+
 function imageMimeTypeFromFileName(fileName: string): string {
   const extension = fileName.toLowerCase().split('.').pop();
   switch (extension) {
@@ -1524,58 +1965,76 @@ function imageMimeTypeFromFileName(fileName: string): string {
   }
 }
 
+function formatMetadataValue(value: unknown): string {
+  if (typeof value === 'string' && value.trim()) {
+    return value;
+  }
+  if (value && typeof value === 'object' && 'when' in value) {
+    const when = (value as { when?: unknown }).when;
+    return typeof when === 'string' && when.trim() ? when : 'Not available';
+  }
+  return 'Not available';
+}
+
 const SHELL_HTML = `
 <section class="mdzip-root">
+  <div class="document-strip" data-ref="document-strip" hidden>
+    <button type="button" class="title-button" data-ref="title-btn"></button>
+    <button type="button" class="document-info-button" data-ref="document-info-btn"
+      title="Document information" aria-label="Document information">
+      ${INFO_ICON_HTML}
+    </button>
+  </div>
+
   <header class="toolbar" data-ref="toolbar" hidden>
     <div class="toolbar-start">
       <div class="toolbar-left">
         <button type="button" class="icon-toggle nav-toggle" data-ref="nav-btn" title="Toggle contents" aria-label="Toggle contents">
           ${NAV_TOGGLE_ICON_HTML}
         </button>
-        <button type="button" class="title-button" data-ref="title-btn"></button>
       </div>
 
       <div class="edit-toolbar" data-ref="edit-toolbar" role="toolbar" aria-label="Markdown formatting">
         <div class="edit-toolbar-group">
-          <button type="button" data-format="bold" title="Bold" aria-label="Bold">${BOLD_ICON_HTML}</button>
-          <button type="button" data-format="italic" title="Italic" aria-label="Italic">${ITALIC_ICON_HTML}</button>
-          <button type="button" data-format="strike" title="Strikethrough" aria-label="Strikethrough">${STRIKE_ICON_HTML}</button>
-          <div class="format-menu">
+          <button type="button" data-format="bold" data-format-control="bold" title="Bold" aria-label="Bold">${BOLD_ICON_HTML}</button>
+          <button type="button" data-format="italic" data-format-control="italic" title="Italic" aria-label="Italic">${ITALIC_ICON_HTML}</button>
+          <button type="button" data-format="strike" data-format-control="strikethrough" title="Strikethrough" aria-label="Strikethrough">${STRIKE_ICON_HTML}</button>
+          <div class="format-menu" data-format-control="headings">
             <button type="button" class="format-menu-toggle" data-format-menu-toggle
               aria-label="Heading" aria-haspopup="menu" aria-expanded="false">
               ${HEADING_ICON_HTML}${CHEVRON_ICON_HTML}
             </button>
             <div class="format-menu-popover" data-format-menu role="menu" aria-label="Heading level" hidden>
               <button type="button" role="menuitem" data-format="paragraph">Paragraph</button>
-              <button type="button" role="menuitem" data-format="heading-1"><strong>H1</strong> Heading 1</button>
-              <button type="button" role="menuitem" data-format="heading-2"><strong>H2</strong> Heading 2</button>
-              <button type="button" role="menuitem" data-format="heading-3"><strong>H3</strong> Heading 3</button>
-              <button type="button" role="menuitem" data-format="heading-4"><strong>H4</strong> Heading 4</button>
-              <button type="button" role="menuitem" data-format="heading-5"><strong>H5</strong> Heading 5</button>
-              <button type="button" role="menuitem" data-format="heading-6"><strong>H6</strong> Heading 6</button>
+              <button type="button" role="menuitem" data-format="heading-1" data-heading-level="1"><strong>H1</strong> Heading 1</button>
+              <button type="button" role="menuitem" data-format="heading-2" data-heading-level="2"><strong>H2</strong> Heading 2</button>
+              <button type="button" role="menuitem" data-format="heading-3" data-heading-level="3"><strong>H3</strong> Heading 3</button>
+              <button type="button" role="menuitem" data-format="heading-4" data-heading-level="4"><strong>H4</strong> Heading 4</button>
+              <button type="button" role="menuitem" data-format="heading-5" data-heading-level="5"><strong>H5</strong> Heading 5</button>
+              <button type="button" role="menuitem" data-format="heading-6" data-heading-level="6"><strong>H6</strong> Heading 6</button>
             </div>
           </div>
         </div>
         <span class="edit-toolbar-divider" aria-hidden="true"></span>
         <div class="edit-toolbar-group">
-          <button type="button" data-format="bullet-list" title="Bulleted list" aria-label="Bulleted list">${BULLET_LIST_ICON_HTML}</button>
-          <button type="button" data-format="ordered-list" title="Numbered list" aria-label="Numbered list">${ORDERED_LIST_ICON_HTML}</button>
-          <div class="format-menu">
+          <button type="button" data-format="bullet-list" data-format-control="bulletList" title="Bulleted list" aria-label="Bulleted list">${BULLET_LIST_ICON_HTML}</button>
+          <button type="button" data-format="ordered-list" data-format-control="orderedList" title="Numbered list" aria-label="Numbered list">${ORDERED_LIST_ICON_HTML}</button>
+          <div class="format-menu" data-format-control="code">
             <button type="button" class="format-menu-toggle" data-format-menu-toggle
               aria-label="Code" aria-haspopup="menu" aria-expanded="false">
               ${CODE_ICON_HTML}${CHEVRON_ICON_HTML}
             </button>
             <div class="format-menu-popover" data-format-menu role="menu" aria-label="Code format" hidden>
-              <button type="button" role="menuitem" data-format="code">Inline code</button>
-              <button type="button" role="menuitem" data-format="code-block">Code block</button>
+              <button type="button" role="menuitem" data-format="code" data-code-kind="inline">Inline code</button>
+              <button type="button" role="menuitem" data-format="code-block" data-code-kind="block">Code block</button>
             </div>
           </div>
-          <button type="button" data-format="quote" title="Blockquote" aria-label="Blockquote">${QUOTE_ICON_HTML}</button>
+          <button type="button" data-format="quote" data-format-control="blockquote" title="Blockquote" aria-label="Blockquote">${QUOTE_ICON_HTML}</button>
         </div>
         <span class="edit-toolbar-divider" aria-hidden="true"></span>
         <div class="edit-toolbar-group">
-          <button type="button" data-format="link" title="Link" aria-label="Link">${LINK_ICON_HTML}</button>
-          <button type="button" data-format="image" title="Image" aria-label="Image">${IMAGE_FORMAT_ICON_HTML}</button>
+          <button type="button" data-format="link" data-format-control="link" title="Link" aria-label="Link">${LINK_ICON_HTML}</button>
+          <button type="button" data-format="image" data-format-control="image" title="Image" aria-label="Image">${IMAGE_FORMAT_ICON_HTML}</button>
           <input type="file" data-ref="image-input" accept="image/*" hidden />
         </div>
       </div>
@@ -1656,6 +2115,33 @@ const SHELL_HTML = `
         <button type="button" class="reset-title" data-ref="title-reset-btn">Reset</button>
         <button type="button" data-action="cancel-title">Cancel</button>
         <button type="button" class="save-title" data-ref="title-save-btn">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="title-dialog-backdrop" data-ref="conversion-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-conversion-dialog-heading">
+    <div class="title-dialog">
+      <h3 id="mdzip-conversion-dialog-heading">Convert to MDZ?</h3>
+      <p>
+        Regular Markdown files contain only text. Convert this document to an
+        MDZ package to add images, package navigation, and document metadata.
+      </p>
+      <p>The next save will produce an .mdz file.</p>
+      <div class="title-dialog-actions">
+        <button type="button" data-action="cancel-conversion">Cancel</button>
+        <button type="button" class="save-title" data-ref="conversion-confirm-btn">Convert</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="title-dialog-backdrop" data-ref="metadata-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-metadata-dialog-heading">
+    <div class="title-dialog metadata-dialog">
+      <h3 id="mdzip-metadata-dialog-heading">Document Information</h3>
+      <dl data-ref="metadata-list"></dl>
+      <div class="title-dialog-actions">
+        <button type="button" class="save-title" data-action="close-metadata">Close</button>
       </div>
     </div>
   </div>

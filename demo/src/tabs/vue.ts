@@ -5,12 +5,21 @@ import type { TabController } from '../tab-controller.js';
 
 export function initVue(
   container: HTMLElement,
-  onSaved: (b: Uint8Array) => void,
+  onSaved: (b: Uint8Array, fileName?: string) => void,
   onFailed: (e: unknown) => void
 ): TabController {
+  container.replaceChildren();
   let currentBytes: Uint8Array | null = null;
   let currentMode = 'editable';
   let currentFileName = 'document.mdz';
+
+  const handleSaved = (event: MdzipWorkspaceSave): void => {
+    onSaved(event.bytes, event.snapshot.fileName);
+  };
+
+  const handleFailed = (e: unknown): void => {
+    onFailed(e);
+  };
 
   const app = createApp({
     render: () => h(MdzipWorkspace, {
@@ -18,8 +27,8 @@ export function initVue(
       mode: currentMode,
       fileName: currentFileName,
       controls: 'standalone-editor',
-      onSaved: (event: MdzipWorkspaceSave) => onSaved(event.bytes),
-      onFailed,
+      onSaved: handleSaved,
+      onFailed: handleFailed,
     }),
   });
 
