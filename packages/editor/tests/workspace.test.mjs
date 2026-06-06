@@ -146,6 +146,7 @@ test('resolves control policy presets for common host scenarios', () => {
     layout: true,
     save: false,
     zoom: true,
+    colorScheme: true,
     orphanActions: false
   });
 
@@ -158,7 +159,8 @@ test('resolves custom control policy overrides', () => {
   const policy = resolveMdzipControlPolicy({
     preset: 'hosted-editor',
     toolbar: false,
-    zoom: false
+    zoom: false,
+    colorScheme: false
   });
 
   assert.equal(policy.preset, 'hosted-editor');
@@ -166,4 +168,5 @@ test('resolves custom control policy overrides', () => {
   assert.equal(policy.save, false);
   assert.equal(policy.navigation, true);
   assert.equal(policy.zoom, false);
+  assert.equal(policy.colorScheme, false);
 });

@@ -6,6 +6,11 @@ export function initRaw(
   onSaved: (b: Uint8Array) => void,
   onFailed: (e: unknown) => void
 ): TabController {
+  container.style.display = 'flex';
+  container.style.flexDirection = 'column';
+  container.style.height = '100%';
+  container.style.minHeight = '0';
+
   let currentBytes = new Uint8Array();
   let currentMode: 'read-only' | 'editable' = 'read-only';
   let currentFileName = 'document.mdz';
@@ -109,7 +114,13 @@ export function initRaw(
   }
 
   const viewerContainer = document.createElement('div');
-  viewerContainer.style.cssText = 'flex: 1; overflow: hidden; display: flex; flex-direction: column;';
+  viewerContainer.style.cssText = `
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  `;
 
   container.appendChild(controlPanel);
   container.appendChild(viewerContainer);

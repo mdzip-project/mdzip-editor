@@ -1,10 +1,16 @@
-import { MDZIP_VARIABLES_CSS } from './theme.js';
+import {
+  MDZIP_DARK_THEME_CSS,
+  MDZIP_LIGHT_THEME_CSS,
+  MDZIP_VARIABLES_CSS
+} from './theme.js';
 
 export const WORKSPACE_CSS = `
 .mdzip-root {
   /* Layout variables */
   --mdz-zoom: 1;
   --nav-pane-width: 280px;
+  --editor-pane-offset: 12px;
+  --workspace-pane-offset: 0px;
   --split-edit-ratio: 0.5;
 
   /* Theme variable mappings */
@@ -20,6 +26,16 @@ export const WORKSPACE_CSS = `
   font-size: 13px;
   overflow: hidden;
   box-sizing: border-box;
+}
+
+.mdzip-root.mdzip-theme-light {
+  color-scheme: light;
+  ${MDZIP_LIGHT_THEME_CSS}
+}
+
+.mdzip-root.mdzip-theme-dark {
+  color-scheme: dark;
+  ${MDZIP_DARK_THEME_CSS}
 }
 
 .mdzip-root *,
@@ -42,6 +58,8 @@ export const WORKSPACE_CSS = `
   border-bottom: 1px solid var(--mdzip-border-color);
   min-height: 48px;
   flex: 0 0 auto;
+  position: relative;
+  z-index: 5;
 }
 
 .mdzip-root .toolbar-left,
@@ -52,7 +70,26 @@ export const WORKSPACE_CSS = `
   gap: 10px;
 }
 
+.mdzip-root .toolbar-start {
+  display: flex;
+  align-items: center;
+  justify-self: start;
+  min-width: 0;
+  gap: 12px;
+}
+
+.mdzip-root.navigation-pane-visible {
+  --editor-pane-offset: calc(var(--nav-pane-width) + 6px);
+  --workspace-pane-offset: calc(var(--nav-pane-width) + 6px);
+}
+
+.mdzip-root .toolbar-left {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
 .mdzip-root .toolbar-controls {
+  grid-column: 3;
   justify-self: end;
   position: relative;
 }
@@ -93,6 +130,10 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .view-mode-toggle-group {
+  position: absolute;
+  left: calc((100% + var(--workspace-pane-offset)) / 2);
+  top: 50%;
+  transform: translate(-50%, -50%);
   gap: 0;
   padding: 0;
   border: 0;
@@ -193,6 +234,32 @@ export const WORKSPACE_CSS = `
 .mdzip-root .zoom-toggle.active {
   background: var(--mdzip-control-hover-background-color);
   color: var(--mdzip-link-color);
+}
+
+.mdzip-root .theme-toggle-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--mdzip-widget-border-color);
+  border-radius: 8px;
+  background: var(--mdzip-widget-background-color);
+}
+
+.mdzip-root .theme-toggle {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+}
+
+.mdzip-root .theme-toggle.active {
+  background: var(--mdzip-control-hover-background-color);
+  color: var(--mdzip-link-color);
+}
+
+.mdzip-root .theme-toggle .toggle-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .mdzip-root .workspace-shell {
@@ -578,9 +645,155 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root .edit-pane {
   overflow: hidden;
+  flex-direction: column;
 }
 
-.mdzip-root .edit-pane .cm-editor {
+.mdzip-root .edit-pane.active {
+  display: flex;
+}
+
+.mdzip-root .pane-stack.split-mode .edit-pane {
+  display: flex !important;
+}
+
+.mdzip-root .edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  flex: 0 0 auto;
+  position: absolute;
+  left: var(--editor-pane-offset);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+}
+
+.mdzip-root:not(.navigation-pane-visible) .edit-toolbar {
+  position: static;
+  transform: none;
+}
+
+.mdzip-root .edit-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.mdzip-root .edit-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--mdzip-control-foreground-color);
+  cursor: pointer;
+}
+
+.mdzip-root .edit-toolbar button:hover,
+.mdzip-root .edit-toolbar button:focus-visible {
+  outline: none;
+  background: var(--mdzip-control-hover-background-color);
+}
+
+.mdzip-root .edit-toolbar button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--mdzip-focus-outline-color);
+}
+
+.mdzip-root .edit-toolbar .format-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.mdzip-root .edit-toolbar .format-menu-toggle {
+  width: 42px;
+  gap: 2px;
+}
+
+.mdzip-root .edit-toolbar .format-menu-toggle[aria-expanded="true"] {
+  background: var(--mdzip-control-hover-background-color);
+  box-shadow: inset 0 0 0 1px var(--mdzip-focus-outline-color);
+}
+
+.mdzip-root .edit-toolbar .format-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 164px;
+  padding: 5px;
+  border: 1px solid var(--mdzip-widget-border-color);
+  border-radius: 7px;
+  background: var(--mdzip-widget-background-color);
+  color: var(--mdzip-editor-foreground-color);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+}
+
+.mdzip-root .edit-toolbar .format-menu-popover button {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  white-space: nowrap;
+}
+
+.mdzip-root .edit-toolbar .format-menu-popover button:hover,
+.mdzip-root .edit-toolbar .format-menu-popover button:focus-visible {
+  background: var(--mdzip-control-hover-background-color);
+  box-shadow: none;
+}
+
+.mdzip-root .edit-toolbar .format-menu-popover strong {
+  display: inline-block;
+  width: 22px;
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 11px;
+  text-align: center;
+}
+
+.mdzip-root .format-icon {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.mdzip-root .format-chevron {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+}
+
+.mdzip-root .edit-toolbar-divider {
+  width: 1px;
+  height: 22px;
+  background: var(--mdzip-border-color);
+  flex: 0 0 auto;
+}
+
+.mdzip-root .editor-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mdzip-root .editor-host .cm-editor {
   height: 100%;
 }
 
@@ -858,6 +1071,27 @@ export const WORKSPACE_CSS = `
 
 @media (max-width: 900px) {
   .mdzip-root { --nav-pane-width: 220px; }
+  .mdzip-root .toolbar {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    row-gap: 4px;
+  }
+  .mdzip-root .toolbar-start {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+  }
+  .mdzip-root .edit-toolbar {
+    position: static;
+    transform: none;
+  }
+  .mdzip-root .view-mode-toggle-group {
+    position: static;
+    transform: none;
+  }
+  .mdzip-root .toolbar-controls {
+    grid-column: 3;
+    grid-row: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -869,12 +1103,18 @@ export const WORKSPACE_CSS = `
 
 @media (max-width: 640px) {
   .mdzip-root .toolbar {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     row-gap: 6px;
   }
-  .mdzip-root .toolbar-buttons {
+  .mdzip-root .toolbar-start {
     grid-column: 1 / -1;
     grid-row: 2;
+    overflow-x: auto;
+  }
+  .mdzip-root .toolbar-controls {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
   }
 }
 `;

@@ -5,6 +5,9 @@ import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import {
+  Bold,
+  ChevronDown,
+  Code,
   Columns2,
   Eye,
   File,
@@ -13,10 +16,21 @@ import {
   FileText,
   Folder,
   FolderOpen,
+  Hash,
+  Heading1,
+  ImagePlus,
+  Italic,
   Link2Off,
+  Link,
+  List,
+  ListOrdered,
+  Moon,
   PanelLeft,
+  Quote,
   Save,
   SquarePen,
+  Strikethrough,
+  Sun,
   ZoomIn
 } from 'lucide';
 import type { MdzWorkspace } from 'mdzip-core-js';
@@ -53,15 +67,30 @@ const IMAGE_ICON_HTML = lucideIcon(FileImage, NAV_ICON_CLASS);
 const FILE_ICON_HTML = lucideIcon(File, NAV_ICON_CLASS);
 const ORPHAN_ICON_HTML = lucideIcon(Link2Off, '');
 const SOURCE_EDIT_ICON_HTML = lucideIcon(SquarePen, TOOLBAR_ICON_CLASS);
-const SOURCE_MARKDOWN_ICON_HTML = lucideIcon(MD_MARKDOWN_ICON, TOOLBAR_ICON_CLASS);
+const SOURCE_MARKDOWN_ICON_HTML = lucideIcon(Hash, TOOLBAR_ICON_CLASS);
 const NAV_TOGGLE_ICON_HTML = lucideIcon(PanelLeft, `${TOOLBAR_ICON_CLASS} nav-toggle-icon`);
 const PREVIEW_ICON_HTML = lucideIcon(Eye, TOOLBAR_ICON_CLASS);
 const SPLIT_ICON_HTML = lucideIcon(Columns2, TOOLBAR_ICON_CLASS);
 const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
+const DARK_THEME_ICON_HTML = lucideIcon(Moon, TOOLBAR_ICON_CLASS);
+const LIGHT_THEME_ICON_HTML = lucideIcon(Sun, TOOLBAR_ICON_CLASS);
+const FORMAT_ICON_CLASS = 'format-icon';
+const BOLD_ICON_HTML = lucideIcon(Bold, FORMAT_ICON_CLASS);
+const ITALIC_ICON_HTML = lucideIcon(Italic, FORMAT_ICON_CLASS);
+const STRIKE_ICON_HTML = lucideIcon(Strikethrough, FORMAT_ICON_CLASS);
+const HEADING_ICON_HTML = lucideIcon(Heading1, FORMAT_ICON_CLASS);
+const BULLET_LIST_ICON_HTML = lucideIcon(List, FORMAT_ICON_CLASS);
+const ORDERED_LIST_ICON_HTML = lucideIcon(ListOrdered, FORMAT_ICON_CLASS);
+const CODE_ICON_HTML = lucideIcon(Code, FORMAT_ICON_CLASS);
+const QUOTE_ICON_HTML = lucideIcon(Quote, FORMAT_ICON_CLASS);
+const LINK_ICON_HTML = lucideIcon(Link, FORMAT_ICON_CLASS);
+const IMAGE_FORMAT_ICON_HTML = lucideIcon(ImagePlus, FORMAT_ICON_CLASS);
+const CHEVRON_ICON_HTML = lucideIcon(ChevronDown, 'format-chevron');
 
 export type MdzipWorkspaceLayout = 'preview' | 'source' | 'split';
 export type MdzipNavigationMode = 'editor' | 'host' | 'none';
+export type MdzipColorScheme = 'light' | 'dark';
 
 export type MdzipControlPreset =
   | 'preview'
@@ -78,6 +107,7 @@ export interface MdzipControlPolicy {
   layout?: boolean;
   save?: boolean;
   zoom?: boolean;
+  colorScheme?: boolean;
   orphanActions?: boolean;
 }
 
@@ -89,6 +119,7 @@ export interface MdzipResolvedControlPolicy {
   layout: boolean;
   save: boolean;
   zoom: boolean;
+  colorScheme: boolean;
   orphanActions: boolean;
 }
 
@@ -105,6 +136,7 @@ export interface MdzipWorkspaceSave {
 export interface MdzipWorkspaceViewOptions {
   controls?: MdzipControlPreset | MdzipControlPolicy;
   initialLayout?: MdzipWorkspaceLayout;
+  initialColorScheme?: MdzipColorScheme;
   navigationMode?: MdzipNavigationMode;
   navigationButtonActive?: boolean;
   onChanged?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
@@ -113,6 +145,7 @@ export interface MdzipWorkspaceViewOptions {
   onSelectionChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onDirtyChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
+  onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
   onFailed?: (error: unknown) => void;
 }
 
@@ -125,6 +158,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     layout: false,
     save: false,
     zoom: false,
+    colorScheme: false,
     orphanActions: false
   },
   viewer: {
@@ -135,6 +169,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     layout: true,
     save: false,
     zoom: true,
+    colorScheme: true,
     orphanActions: false
   },
   'standalone-editor': {
@@ -145,6 +180,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     layout: true,
     save: true,
     zoom: true,
+    colorScheme: true,
     orphanActions: true
   },
   'hosted-editor': {
@@ -155,6 +191,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     layout: true,
     save: false,
     zoom: true,
+    colorScheme: true,
     orphanActions: true
   }
 };
@@ -337,6 +374,7 @@ export class MdzipWorkspaceView {
   private navVisible = true;
   private zoom = 1;
   private zoomOpen = false;
+  private colorScheme: MdzipColorScheme;
   private titleDialogOpen = false;
   private titleDraft = '';
   private navPaneWidth = 280;
@@ -365,6 +403,9 @@ export class MdzipWorkspaceView {
   private readonly elSourceIcon: HTMLElement;
   private readonly elSaveBtn: HTMLButtonElement;
   private readonly elZoomBtn: HTMLButtonElement;
+  private readonly elThemeControls: HTMLElement;
+  private readonly elDarkThemeBtn: HTMLButtonElement;
+  private readonly elLightThemeBtn: HTMLButtonElement;
   private readonly elZoomPopover: HTMLElement;
   private readonly elZoomLevel: HTMLElement;
   private readonly elWorkspaceShell: HTMLElement;
@@ -373,6 +414,9 @@ export class MdzipWorkspaceView {
   private readonly elNavTree: HTMLElement;
   private readonly elPaneStack: HTMLElement;
   private readonly elEditPane: HTMLElement;
+  private readonly elEditToolbar: HTMLElement;
+  private readonly elImageInput: HTMLInputElement;
+  private readonly elEditorHost: HTMLElement;
   private readonly elSplitResizer: HTMLElement;
   private readonly elPreviewPane: HTMLElement;
   private readonly elPreviewContent: HTMLElement;
@@ -390,6 +434,10 @@ export class MdzipWorkspaceView {
     this.controlPolicy = resolveMdzipControlPolicy(options.controls);
     this.navigationMode = options.navigationMode ?? 'editor';
     this.layout = options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy);
+    this.colorScheme = options.initialColorScheme
+      ?? (container.ownerDocument.defaultView?.matchMedia('(prefers-color-scheme: dark)').matches
+        ? 'dark'
+        : 'light');
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
     injectStyles(container.ownerDocument);
     container.innerHTML = SHELL_HTML;
@@ -410,6 +458,9 @@ export class MdzipWorkspaceView {
     this.elSourceIcon = q('[data-ref="source-icon"]');
     this.elSaveBtn = q('[data-ref="save-btn"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
+    this.elThemeControls = q('[data-ref="theme-controls"]');
+    this.elDarkThemeBtn = q('[data-ref="dark-theme-btn"]');
+    this.elLightThemeBtn = q('[data-ref="light-theme-btn"]');
     this.elZoomPopover = q('[data-ref="zoom-popover"]');
     this.elZoomLevel = q('[data-ref="zoom-level"]');
     this.elWorkspaceShell = q('[data-ref="workspace-shell"]');
@@ -418,6 +469,9 @@ export class MdzipWorkspaceView {
     this.elNavTree = q('[data-ref="nav-tree"]');
     this.elPaneStack = q('[data-ref="pane-stack"]');
     this.elEditPane = q('[data-ref="edit-pane"]');
+    this.elEditToolbar = q('[data-ref="edit-toolbar"]');
+    this.elImageInput = q('[data-ref="image-input"]');
+    this.elEditorHost = q('[data-ref="editor-host"]');
     this.elSplitResizer = q('[data-ref="split-resizer"]');
     this.elPreviewPane = q('[data-ref="preview-pane"]');
     this.elPreviewContent = q('[data-ref="preview-content"]');
@@ -453,7 +507,7 @@ export class MdzipWorkspaceView {
         this.options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy),
         snap
       );
-      this.cmEditor = this.createCmEditor(this.elEditPane, snap.currentText, snap.mode);
+      this.cmEditor = this.createCmEditor(this.elEditorHost, snap.currentText, snap.mode);
       this.unsub = ws.subscribe(() => {
         this.render();
         void this.notifyChanged();
@@ -479,7 +533,7 @@ export class MdzipWorkspaceView {
         this.options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy),
         snap
       );
-      this.cmEditor = this.createCmEditor(this.elEditPane, snap.currentText, snap.mode);
+      this.cmEditor = this.createCmEditor(this.elEditorHost, snap.currentText, snap.mode);
       this.unsub = ws.subscribe(() => {
         this.render();
         void this.notifyChanged();
@@ -580,13 +634,19 @@ export class MdzipWorkspaceView {
     const showLayoutControls = this.controlPolicy.layout;
     const showSaveControl = this.controlPolicy.save && snapshot.mode !== 'read-only';
     const showZoomControl = this.controlPolicy.zoom;
+    const showColorSchemeControl = this.controlPolicy.colorScheme;
+    const showEditControls = canEdit
+      && snapshot.currentPathType === 'markdown'
+      && this.layout !== 'preview';
     const showToolbar = this.controlPolicy.toolbar
-      && (showNavigationControl || showTitleControl || showLayoutControls || showSaveControl || showZoomControl);
+      && (showNavigationControl || showTitleControl || showLayoutControls
+        || showSaveControl || showZoomControl || showColorSchemeControl || showEditControls);
 
     this.elToolbar.hidden = !showToolbar;
     this.elToolbarLeft.hidden = !showNavigationControl && !showTitleControl;
+    this.elEditToolbar.hidden = !showEditControls;
     this.elLayoutControls.hidden = !showLayoutControls;
-    this.elToolbarControls.hidden = !showSaveControl && !showZoomControl;
+    this.elToolbarControls.hidden = !showSaveControl && !showZoomControl && !showColorSchemeControl;
     this.elNavBtn.hidden = !showNavigationControl;
     this.elTitleBtn.hidden = !showTitleControl;
     this.elPreviewBtn.hidden = !showLayoutControls;
@@ -594,11 +654,14 @@ export class MdzipWorkspaceView {
     this.elSourceBtn.hidden = !showLayoutControls;
     this.elSaveBtn.hidden = !showSaveControl;
     this.elZoomBtn.hidden = !showZoomControl;
+    this.elThemeControls.hidden = !showColorSchemeControl;
 
     this.elRoot.style.setProperty('--mdz-zoom', String(this.zoom));
     this.elRoot.style.setProperty('--nav-pane-width', `${this.navPaneWidth}px`);
     this.elRoot.style.setProperty('--split-edit-ratio', String(this.splitRatio));
     this.elRoot.classList.toggle('resizing', this.resizing);
+    this.elRoot.classList.toggle('mdzip-theme-dark', this.colorScheme === 'dark');
+    this.elRoot.classList.toggle('mdzip-theme-light', this.colorScheme === 'light');
 
     this.elTitleBtn.textContent = snapshot.displayTitle;
     this.elTitleBtn.disabled = snapshot.mode === 'read-only';
@@ -627,11 +690,16 @@ export class MdzipWorkspaceView {
     this.elNavBtn.classList.toggle('active', this.navVisible);
     this.elNavBtn.setAttribute('aria-pressed', String(this.navVisible));
     this.elZoomBtn.classList.toggle('active', this.zoomOpen);
+    this.elDarkThemeBtn.classList.toggle('active', this.colorScheme === 'dark');
+    this.elLightThemeBtn.classList.toggle('active', this.colorScheme === 'light');
+    this.elDarkThemeBtn.setAttribute('aria-pressed', String(this.colorScheme === 'dark'));
+    this.elLightThemeBtn.setAttribute('aria-pressed', String(this.colorScheme === 'light'));
 
     this.elZoomPopover.hidden = !this.zoomOpen;
     this.elZoomLevel.textContent = `${Math.round(this.zoom * 100)}%`;
 
     const showNavigationPane = this.controlPolicy.navigation && this.navVisible && this.navigationMode === 'editor';
+    this.elRoot.classList.toggle('navigation-pane-visible', showNavigationPane);
     this.elNavPane.classList.toggle('hidden', !showNavigationPane);
     this.elNavResizer.classList.toggle('hidden', !showNavigationPane);
 
@@ -696,6 +764,7 @@ export class MdzipWorkspaceView {
     const doc = this.elRoot.ownerDocument;
 
     doc.addEventListener('click', () => {
+      this.closeFormatMenus();
       if (this.zoomOpen || this.orphanMenuState) {
         this.zoomOpen = false;
         this.orphanMenuState = null;
@@ -753,6 +822,62 @@ export class MdzipWorkspaceView {
       .addEventListener('click', () => this.setZoom(this.zoom + 0.1));
     this.elZoomPopover.querySelector('[data-action="zoom-reset"]')!
       .addEventListener('click', () => this.setZoom(1));
+    this.elDarkThemeBtn.addEventListener('click', () => this.setColorScheme('dark'));
+    this.elLightThemeBtn.addEventListener('click', () => this.setColorScheme('light'));
+
+    this.elEditToolbar.addEventListener('click', (event) => {
+      const menuToggle = (event.target as HTMLElement)
+        .closest<HTMLButtonElement>('[data-format-menu-toggle]');
+      if (menuToggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.toggleFormatMenu(menuToggle);
+        return;
+      }
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-format]');
+      if (!button) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeFormatMenus();
+      const format = button.dataset['format'] ?? '';
+      if (format === 'image') {
+        this.elImageInput.click();
+        return;
+      }
+      this.applyMarkdownFormat(format);
+    });
+    this.elImageInput.addEventListener('change', () => {
+      const file = this.elImageInput.files?.[0];
+      this.elImageInput.value = '';
+      if (file) {
+        void this.insertImageFile(file);
+      }
+    });
+    this.elEditToolbar.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        const openToggle = this.elEditToolbar
+          .querySelector<HTMLButtonElement>('[data-format-menu-toggle][aria-expanded="true"]');
+        if (!openToggle) {
+          return;
+        }
+        event.preventDefault();
+        this.closeFormatMenus();
+        openToggle.focus();
+        return;
+      }
+      const item = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="menuitem"]');
+      if (!item || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) {
+        return;
+      }
+      event.preventDefault();
+      const items = Array.from(
+        item.closest<HTMLElement>('[role="menu"]')!.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')
+      );
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      items[(items.indexOf(item) + direction + items.length) % items.length]?.focus();
+    });
 
     this.elNavTree.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
@@ -1056,21 +1181,216 @@ export class MdzipWorkspaceView {
       if (!image || !this.cmEditor) {
         return;
       }
-      const sel = this.cmEditor.state.selection.main;
-      const result = await this.workspace?.pasteImage({
-        bytes: image.bytes,
-        mimeType: image.mimeType,
-        selectionStart: sel.from,
-        selectionEnd: sel.to
-      });
-      if (result && this.cmEditor) {
-        this.render();
-        this.cmEditor.dispatch({ selection: { anchor: result.cursor } });
-        this.cmEditor.focus();
-      }
+      await this.insertImageBytes(image.bytes, image.mimeType);
     } catch (error) {
       this.options.onFailed?.(error);
     }
+  }
+
+  private async insertImageFile(file: File): Promise<void> {
+    if (!file.type.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg)$/i.test(file.name)) {
+      return;
+    }
+    try {
+      await this.insertImageBytes(
+        new Uint8Array(await file.arrayBuffer()),
+        file.type || imageMimeTypeFromFileName(file.name)
+      );
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private async insertImageBytes(bytes: Uint8Array, mimeType: string): Promise<void> {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    const result = await this.workspace?.pasteImage({
+      bytes,
+      mimeType,
+      selectionStart: selection.from,
+      selectionEnd: selection.to
+    });
+    if (result && this.cmEditor) {
+      this.render();
+      this.cmEditor.dispatch({ selection: { anchor: result.cursor } });
+      this.cmEditor.focus();
+    }
+  }
+
+  private applyMarkdownFormat(format: string): void {
+    const editor = this.cmEditor;
+    const snapshot = this.workspace?.snapshot();
+    if (!editor || !snapshot || snapshot.mode === 'read-only' || snapshot.currentPathType !== 'markdown') {
+      return;
+    }
+
+    switch (format) {
+      case 'bold':
+        this.wrapSelection('**', '**', 'bold text');
+        break;
+      case 'italic':
+        this.wrapSelection('_', '_', 'italic text');
+        break;
+      case 'strike':
+        this.wrapSelection('~~', '~~', 'strikethrough text');
+        break;
+      case 'paragraph':
+        this.setSelectedLinePrefix('', /^(#{1,6})\s+/);
+        break;
+      case 'heading-1':
+      case 'heading-2':
+      case 'heading-3':
+      case 'heading-4':
+      case 'heading-5':
+      case 'heading-6':
+        this.setSelectedLinePrefix(
+          `${'#'.repeat(Number(format.at(-1)))} `,
+          /^(#{1,6})\s+/
+        );
+        break;
+      case 'bullet-list':
+        this.prefixSelectedLines('- ', /^(\s*)[-*+]\s+/);
+        break;
+      case 'ordered-list':
+        this.numberSelectedLines();
+        break;
+      case 'code':
+        this.wrapSelection('`', '`', 'code');
+        break;
+      case 'code-block':
+        this.wrapSelection('```\n', '\n```', 'code');
+        break;
+      case 'quote':
+        this.prefixSelectedLines('> ', /^(\s*)>\s?/);
+        break;
+      case 'link':
+        this.wrapSelection('[', '](url)', 'link text');
+        break;
+      default:
+        return;
+    }
+  }
+
+  private toggleFormatMenu(toggle: HTMLButtonElement): void {
+    const menu = toggle.nextElementSibling as HTMLElement | null;
+    const willOpen = toggle.getAttribute('aria-expanded') !== 'true';
+    this.closeFormatMenus();
+    if (!menu || !willOpen) {
+      return;
+    }
+    toggle.setAttribute('aria-expanded', 'true');
+    menu.hidden = false;
+    menu.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+  }
+
+  private closeFormatMenus(): void {
+    this.elEditToolbar
+      .querySelectorAll<HTMLButtonElement>('[data-format-menu-toggle][aria-expanded="true"]')
+      .forEach(toggle => toggle.setAttribute('aria-expanded', 'false'));
+    this.elEditToolbar
+      .querySelectorAll<HTMLElement>('[data-format-menu]')
+      .forEach(menu => { menu.hidden = true; });
+  }
+
+  private wrapSelection(prefix: string, suffix: string, placeholder: string): void {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    const selectedText = editor.state.sliceDoc(selection.from, selection.to);
+    const content = selectedText || placeholder;
+    const insert = `${prefix}${content}${suffix}`;
+    const anchor = selection.from + prefix.length;
+    editor.dispatch({
+      changes: { from: selection.from, to: selection.to, insert },
+      selection: { anchor, head: anchor + content.length },
+      scrollIntoView: true
+    });
+    editor.focus();
+  }
+
+  private prefixSelectedLines(prefix: string, existingPrefix: RegExp): void {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    const firstLine = editor.state.doc.lineAt(selection.from);
+    const lastLine = editor.state.doc.lineAt(selection.to);
+    const text = editor.state.sliceDoc(firstLine.from, lastLine.to);
+    const lines = text.split('\n');
+    const allPrefixed = lines.every(line => existingPrefix.test(line) && line.match(existingPrefix)?.[0]);
+    const insert = lines.map((line) => {
+      const withoutExisting = line.replace(existingPrefix, '$1');
+      return allPrefixed ? withoutExisting : `${prefix}${withoutExisting}`;
+    }).join('\n');
+
+    editor.dispatch({
+      changes: { from: firstLine.from, to: lastLine.to, insert },
+      selection: { anchor: firstLine.from, head: firstLine.from + insert.length },
+      scrollIntoView: true
+    });
+    editor.focus();
+  }
+
+  private numberSelectedLines(): void {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    const firstLine = editor.state.doc.lineAt(selection.from);
+    const lastLine = editor.state.doc.lineAt(selection.to);
+    const text = editor.state.sliceDoc(firstLine.from, lastLine.to);
+    const lines = text.split('\n');
+    const orderedPrefix = /^(\s*)\d+[.)]\s+/;
+    const nonEmptyLines = lines.filter(line => line.trim().length > 0);
+    const allNumbered = nonEmptyLines.length > 0 && nonEmptyLines.every(line => orderedPrefix.test(line));
+    let number = 1;
+    const insert = lines.map((line) => {
+      if (!line.trim()) {
+        return line;
+      }
+      const match = line.match(orderedPrefix);
+      const indent = match?.[1] ?? line.match(/^\s*/)?.[0] ?? '';
+      const content = match ? line.slice(match[0].length) : line.slice(indent.length);
+      if (allNumbered) {
+        return `${indent}${content}`;
+      }
+      return `${indent}${number++}. ${content}`;
+    }).join('\n');
+
+    editor.dispatch({
+      changes: { from: firstLine.from, to: lastLine.to, insert },
+      selection: { anchor: firstLine.from, head: firstLine.from + insert.length },
+      scrollIntoView: true
+    });
+    editor.focus();
+  }
+
+  private setSelectedLinePrefix(prefix: string, existingPrefix: RegExp): void {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    const firstLine = editor.state.doc.lineAt(selection.from);
+    const lastLine = editor.state.doc.lineAt(selection.to);
+    const text = editor.state.sliceDoc(firstLine.from, lastLine.to);
+    const insert = text.split('\n')
+      .map(line => `${prefix}${line.replace(existingPrefix, '')}`)
+      .join('\n');
+
+    editor.dispatch({
+      changes: { from: firstLine.from, to: lastLine.to, insert },
+      selection: { anchor: firstLine.from, head: firstLine.from + insert.length },
+      scrollIntoView: true
+    });
+    editor.focus();
   }
 
   private async notifyChanged(): Promise<void> {
@@ -1092,6 +1412,15 @@ export class MdzipWorkspaceView {
   private setZoom(value: number): void {
     this.zoom = Math.max(0.5, Math.min(2.5, Math.round(value * 100) / 100));
     this.render();
+  }
+
+  private setColorScheme(colorScheme: MdzipColorScheme): void {
+    if (this.colorScheme === colorScheme) {
+      return;
+    }
+    this.colorScheme = colorScheme;
+    this.render();
+    this.options.onColorSchemeChanged?.(colorScheme);
   }
 
   private setLayout(requested: MdzipWorkspaceLayout): void {
@@ -1177,14 +1506,79 @@ function canShowSourceLayout(snapshot: MdzipWorkspaceSnapshot): boolean {
   return canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, 'editable');
 }
 
+function imageMimeTypeFromFileName(fileName: string): string {
+  const extension = fileName.toLowerCase().split('.').pop();
+  switch (extension) {
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'gif':
+      return 'image/gif';
+    case 'webp':
+      return 'image/webp';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'png':
+    default:
+      return 'image/png';
+  }
+}
+
 const SHELL_HTML = `
 <section class="mdzip-root">
   <header class="toolbar" data-ref="toolbar" hidden>
-    <div class="toolbar-left">
-      <button type="button" class="icon-toggle nav-toggle" data-ref="nav-btn" title="Toggle contents" aria-label="Toggle contents">
-        ${NAV_TOGGLE_ICON_HTML}
-      </button>
-      <button type="button" class="title-button" data-ref="title-btn"></button>
+    <div class="toolbar-start">
+      <div class="toolbar-left">
+        <button type="button" class="icon-toggle nav-toggle" data-ref="nav-btn" title="Toggle contents" aria-label="Toggle contents">
+          ${NAV_TOGGLE_ICON_HTML}
+        </button>
+        <button type="button" class="title-button" data-ref="title-btn"></button>
+      </div>
+
+      <div class="edit-toolbar" data-ref="edit-toolbar" role="toolbar" aria-label="Markdown formatting">
+        <div class="edit-toolbar-group">
+          <button type="button" data-format="bold" title="Bold" aria-label="Bold">${BOLD_ICON_HTML}</button>
+          <button type="button" data-format="italic" title="Italic" aria-label="Italic">${ITALIC_ICON_HTML}</button>
+          <button type="button" data-format="strike" title="Strikethrough" aria-label="Strikethrough">${STRIKE_ICON_HTML}</button>
+          <div class="format-menu">
+            <button type="button" class="format-menu-toggle" data-format-menu-toggle
+              aria-label="Heading" aria-haspopup="menu" aria-expanded="false">
+              ${HEADING_ICON_HTML}${CHEVRON_ICON_HTML}
+            </button>
+            <div class="format-menu-popover" data-format-menu role="menu" aria-label="Heading level" hidden>
+              <button type="button" role="menuitem" data-format="paragraph">Paragraph</button>
+              <button type="button" role="menuitem" data-format="heading-1"><strong>H1</strong> Heading 1</button>
+              <button type="button" role="menuitem" data-format="heading-2"><strong>H2</strong> Heading 2</button>
+              <button type="button" role="menuitem" data-format="heading-3"><strong>H3</strong> Heading 3</button>
+              <button type="button" role="menuitem" data-format="heading-4"><strong>H4</strong> Heading 4</button>
+              <button type="button" role="menuitem" data-format="heading-5"><strong>H5</strong> Heading 5</button>
+              <button type="button" role="menuitem" data-format="heading-6"><strong>H6</strong> Heading 6</button>
+            </div>
+          </div>
+        </div>
+        <span class="edit-toolbar-divider" aria-hidden="true"></span>
+        <div class="edit-toolbar-group">
+          <button type="button" data-format="bullet-list" title="Bulleted list" aria-label="Bulleted list">${BULLET_LIST_ICON_HTML}</button>
+          <button type="button" data-format="ordered-list" title="Numbered list" aria-label="Numbered list">${ORDERED_LIST_ICON_HTML}</button>
+          <div class="format-menu">
+            <button type="button" class="format-menu-toggle" data-format-menu-toggle
+              aria-label="Code" aria-haspopup="menu" aria-expanded="false">
+              ${CODE_ICON_HTML}${CHEVRON_ICON_HTML}
+            </button>
+            <div class="format-menu-popover" data-format-menu role="menu" aria-label="Code format" hidden>
+              <button type="button" role="menuitem" data-format="code">Inline code</button>
+              <button type="button" role="menuitem" data-format="code-block">Code block</button>
+            </div>
+          </div>
+          <button type="button" data-format="quote" title="Blockquote" aria-label="Blockquote">${QUOTE_ICON_HTML}</button>
+        </div>
+        <span class="edit-toolbar-divider" aria-hidden="true"></span>
+        <div class="edit-toolbar-group">
+          <button type="button" data-format="link" title="Link" aria-label="Link">${LINK_ICON_HTML}</button>
+          <button type="button" data-format="image" title="Image" aria-label="Image">${IMAGE_FORMAT_ICON_HTML}</button>
+          <input type="file" data-ref="image-input" accept="image/*" hidden />
+        </div>
+      </div>
     </div>
 
     <div class="toolbar-buttons view-mode-toggle-group" data-ref="layout-controls" role="group" aria-label="Editor layout">
@@ -1210,6 +1604,16 @@ const SHELL_HTML = `
       <button type="button" class="icon-toggle zoom-toggle" data-ref="zoom-btn" title="Zoom controls" aria-label="Zoom controls">
         ${ZOOM_ICON_HTML}
       </button>
+      <div class="theme-toggle-group" data-ref="theme-controls" role="group" aria-label="Color scheme">
+        <button type="button" class="icon-toggle theme-toggle" data-ref="dark-theme-btn"
+          title="Dark mode" aria-label="Dark mode" aria-pressed="false">
+          ${DARK_THEME_ICON_HTML}
+        </button>
+        <button type="button" class="icon-toggle theme-toggle" data-ref="light-theme-btn"
+          title="Light mode" aria-label="Light mode" aria-pressed="false">
+          ${LIGHT_THEME_ICON_HTML}
+        </button>
+      </div>
       <div class="zoom-popover" data-ref="zoom-popover" hidden role="group" aria-label="Zoom">
         <span class="zoom-level" data-ref="zoom-level">100%</span>
         <span class="zoom-stepper">
@@ -1229,7 +1633,9 @@ const SHELL_HTML = `
       role="separator" aria-orientation="vertical" aria-label="Resize contents pane"></div>
 
     <div class="pane-stack" data-ref="pane-stack">
-      <section class="pane edit-pane" data-ref="edit-pane"></section>
+      <section class="pane edit-pane" data-ref="edit-pane">
+        <div class="editor-host" data-ref="editor-host"></div>
+      </section>
       <div class="split-resizer" data-ref="split-resizer"
         role="separator" aria-orientation="vertical" aria-label="Resize split panes"></div>
       <section class="pane preview-pane" data-ref="preview-pane">
