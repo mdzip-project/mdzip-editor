@@ -647,6 +647,7 @@ export class MdzipWorkspaceView {
         : 'light');
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
     injectStyles(container.ownerDocument);
+    container.replaceChildren();
     container.innerHTML = SHELL_HTML;
 
     const q = <T extends HTMLElement>(sel: string): T =>
@@ -823,9 +824,21 @@ export class MdzipWorkspaceView {
   }
 
   public destroy(): void {
-    this.unsub?.();
-    this.cmEditor?.destroy();
-    this.elRoot?.remove();
+    try {
+      this.unsub?.();
+    } catch {
+      // Ignore subscription cleanup errors
+    }
+    try {
+      this.cmEditor?.destroy();
+    } catch {
+      // Ignore CodeMirror cleanup errors
+    }
+    try {
+      this.elRoot?.remove();
+    } catch {
+      // Ignore DOM cleanup errors
+    }
   }
 
   private createCmEditor(
