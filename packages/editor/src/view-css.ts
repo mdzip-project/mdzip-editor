@@ -52,10 +52,10 @@ export const WORKSPACE_CSS = `
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 36px;
-  padding: 6px 12px;
-  background: var(--mdzip-editor-background-color);
-  border-bottom: 1px solid var(--mdzip-border-color);
+  min-height: 40px;
+  padding: 8px 12px;
+  background: var(--mdzip-toolbar-background-color);
+  border-bottom: 2px solid var(--mdzip-border-color);
   flex: 0 0 auto;
 }
 
@@ -113,8 +113,8 @@ export const WORKSPACE_CSS = `
   margin: 0;
   color: var(--mdzip-editor-foreground-color);
   font: inherit;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   text-decoration: none;
   cursor: pointer;
   min-width: 0;
