@@ -1,23 +1,24 @@
 import { marked } from 'marked';
-import hljs from 'highlight.js';
+import Prism from 'prismjs';
 import type { ArchiveEntry } from './archive-utils.js';
 import type { MdzipPathType, MdzipWorkspaceMode, MdzipWorkspaceSnapshot } from './workspace.js';
 
 marked.use({
   renderer: {
     code(token: { lang?: string; text: string }) {
-      const lang = token.lang || '';
+      const lang = token.lang || 'text';
       const code = token.text;
 
-      if (lang && hljs.getLanguage(lang)) {
-        try {
-          const highlighted = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
-          return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
-        } catch {
-          return `<pre><code>${code}</code></pre>`;
+      try {
+        if (Prism.languages[lang]) {
+          const highlighted = Prism.highlight(code, Prism.languages[lang], lang);
+          return `<pre><code class="language-${lang}">${highlighted}</code></pre>`;
         }
+      } catch {
+        // Fall through to unformatted code
       }
-      return `<pre><code>${code}</code></pre>`;
+
+      return `<pre><code class="language-${lang}">${code}</code></pre>`;
     }
   }
 });
