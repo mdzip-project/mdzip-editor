@@ -1197,4 +1197,36 @@ export const WORKSPACE_CSS = `
     justify-self: end;
   }
 }
+
+/* Syntax highlighting for code blocks in preview */
+.mdzip-root .preview-content pre code {
+  display: block;
+  overflow-x: auto;
+  padding: 12px;
+  background: var(--mdzip-editor-background-color);
+  border-radius: 4px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 12px;
+}
+
+.mdzip-root .hljs { color: var(--mdzip-editor-foreground-color); }
+.mdzip-root .hljs-attr { color: #ae81ff; }
+.mdzip-root .hljs-string { color: #a6e22e; }
+.mdzip-root .hljs-number { color: #ae81ff; }
+.mdzip-root .hljs-literal { color: #ae81ff; }
+.mdzip-root .hljs-built_in { color: #66d9ef; }
+.mdzip-root .hljs-keyword { color: #f92672; }
+.mdzip-root .hljs-title { color: #a6e22e; }
+.mdzip-root .hljs-section { color: #75715e; }
+.mdzip-root .hljs-comment { color: #75715e; }
+
+.mdzip-root.mdzip-theme-light .hljs { color: #383a42; }
+.mdzip-root.mdzip-theme-light .hljs-attr { color: #0184bc; }
+.mdzip-root.mdzip-theme-light .hljs-string { color: #50a14f; }
+.mdzip-root.mdzip-theme-light .hljs-number { color: #986801; }
+.mdzip-root.mdzip-theme-light .hljs-literal { color: #986801; }
+.mdzip-root.mdzip-theme-light .hljs-built_in { color: #4078f2; }
+.mdzip-root.mdzip-theme-light .hljs-keyword { color: #a626a4; }
+.mdzip-root.mdzip-theme-light .hljs-title { color: #50a14f; }
+.mdzip-root.mdzip-theme-light .hljs-comment { color: #a0a1a7; }
 `;
