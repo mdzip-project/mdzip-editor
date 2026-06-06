@@ -52,11 +52,16 @@ export const WORKSPACE_CSS = `
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 40px;
-  padding: 8px 12px;
-  background: var(--mdzip-toolbar-background-color);
-  border-bottom: 2px solid var(--mdzip-border-color);
+  min-height: 30px;
+  padding: 3px 12px;
+  background: var(--mdzip-editor-foreground-color);
+  background: rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid var(--mdzip-border-color);
   flex: 0 0 auto;
+}
+
+.mdzip-root.mdzip-theme-dark .document-strip {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .mdzip-root .toolbar {
@@ -113,8 +118,8 @@ export const WORKSPACE_CSS = `
   margin: 0;
   color: var(--mdzip-editor-foreground-color);
   font: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
   text-decoration: none;
   cursor: pointer;
   min-width: 0;
