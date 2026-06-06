@@ -54,7 +54,6 @@ export const WORKSPACE_CSS = `
   gap: 5px;
   min-height: 30px;
   padding: 3px 12px;
-  border-bottom: 1px solid var(--mdzip-border-color);
   background: var(--mdzip-toolbar-background-color);
   flex: 0 0 auto;
 }
