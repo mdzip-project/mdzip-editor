@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { MdzArchiveCore } from 'mdzip-core-js';
 import {
   MdzipReadOnlyError,
   MdzipWorkspaceService,
@@ -8,6 +9,7 @@ import {
   canEditMdzipPath,
   openMdzArchive,
   readTextFileFromArchive,
+  resolveMdzipArchiveLinkTarget,
   resolveMdzipControlPolicy
 } from '../dist/index.js';
 
@@ -47,6 +49,26 @@ test('edits markdown and saves updated archive bytes', async () => {
   const saved = await workspace.saveToBytes();
   assert.equal(workspace.dirty, false);
   assert.equal(await readTextFileFromArchive(saved, 'index.md'), '# Updated\n');
+});
+
+test('opens a normalized core workspace directly and flushes a host snapshot', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Original\n', 'Original', [
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const coreWorkspace = await MdzArchiveCore.openWorkspace(bytes, {
+    includeOrphanedAssetAnalysis: true
+  });
+  const workspace = await MdzipWorkspaceService.openWorkspace(coreWorkspace, { mode: 'editable' });
+
+  workspace.editText('# Updated\n');
+  const snapshot = await workspace.flush();
+  const savedBytes = new Uint8Array(await snapshot.bytes.arrayBuffer());
+
+  assert.equal(snapshot.state.dirty, false);
+  assert.equal(snapshot.state.validationStatus, 'valid');
+  assert.equal(snapshot.state.title, 'Original');
+  assert.equal(await readTextFileFromArchive(savedBytes, 'index.md'), '# Updated\n');
+  assert.equal(snapshot.workspace.assets.some((asset) => asset.path === 'images/logo.png'), true);
 });
 
 test('manages manifest title and orphaned assets', async () => {
@@ -98,6 +120,21 @@ test('provides workspace view helpers outside framework wrappers', async () => {
   const tree = buildMdzipNavTree(snapshot.content.paths);
   assert.equal(tree.some((node) => node.name === 'images'), true);
   assert.equal(tree.some((node) => node.name === 'index.md'), true);
+});
+
+test('resolves archive-local markdown preview links', () => {
+  const entries = [
+    { path: 'docs/index.md', isMarkdown: true, isImage: false, isDirectory: false },
+    { path: 'docs/guide.md', isMarkdown: true, isImage: false, isDirectory: false },
+    { path: 'appendix.md', isMarkdown: true, isImage: false, isDirectory: false },
+    { path: 'docs/image.png', isMarkdown: false, isImage: true, isDirectory: false }
+  ];
+
+  assert.equal(resolveMdzipArchiveLinkTarget('guide.md', 'docs/index.md', entries), 'docs/guide.md');
+  assert.equal(resolveMdzipArchiveLinkTarget('../appendix.md#notes', 'docs/index.md', entries), 'appendix.md');
+  assert.equal(resolveMdzipArchiveLinkTarget('/docs/guide.md?x=1', 'docs/index.md', entries), 'docs/guide.md');
+  assert.equal(resolveMdzipArchiveLinkTarget('image.png', 'docs/index.md', entries), null);
+  assert.equal(resolveMdzipArchiveLinkTarget('https://example.com/guide.md', 'docs/index.md', entries), null);
 });
 
 test('resolves control policy presets for common host scenarios', () => {

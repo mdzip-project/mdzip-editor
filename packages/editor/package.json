@@ -16,6 +16,8 @@
     "dist"
   ],
   "scripts": {
+    "generate:icons": "node scripts/generate-icons.mjs",
+    "prebuild": "npm run generate:icons",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
@@ -26,7 +28,8 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.37.2",
     "@lezer/highlight": "^1.2.1",
+    "lucide": "^1.17.0",
     "marked": "^15.0.12",
-    "mdzip-core-js": "^1.1.1"
+    "mdzip-core-js": "file:../../../mdzip-core-js"
   }
 }

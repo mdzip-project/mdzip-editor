@@ -95,6 +95,38 @@ export function renderMdzipPreviewHtml(state: MdzipWorkspaceSnapshot): string {
   return typeof rendered === 'string' ? rendered : escapeHtml(state.currentText);
 }
 
+export function resolveMdzipArchiveLinkTarget(
+  href: string,
+  currentPath: string,
+  entries: readonly ArchiveEntry[]
+): string | null {
+  const cleanHref = href.trim();
+  if (!cleanHref || cleanHref.startsWith('#')) {
+    return null;
+  }
+  if (/^[a-z][a-z0-9+.-]*:/i.test(cleanHref) || cleanHref.startsWith('//')) {
+    return null;
+  }
+
+  const withoutHash = cleanHref.split('#')[0] ?? '';
+  const withoutQuery = withoutHash.split('?')[0] ?? '';
+  const decoded = decodeURIComponent(withoutQuery).replace(/^<|>$/g, '').replace(/\\/g, '/');
+  if (!decoded || decoded.endsWith('/')) {
+    return null;
+  }
+
+  const baseDir = currentPath.includes('/')
+    ? currentPath.slice(0, currentPath.lastIndexOf('/') + 1)
+    : '';
+  const candidate = normalizeArchiveLinkPath(decoded.startsWith('/') ? decoded.slice(1) : `${baseDir}${decoded}`);
+  if (!candidate) {
+    return null;
+  }
+
+  const target = entries.find((entry) => entry.path.toLowerCase() === candidate.toLowerCase());
+  return target?.isMarkdown ? target.path : null;
+}
+
 export function highlightMdzipMarkdownSource(source: string): string {
   const lines = source.split('\n');
   let inFence = false;
@@ -156,6 +188,24 @@ function sortNavNodes(a: MdzipNavNode, b: MdzipNavNode): number {
   if (a.entry && !b.entry) return -1;
   if (!a.entry && b.entry) return 1;
   return a.name.localeCompare(b.name);
+}
+
+function normalizeArchiveLinkPath(path: string): string | null {
+  const parts: string[] = [];
+  for (const part of path.split('/')) {
+    if (!part || part === '.') {
+      continue;
+    }
+    if (part === '..') {
+      if (!parts.length) {
+        return null;
+      }
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join('/');
 }
 
 function highlightMarkdownInline(line: string): string {

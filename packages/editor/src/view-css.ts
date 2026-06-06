@@ -131,7 +131,8 @@ export const WORKSPACE_CSS = `
 .mdzip-root .toggle-icon {
   width: 17px;
   height: 17px;
-  fill: currentColor;
+  fill: none;
+  stroke: currentColor;
 }
 
 .mdzip-root .view-mode-toggle {
@@ -408,8 +409,8 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .nav-file-icon.markdown svg {
-  width: 30px;
-  height: 18px;
+  width: 21px;
+  height: 21px;
 }
 
 .mdzip-root .nav-file-icon.manifest svg {
@@ -517,6 +518,22 @@ export const WORKSPACE_CSS = `
 .mdzip-root .orphan-context-menu button:focus-visible {
   outline: none;
   background: var(--mdzip-hover-background-color);
+}
+
+.mdzip-root .mdzip-tooltip {
+  position: fixed;
+  z-index: 10000;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 5px 8px;
+  border: 1px solid var(--mdzip-border-color);
+  border-radius: 5px;
+  background: var(--mdzip-editor-foreground-color);
+  color: var(--mdzip-editor-background-color);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .mdzip-root .pane-stack {

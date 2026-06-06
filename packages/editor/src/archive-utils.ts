@@ -2,9 +2,9 @@ import {
   MDZ_IMAGE_MIME_TYPES,
   MdzArchiveCore,
   MdzPackagerCore,
-  type MdzArchiveEntryInfo,
   type MdzManifest,
-  type MdzValidationResult
+  type MdzValidationResult,
+  type MdzWorkspace
 } from 'mdzip-core-js';
 
 export interface ArchiveEntry {
@@ -30,34 +30,54 @@ export interface NewArchiveAsset {
 }
 
 export async function openMdzArchive(bytes: Uint8Array): Promise<OpenedArchive> {
-  const archive = await MdzArchiveCore.open(bytes);
-  const entryPoint = await archive.resolveEntryPoint();
-  const manifest = await archive.readManifest();
-  const validation = await archive.validate();
+  return openedArchiveFromWorkspace(await MdzArchiveCore.openWorkspace(bytes, {
+    includeOrphanedAssetAnalysis: true
+  }));
+}
 
-  const paths = archive
-    .listEntries()
-    .filter((entry) => !entry.isDirectory)
-    .map(mapEntry);
-
-  const markdownText = await archive.readText(entryPoint);
-  const orphanedAssets = await archive.findOrphanedAssets({ entryPoint });
-
+export async function openedArchiveFromWorkspace(workspace: MdzWorkspace): Promise<OpenedArchive> {
+  const entryPoint = workspace.entryPoint
+    ?? workspace.documents.find((document) => document.isEntryPoint)?.path
+    ?? workspace.documents[0]?.path
+    ?? 'index.md';
+  const markdownText = workspace.documents.find(
+    (document) => document.path.toLowerCase() === entryPoint.toLowerCase()
+  )?.text ?? '';
+  const paths = [
+    ...workspace.documents.map((document): ArchiveEntry => ({
+      path: document.path,
+      isMarkdown: true,
+      isImage: false,
+      isDirectory: false
+    })),
+    ...(workspace.manifest ? [{
+      path: 'manifest.json',
+      isMarkdown: false,
+      isImage: false,
+      isDirectory: false
+    }] : []),
+    ...workspace.assets.map((asset): ArchiveEntry => ({
+      path: asset.path,
+      isMarkdown: false,
+      isImage: asset.kind === 'image',
+      isDirectory: false
+    }))
+  ].sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
   const images = new Map<string, string>();
-  for (const entry of paths) {
-    if (entry.isImage) {
-      images.set(entry.path, await archive.readDataUri(entry.path));
+  for (const asset of workspace.assets) {
+    if (asset.kind === 'image' && asset.readDataUri) {
+      images.set(asset.path, await asset.readDataUri());
     }
   }
 
   return {
     paths,
     entryPoint,
-    manifest,
+    manifest: workspace.manifest,
     markdownText,
     images,
-    orphanedAssetPaths: orphanedAssets.orphanedAssetPaths,
-    validation
+    orphanedAssetPaths: workspace.orphanedAssets?.orphanedAssetPaths ?? [],
+    validation: workspace.validation
   };
 }
 
@@ -186,13 +206,3 @@ export function isImagePath(path: string): boolean {
 export async function blobToBytes(blob: Blob): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
 }
-
-function mapEntry(entry: MdzArchiveEntryInfo): ArchiveEntry {
-  return {
-    path: entry.path,
-    isMarkdown: entry.isMarkdown,
-    isImage: entry.isImage,
-    isDirectory: entry.isDirectory
-  };
-}
-
