@@ -3,6 +3,22 @@ import Prism from 'prismjs';
 import type { ArchiveEntry } from './archive-utils.js';
 import type { MdzipPathType, MdzipWorkspaceMode, MdzipWorkspaceSnapshot } from './workspace.js';
 
+// Load common language definitions
+const loadLanguages = async () => {
+  const languages = ['typescript', 'javascript', 'json', 'bash', 'vue'];
+  for (const lang of languages) {
+    try {
+      await import(`prismjs/components/prism-${lang}.js`);
+    } catch {
+      // Language not available, will fall back to plain text
+    }
+  }
+};
+
+loadLanguages().catch(() => {
+  // Silently fail - we'll use plain text highlighting if languages don't load
+});
+
 marked.use({
   renderer: {
     code(token: { lang?: string; text: string }) {
