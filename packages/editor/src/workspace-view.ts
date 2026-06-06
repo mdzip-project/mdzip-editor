@@ -10,12 +10,21 @@ marked.use({
       const lang = token.lang || '';
       const code = token.text;
 
-      if (lang && hljs.getLanguage(lang)) {
-        try {
-          const highlighted = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
-          return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
-        } catch {
-          return `<pre><code>${code}</code></pre>`;
+      if (lang) {
+        // Map unsupported languages to similar ones
+        const languageMap: { [key: string]: string } = {
+          vue: 'html',  // Vue SFCs are HTML-based
+        };
+
+        const highlightLang = languageMap[lang] || lang;
+
+        if (hljs.getLanguage(highlightLang)) {
+          try {
+            const highlighted = hljs.highlight(code, { language: highlightLang, ignoreIllegals: true }).value;
+            return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
+          } catch {
+            return `<pre><code>${code}</code></pre>`;
+          }
         }
       }
       return `<pre><code>${code}</code></pre>`;
