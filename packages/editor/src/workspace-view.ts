@@ -3,22 +3,7 @@ import Prism from 'prismjs';
 import type { ArchiveEntry } from './archive-utils.js';
 import type { MdzipPathType, MdzipWorkspaceMode, MdzipWorkspaceSnapshot } from './workspace.js';
 
-// Load common language definitions
-const loadLanguages = async () => {
-  const languages = ['typescript', 'javascript', 'json', 'bash', 'vue'];
-  for (const lang of languages) {
-    try {
-      await import(`prismjs/components/prism-${lang}.js`);
-    } catch {
-      // Language not available, will fall back to plain text
-    }
-  }
-};
-
-loadLanguages().catch(() => {
-  // Silently fail - we'll use plain text highlighting if languages don't load
-});
-
+// Set up marked with Prism syntax highlighting
 marked.use({
   renderer: {
     code(token: { lang?: string; text: string }) {
@@ -38,6 +23,27 @@ marked.use({
     }
   }
 });
+
+// Load language definitions asynchronously in the background
+if (typeof window !== 'undefined') {
+  const loadLanguages = () => {
+    const langs = ['typescript', 'javascript', 'json', 'bash', 'vue'];
+    for (const lang of langs) {
+      const path = `prismjs/components/prism-${lang}.js`;
+      // @ts-ignore - Dynamic import path to avoid Vite static analysis
+      import(path).catch(() => {
+        // Language not available, will use plain text fallback
+      });
+    }
+  };
+
+  // Use setTimeout to delay loading until after Prism is initialized
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadLanguages);
+  } else {
+    setTimeout(loadLanguages, 0);
+  }
+}
 
 export interface MdzipNavNode {
   name: string;
