@@ -1,49 +1,27 @@
 import { marked } from 'marked';
-import Prism from 'prismjs';
+import hljs from 'highlight.js';
 import type { ArchiveEntry } from './archive-utils.js';
 import type { MdzipPathType, MdzipWorkspaceMode, MdzipWorkspaceSnapshot } from './workspace.js';
 
-// Set up marked with Prism syntax highlighting
+// Set up marked with highlight.js syntax highlighting
 marked.use({
   renderer: {
     code(token: { lang?: string; text: string }) {
-      const lang = token.lang || 'text';
+      const lang = token.lang || '';
       const code = token.text;
 
-      try {
-        if (Prism.languages[lang]) {
-          const highlighted = Prism.highlight(code, Prism.languages[lang], lang);
-          return `<pre><code class="language-${lang}">${highlighted}</code></pre>`;
+      if (lang && hljs.getLanguage(lang)) {
+        try {
+          const highlighted = hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+          return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
+        } catch {
+          return `<pre><code>${code}</code></pre>`;
         }
-      } catch {
-        // Fall through to unformatted code
       }
-
-      return `<pre><code class="language-${lang}">${code}</code></pre>`;
+      return `<pre><code>${code}</code></pre>`;
     }
   }
 });
-
-// Load language definitions asynchronously in the background
-if (typeof window !== 'undefined') {
-  const loadLanguages = () => {
-    const langs = ['typescript', 'javascript', 'json', 'bash', 'vue'];
-    for (const lang of langs) {
-      const path = `prismjs/components/prism-${lang}.js`;
-      // @ts-ignore - Dynamic import path to avoid Vite static analysis
-      import(path).catch(() => {
-        // Language not available, will use plain text fallback
-      });
-    }
-  };
-
-  // Use setTimeout to delay loading until after Prism is initialized
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', loadLanguages);
-  } else {
-    setTimeout(loadLanguages, 0);
-  }
-}
 
 export interface MdzipNavNode {
   name: string;
