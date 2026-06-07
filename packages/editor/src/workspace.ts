@@ -26,6 +26,13 @@ export type MdzipWorkspaceMode = 'read-only' | 'editable';
 export type MdzipSourceFormat = 'mdz' | 'markdown';
 export type MdzipPathType = 'markdown' | 'text' | 'image' | 'binary';
 export type MdzipChangeReason = 'edit' | 'reload';
+export type MdzipWorkspaceChangeKind =
+  | 'workspace'
+  | 'document'
+  | 'asset'
+  | 'manifest'
+  | 'selection'
+  | 'persistence';
 
 export interface MdzipWorkspaceOpenOptions {
   mode?: MdzipWorkspaceMode;
@@ -36,6 +43,7 @@ export interface MdzipWorkspaceOpenOptions {
 export interface MdzipWorkspaceSnapshot {
   mode: MdzipWorkspaceMode;
   sourceFormat: MdzipSourceFormat;
+  fileName: string;
   archiveBytes: Uint8Array;
   workspace: MdzWorkspace;
   content: OpenedArchive;
@@ -55,7 +63,10 @@ export interface MdzipEditorHostState {
   validation: MdzValidationResult;
   validationStatus: MdzValidationStatus;
   title: string | null;
+  displayTitle: string;
+  fileName: string;
   currentPath: string | null;
+  sourceFormat: MdzipSourceFormat;
   mode: MdzWorkspace['mode'];
 }
 
@@ -67,6 +78,8 @@ export interface MdzipEditorSnapshot {
 
 export interface MdzipDocumentChangeEvent {
   reason: MdzipChangeReason;
+  changes: MdzipWorkspaceChangeKind[];
+  path?: string;
   snapshot: MdzipWorkspaceSnapshot;
 }
 
@@ -83,6 +96,10 @@ export interface MdzipPasteImageResult {
   markdownImage: string;
   text: string;
   cursor: number;
+}
+
+export interface MdzipRemoveAssetOptions {
+  requireOrphaned?: boolean;
 }
 
 export type MdzipDocumentChangeListener = (event: MdzipDocumentChangeEvent) => void;
@@ -103,9 +120,9 @@ export class MdzipWorkspaceService {
   private currentPathValue = 'index.md';
   private currentPathTypeValue: MdzipPathType = 'markdown';
   private dirtyValue = false;
-  private readonly sourceFormatValue: MdzipSourceFormat;
+  private sourceFormatValue: MdzipSourceFormat;
   private readonly modeValue: MdzipWorkspaceMode;
-  private readonly fileName: string;
+  private fileName: string;
   // Orphaned paths derived from the current in-memory text; null means use contentValue.
   private liveOrphanedPaths: string[] | null = null;
 
@@ -129,10 +146,11 @@ export class MdzipWorkspaceService {
     bytes: Uint8Array,
     options: MdzipWorkspaceOpenOptions = {}
   ): Promise<MdzipWorkspaceService> {
+    const fileName = options.fileName ?? 'document.mdz';
     const resolvedOptions: Required<MdzipWorkspaceOpenOptions> = {
       mode: options.mode ?? 'editable',
-      sourceFormat: options.sourceFormat ?? 'mdz',
-      fileName: options.fileName ?? 'document.mdz'
+      sourceFormat: options.sourceFormat ?? inferMdzipSourceFormat(bytes, fileName),
+      fileName
     };
 
     if (resolvedOptions.sourceFormat === 'markdown') {
@@ -167,8 +185,12 @@ export class MdzipWorkspaceService {
       sourceFormat: options.sourceFormat ?? 'mdz',
       fileName: options.fileName ?? 'document.mdz'
     };
-    const bytes = await blobToBytes((await MdzPackagerCore.buildWorkspace(workspace)).blob);
-    return new MdzipWorkspaceService(bytes, workspace, await openedArchiveFromWorkspace(workspace), resolvedOptions);
+    return new MdzipWorkspaceService(
+      new Uint8Array(),
+      workspace,
+      await openedArchiveFromWorkspace(workspace),
+      resolvedOptions
+    );
   }
 
   public subscribe(listener: MdzipDocumentChangeListener): () => void {
@@ -178,13 +200,31 @@ export class MdzipWorkspaceService {
 
   public snapshot(): MdzipWorkspaceSnapshot {
     const fileBaseName = fileBaseNameFromPath(this.fileName);
-    const manifestTitle = this.contentValue.manifest?.title;
-    const content = this.liveOrphanedPaths !== null
+    const manifestTitle = this.sourceFormatValue === 'mdz'
+      ? this.contentValue.manifest?.title
+      : undefined;
+    const archiveContent = this.liveOrphanedPaths !== null
       ? { ...this.contentValue, orphanedAssetPaths: this.liveOrphanedPaths }
       : this.contentValue;
+    const content = this.sourceFormatValue === 'markdown'
+      ? {
+          ...archiveContent,
+          paths: [{
+            path: fileNameFromPath(this.fileName),
+            isMarkdown: true,
+            isImage: false,
+            isDirectory: false
+          }],
+          entryPoint: fileNameFromPath(this.fileName),
+          manifest: null,
+          images: new Map<string, string>(),
+          orphanedAssetPaths: []
+        }
+      : archiveContent;
     return {
       mode: this.modeValue,
       sourceFormat: this.sourceFormatValue,
+      fileName: this.fileName,
       archiveBytes: this.archiveBytes,
       workspace: this.workspaceValue,
       content,
@@ -207,7 +247,10 @@ export class MdzipWorkspaceService {
       validation: snapshot.validation,
       validationStatus: snapshot.validationStatus,
       title: this.workspaceValue.title,
+      displayTitle: snapshot.displayTitle,
+      fileName: snapshot.fileName,
       currentPath: snapshot.currentPath || null,
+      sourceFormat: snapshot.sourceFormat,
       mode: this.workspaceValue.mode
     };
   }
@@ -244,6 +287,20 @@ export class MdzipWorkspaceService {
     return this.dirtyValue;
   }
 
+  public async convertToMdz(): Promise<boolean> {
+    this.assertEditable('convert to MDZ');
+    if (this.sourceFormatValue === 'mdz') {
+      return false;
+    }
+    const archiveBytes = await this.archiveBytesWithPendingText();
+    await this.reloadPreservingCurrentText(archiveBytes);
+    this.sourceFormatValue = 'mdz';
+    this.fileName = mdzFileNameFromMarkdown(this.fileName);
+    this.dirtyValue = true;
+    this.emit('edit', ['workspace']);
+    return true;
+  }
+
   public editText(newText: string): void {
     this.assertEditable('edit text');
     if (!isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)) {
@@ -252,7 +309,7 @@ export class MdzipWorkspaceService {
     this.currentTextValue = newText;
     this.dirtyValue = true;
     this.liveOrphanedPaths = this.computeLiveOrphanedPaths(newText);
-    this.emit('edit');
+    this.emit('edit', ['document'], this.currentPathValue);
   }
 
   public async openPath(archivePath: string): Promise<boolean> {
@@ -271,16 +328,17 @@ export class MdzipWorkspaceService {
 
     if (target.isImage) {
       this.currentTextValue = '';
-      this.dirtyValue = false;
-      this.emit('reload');
+      this.emit('reload', ['selection'], target.path);
       return true;
     }
 
-    const bytes = await readBinaryFileFromArchive(this.archiveBytes, target.path);
+    const bytes = await this.readWorkspacePathBytes(target.path);
+    if (!bytes) {
+      return false;
+    }
     this.currentTextValue = new TextDecoder('utf-8').decode(bytes);
     this.currentPathTypeValue = isLikelyBinary(bytes) ? 'binary' : nextType;
-    this.dirtyValue = false;
-    this.emit('reload');
+    this.emit('reload', ['selection'], target.path);
     return true;
   }
 
@@ -299,7 +357,7 @@ export class MdzipWorkspaceService {
     this.upsertWorkspaceAsset(asset);
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
     this.dirtyValue = true;
-    this.emit('edit');
+    this.emit('edit', ['asset'], archivePath);
   }
 
   public async replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean> {
@@ -311,22 +369,27 @@ export class MdzipWorkspaceService {
     return true;
   }
 
-  public async removeAsset(archivePath: string): Promise<boolean> {
+  public async removeAsset(
+    archivePath: string,
+    options: MdzipRemoveAssetOptions = {}
+  ): Promise<boolean> {
     this.assertEditable('remove asset');
     const target = this.findPath(archivePath);
     if (!target || !this.workspaceValue.assets.some((asset) => asset.path.toLowerCase() === target.path.toLowerCase())) {
       return false;
     }
     this.commitPendingTextToWorkspace();
-    const orphaned = this.workspaceValue.orphanedAssets?.orphanedAssetPaths ?? this.contentValue.orphanedAssetPaths;
-    if (!new Set(orphaned.map((path) => path.toLowerCase())).has(target.path.toLowerCase())) {
-      return false;
+    if (options.requireOrphaned) {
+      const orphaned = this.workspaceValue.orphanedAssets?.orphanedAssetPaths ?? this.contentValue.orphanedAssetPaths;
+      if (!new Set(orphaned.map((path) => path.toLowerCase())).has(target.path.toLowerCase())) {
+        return false;
+      }
     }
 
     this.workspaceValue.assets = this.workspaceValue.assets.filter((asset) => asset.path.toLowerCase() !== target.path.toLowerCase());
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes(), target.path);
     this.dirtyValue = true;
-    this.emit('edit');
+    this.emit('edit', ['asset'], target.path);
     return true;
   }
 
@@ -336,7 +399,9 @@ export class MdzipWorkspaceService {
 
   public async pasteImage(options: MdzipPasteImageOptions): Promise<MdzipPasteImageResult | null> {
     this.assertEditable('paste image');
-    if (!isEditableTextPath(this.currentPathTypeValue, this.currentPathValue) || this.currentPathTypeValue !== 'markdown') {
+    if (this.sourceFormatValue === 'markdown'
+      || !isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)
+      || this.currentPathTypeValue !== 'markdown') {
       return null;
     }
 
@@ -354,7 +419,7 @@ export class MdzipWorkspaceService {
     this.upsertWorkspaceAsset(await MdzPackagerCore.createWorkspaceAssetFromFile(options.bytes, archivePath));
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
     this.dirtyValue = true;
-    this.emit('edit');
+    this.emit('edit', ['document', 'asset'], archivePath);
 
     return {
       archivePath,
@@ -372,47 +437,61 @@ export class MdzipWorkspaceService {
     this.workspaceValue.title = newTitle;
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
     this.dirtyValue = true;
-    this.emit('edit');
+    this.emit('edit', ['manifest'], 'manifest.json');
   }
 
   public async saveToBytes(): Promise<Uint8Array> {
     this.assertEditable('save');
-    const nextBytes = await this.bytesWithPendingText();
-    await this.reload(nextBytes);
+    const nextArchiveBytes = await this.archiveBytesWithPendingText();
+    await this.reload(nextArchiveBytes);
     this.dirtyValue = false;
-    return nextBytes;
+    return this.outputBytes();
   }
 
   public async exportBytes(): Promise<Uint8Array> {
-    return this.bytesWithPendingText();
+    const archiveBytes = await this.archiveBytesWithPendingText();
+    return this.outputBytes(archiveBytes);
   }
 
   public async serialize(): Promise<Blob> {
-    return bytesToBlob(await this.exportBytes());
+    return bytesToBlob(await this.exportBytes(), this.sourceFormatValue);
   }
 
   public async flush(): Promise<MdzipEditorSnapshot> {
-    const bytes = await this.bytesWithPendingText();
-    await this.reloadPreservingCurrentText(bytes);
-    this.dirtyValue = false;
-    return this.editorSnapshot(bytes);
+    const archiveBytes = await this.archiveBytesWithPendingText();
+    await this.reloadPreservingCurrentText(archiveBytes);
+    return this.editorSnapshot(this.outputBytes());
   }
 
   public async getCurrentSnapshot(): Promise<MdzipEditorSnapshot> {
-    const bytes = await this.bytesWithPendingText();
-    return this.editorSnapshot(bytes);
+    const archiveBytes = await this.archiveBytesWithPendingText();
+    return this.editorSnapshot(this.outputBytes(archiveBytes));
+  }
+
+  public markPersisted(): void {
+    if (!this.dirtyValue) {
+      return;
+    }
+    this.dirtyValue = false;
+    this.emit('reload', ['persistence']);
   }
 
   public manifest(): MdzManifest | null {
-    return this.contentValue.manifest;
+    return this.sourceFormatValue === 'mdz' ? this.contentValue.manifest : null;
   }
 
-  private async bytesWithPendingText(): Promise<Uint8Array> {
+  private async archiveBytesWithPendingText(): Promise<Uint8Array> {
     if (!isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)) {
       return this.archiveBytes;
     }
     this.commitPendingTextToWorkspace();
     return this.serializeWorkspaceBytes();
+  }
+
+  private outputBytes(archiveBytes: Uint8Array = this.archiveBytes): Uint8Array {
+    return this.sourceFormatValue === 'markdown'
+      ? new TextEncoder().encode(this.currentTextValue)
+      : archiveBytes;
   }
 
   private async reload(bytes: Uint8Array): Promise<void> {
@@ -488,6 +567,9 @@ export class MdzipWorkspaceService {
   }
 
   private async readWorkspacePathBytes(archivePath: string): Promise<Uint8Array | undefined> {
+    if (archivePath.toLowerCase() === 'manifest.json' && this.workspaceValue.manifest) {
+      return new TextEncoder().encode(JSON.stringify(this.workspaceValue.manifest, null, 2));
+    }
     const document = this.workspaceValue.documents.find((doc) => doc.path.toLowerCase() === archivePath.toLowerCase());
     if (document) {
       return new TextEncoder().encode(document.text);
@@ -508,7 +590,7 @@ export class MdzipWorkspaceService {
   private editorSnapshot(bytes: Uint8Array): MdzipEditorSnapshot {
     return {
       workspace: this.workspaceValue,
-      bytes: bytesToBlob(bytes),
+      bytes: bytesToBlob(bytes, this.sourceFormatValue),
       state: this.hostState()
     };
   }
@@ -529,8 +611,17 @@ export class MdzipWorkspaceService {
       .map((e) => e.path);
   }
 
-  private emit(reason: MdzipChangeReason): void {
-    const event = { reason, snapshot: this.snapshot() };
+  private emit(
+    reason: MdzipChangeReason,
+    changes: MdzipWorkspaceChangeKind[],
+    path?: string
+  ): void {
+    const event: MdzipDocumentChangeEvent = {
+      reason,
+      changes,
+      ...(path ? { path } : {}),
+      snapshot: this.snapshot()
+    };
     for (const listener of this.listeners) {
       listener(event);
     }
@@ -594,6 +685,18 @@ function isEditableTextPath(currentPathType: MdzipPathType, archivePath: string)
   return fileName !== 'manifest.json';
 }
 
+function fileNameFromPath(path: string): string {
+  const normalized = path.replace(/\\/g, '/');
+  return normalized.slice(normalized.lastIndexOf('/') + 1) || 'document.md';
+}
+
+function mdzFileNameFromMarkdown(fileName: string): string {
+  if (/\.(?:md|markdown|mdown|mkd)$/i.test(fileName)) {
+    return fileName.replace(/\.(?:md|markdown|mdown|mkd)$/i, '.mdz');
+  }
+  return fileName.toLowerCase().endsWith('.mdz') ? fileName : `${fileName}.mdz`;
+}
+
 function extensionForMime(mimeType: string): string {
   switch (mimeType.toLowerCase()) {
     case 'image/jpeg':
@@ -634,7 +737,34 @@ function relativeMarkdownAssetPath(markdownPath: string, archivePath: string): s
   return archivePath.startsWith(baseDir) ? archivePath.slice(baseDir.length) : archivePath;
 }
 
-function bytesToBlob(bytes: Uint8Array): Blob {
+export function inferMdzipSourceFormat(
+  bytes: Uint8Array,
+  fileName?: string
+): MdzipSourceFormat {
+  const lowerName = fileName?.trim().toLowerCase() ?? '';
+  if (/\.(?:md|markdown|mdown|mkd)$/.test(lowerName)) {
+    return 'markdown';
+  }
+  if (lowerName.endsWith('.mdz')) {
+    return 'mdz';
+  }
+  return hasZipSignature(bytes) ? 'mdz' : 'markdown';
+}
+
+function hasZipSignature(bytes: Uint8Array): boolean {
+  return bytes.length >= 4
+    && bytes[0] === 0x50
+    && bytes[1] === 0x4b
+    && (
+      (bytes[2] === 0x03 && bytes[3] === 0x04)
+      || (bytes[2] === 0x05 && bytes[3] === 0x06)
+      || (bytes[2] === 0x07 && bytes[3] === 0x08)
+    );
+}
+
+function bytesToBlob(bytes: Uint8Array, sourceFormat: MdzipSourceFormat = 'mdz'): Blob {
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  return new Blob([buffer], { type: 'application/vnd.mdzip' });
+  return new Blob([buffer], {
+    type: sourceFormat === 'markdown' ? 'text/markdown;charset=utf-8' : 'application/vnd.mdzip'
+  });
 }

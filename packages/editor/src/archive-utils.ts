@@ -65,8 +65,18 @@ export async function openedArchiveFromWorkspace(workspace: MdzWorkspace): Promi
   ].sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
   const images = new Map<string, string>();
   for (const asset of workspace.assets) {
-    if (asset.kind === 'image' && asset.readDataUri) {
+    if (asset.kind !== 'image') {
+      continue;
+    }
+    if (asset.readDataUri) {
       images.set(asset.path, await asset.readDataUri());
+      continue;
+    }
+    const bytes = asset.bytes
+      ? await binarySourceToBytes(asset.bytes)
+      : await asset.readBytes?.();
+    if (bytes) {
+      images.set(asset.path, `data:${asset.mimeType};base64,${bytesToBase64(bytes)}`);
     }
   }
 
@@ -205,4 +215,23 @@ export function isImagePath(path: string): boolean {
 
 export async function blobToBytes(blob: Blob): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function binarySourceToBytes(source: ArrayBuffer | Uint8Array | Blob): Promise<Uint8Array> {
+  if (source instanceof Uint8Array) {
+    return source;
+  }
+  if (source instanceof ArrayBuffer) {
+    return new Uint8Array(source);
+  }
+  return blobToBytes(source);
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
 }

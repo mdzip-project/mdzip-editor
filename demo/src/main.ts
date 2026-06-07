@@ -22,7 +22,8 @@ function onSaved(bytes: Uint8Array, fileName?: string): void {
   if (fileName) {
     currentFileName = fileName;
   }
-  setStatus(`Saved - ${bytes.byteLength.toLocaleString()} bytes. Click Download to save file.`);
+  downloadBytes(bytes, currentFileName);
+  setStatus(`Saved ${currentFileName} - ${bytes.byteLength.toLocaleString()} bytes.`);
 }
 
 function onFailed(error: unknown): void {
@@ -138,12 +139,16 @@ document.getElementById('btn-download')!.addEventListener('click', () => {
     setStatus('Nothing saved yet - use the Save button inside the editor first.');
     return;
   }
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: currentFileName });
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadBytes(bytes, currentFileName);
   setStatus(`Downloaded ${currentFileName}.`);
 });
+
+function downloadBytes(bytes: Uint8Array, fileName: string): void {
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  const anchor = Object.assign(document.createElement('a'), { href: url, download: fileName });
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
 
 // Boot: init raw tab then load developer guide
 async function init(): Promise<void> {
@@ -153,7 +158,7 @@ async function init(): Promise<void> {
     if (!res.ok) throw new Error(`Failed to load developer guide: ${res.status}`);
     const bytes = new Uint8Array(await res.arrayBuffer());
     await loadBytes(bytes, 'developer-guide.md');
-    setStatus('Loaded developer-guide.md - try the Raw, Angular, React and Vue tabs.');
+    setStatus('Loaded developer-guide.md - try the JS, Angular, React and Vue tabs.');
   } catch (err) {
     onFailed(err);
   }

@@ -1,36 +1,8 @@
-import { marked } from 'marked';
-import hljs from 'highlight.js';
 import type { ArchiveEntry } from './archive-utils.js';
+import { MdzipRenderingService } from './rendering.js';
 import type { MdzipPathType, MdzipWorkspaceMode, MdzipWorkspaceSnapshot } from './workspace.js';
 
-// Set up marked with highlight.js syntax highlighting
-marked.use({
-  renderer: {
-    code(token: { lang?: string; text: string }) {
-      const lang = token.lang || '';
-      const code = token.text;
-
-      if (lang) {
-        // Map unsupported languages to similar ones
-        const languageMap: { [key: string]: string } = {
-          vue: 'html',  // Vue SFCs are HTML-based
-        };
-
-        const highlightLang = languageMap[lang] || lang;
-
-        if (hljs.getLanguage(highlightLang)) {
-          try {
-            const highlighted = hljs.highlight(code, { language: highlightLang, ignoreIllegals: true }).value;
-            return `<pre><code class="hljs language-${lang}">${highlighted}</code></pre>`;
-          } catch {
-            return `<pre><code>${code}</code></pre>`;
-          }
-        }
-      }
-      return `<pre><code>${code}</code></pre>`;
-    }
-  }
-});
+const renderingService = new MdzipRenderingService();
 
 export interface MdzipNavNode {
   name: string;
@@ -121,8 +93,7 @@ export function renderMdzipPreviewHtml(state: MdzipWorkspaceSnapshot): string {
   }
 
   const rewritten = rewriteMdzipImageSources(state.currentText, state.content.images);
-  const rendered = marked.parse(rewritten, { async: false });
-  return typeof rendered === 'string' ? rendered : escapeHtml(state.currentText);
+  return renderingService.render({ markdown: rewritten }).html;
 }
 
 export function resolveMdzipArchiveLinkTarget(

@@ -176,10 +176,28 @@ Useful host methods:
 const snapshot = await view.getCurrentSnapshot();
 const blob = await view.serialize();
 const flushed = await view.flush();
+view.markPersisted();
 await view.executeCommand('bold');
 view.focus();
 view.destroy();
 ```
+
+`flush()` commits pending editor text and returns current bytes and validation,
+but it does not clear dirty state. Call `markPersisted()` only after the host
+successfully writes those bytes. A failed native save therefore leaves the
+editor dirty.
+
+The raw view also accepts a normalized core workspace directly:
+
+```ts
+await view.openWorkspace(workspace, {
+  mode: 'editable',
+  fileName: 'document.mdz'
+});
+```
+
+This path does not rebuild an MDZ archive during open. Serialization happens
+when the host requests bytes.
 
 Use `navigationMode: 'host'` when the application supplies its own document and
 asset navigation. Use `navigationMode: 'none'` when neither the editor nor host
@@ -282,8 +300,11 @@ export class EditorPage {
 }
 ```
 
-Angular outputs include `changed`, `saved`, `snapshotChanged`,
-`selectionChanged`, `dirtyChanged`, `validationChanged`,
+Angular accepts either `[bytes]` or `[workspace]`. Its public component methods
+include `flush()`, `serialize()`, `getCurrentSnapshot()`, `markPersisted()`,
+and the asset operations. Outputs include `changed`, `saved`,
+`workspaceChanged`, `documentChanged`, `assetChanged`, `manifestChanged`,
+`snapshotChanged`, `selectionChanged`, `dirtyChanged`, `validationChanged`,
 `colorSchemeChanged`, and `failed`.
 
 ## React
@@ -380,7 +401,9 @@ function onFailed(error: unknown) {
 </style>
 ```
 
-Vue emits the same event set exposed by the Angular and React wrappers.
+React and Vue accept either archive bytes or a normalized workspace and expose
+the same persistence and asset methods through their imperative handles. Vue
+emits the same structured event set exposed by the Angular and React wrappers.
 
 ## Host Persistence
 
@@ -389,7 +412,118 @@ or call `onSaved`. A host-provided `onSaved` handler must call
 `markPersisted()` after persistence succeeds.
 Use `hosted-editor` when the containing application owns Save, Save As, and
 keyboard shortcuts. The raw view exposes `flush()`, `serialize()`, and
-`getCurrentSnapshot()` for that workflow.
+`getCurrentSnapshot()` for that workflow. After a successful native write, call
+`markPersisted()`.
+
+## Safe Rendering
+
+`MdzipRenderingService` converts Markdown into an HTML string. When no renderer
+is supplied, it uses the exported `defaultSafeMarkdownRenderer`:
+
+```ts
+import { MdzipRenderingService } from 'mdzip-editor';
+
+const rendering = new MdzipRenderingService();
+const result = rendering.render({
+  markdown: '# Hello\n\n```ts\nconst answer = 42;\n```'
+});
+
+previewElement.innerHTML = result.html;
+```
+
+The default renderer uses `marked`, applies `highlight.js` syntax highlighting,
+and sanitizes the resulting HTML with DOMPurify. Its policy removes scripts,
+inline event handlers, unsafe URL schemes, frames and embedded objects, forms,
+style elements, and inline `style` attributes. Use it for ordinary Markdown
+preview surfaces when the source may not be trusted.
+
+The renderer is also exported for direct use:
+
+```ts
+import { defaultSafeMarkdownRenderer } from 'mdzip-editor';
+
+const html = defaultSafeMarkdownRenderer.render(markdown);
+```
+
+### Custom Renderers
+
+Supply an object implementing `MdzipMarkdownRenderer` to the service
+constructor:
+
+```ts
+import {
+  MdzipRenderingService,
+  type MdzipMarkdownRenderer
+} from 'mdzip-editor';
+import { marked } from 'marked';
+import DOMPurify from 'isomorphic-dompurify';
+
+const customRenderer: MdzipMarkdownRenderer = {
+  render(markdown) {
+    const rendered = marked.parse(markdown, { async: false });
+    const html = typeof rendered === 'string' ? rendered : '';
+
+    return DOMPurify.sanitize(html, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['script', 'iframe', 'object']
+    });
+  }
+};
+
+const rendering = new MdzipRenderingService(customRenderer);
+const { html } = rendering.render({ markdown: '# Custom preview' });
+```
+
+A custom renderer replaces the default renderer completely. The editor does not
+sanitize its return value afterward, so the custom renderer is responsible for
+escaping or sanitizing HTML before returning it. Returning unsanitized output
+from `marked`, another Markdown parser, or user-authored HTML can create an XSS
+vulnerability when the result is assigned to `innerHTML`.
+
+The `options` parameter in the renderer interface is available for custom
+renderer implementations:
+
+```ts
+import { defaultSafeMarkdownRenderer } from 'mdzip-editor';
+
+const customRenderer: MdzipMarkdownRenderer = {
+  render(markdown, options) {
+    const allowHeadings = options?.['allowHeadings'] !== false;
+    const source = allowHeadings
+      ? markdown
+      : markdown.replace(/^\s{0,3}#{1,6}\s+/gm, '');
+    return defaultSafeMarkdownRenderer.render(source);
+  }
+};
+```
+
+`MdzipRenderingService.render()` currently invokes the renderer with Markdown
+only. Applications that need per-render options can call their renderer
+directly or wrap the service with their own typed configuration.
+
+### Archive Asset URLs
+
+Pass an `assetResolver` when Markdown image paths need to be converted to
+browser URLs or data URIs before rendering:
+
+```ts
+const { html } = rendering.render({
+  markdown: '![Logo](images/logo.png)',
+  assetResolver: {
+    resolveAssetUrl(path) {
+      return assetUrls.get(path);
+    }
+  }
+});
+```
+
+When the resolver returns `undefined`, the original Markdown image path is left
+unchanged. Hosts should only return URL schemes permitted by their rendering
+policy.
+
+`MdzipWorkspaceView` currently uses the default safe renderer internally and
+does not expose renderer injection through `MdzipWorkspaceViewOptions`.
+Renderer injection applies when using `MdzipRenderingService` directly.
 
 ## Theme Integration
 
@@ -398,6 +532,5 @@ can set `initialColorScheme`, listen to `onColorSchemeChanged`, or hide those
 buttons with `colorScheme: false`.
 
 Custom themes define `--theme-*` variables on `:root`, the editor container, or
-an ancestor. The repository's `docs/theming.md` guide contains complete theme
-examples, token precedence, exported CSS constants, and the full variable
-reference.
+an ancestor. See the [Theming Guide](theming.md) for complete theme examples,
+token precedence, exported CSS constants, and the full variable reference.

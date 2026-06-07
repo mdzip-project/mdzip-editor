@@ -4,6 +4,15 @@ import {
   MDZIP_VARIABLES_CSS
 } from './theme.js';
 
+const MDZIP_LIGHT_DEFAULTS_CSS = MDZIP_LIGHT_THEME_CSS.replaceAll(
+  '--theme-',
+  '--mdzip-default-'
+);
+const MDZIP_DARK_DEFAULTS_CSS = MDZIP_DARK_THEME_CSS.replaceAll(
+  '--theme-',
+  '--mdzip-default-'
+);
+
 export const WORKSPACE_CSS = `
 .mdzip-root {
   /* Layout variables */
@@ -30,12 +39,12 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root.mdzip-theme-light {
   color-scheme: light;
-  ${MDZIP_LIGHT_THEME_CSS}
+  ${MDZIP_LIGHT_DEFAULTS_CSS}
 }
 
 .mdzip-root.mdzip-theme-dark {
   color-scheme: dark;
-  ${MDZIP_DARK_THEME_CSS}
+  ${MDZIP_DARK_DEFAULTS_CSS}
 }
 
 .mdzip-root *,
@@ -911,6 +920,8 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root .preview-content code {
   font-family: "Cascadia Code", Consolas, monospace;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   font-size: 0.9em;
   background: var(--mdzip-code-background-color);
   border: 1px solid var(--mdzip-border-color);
@@ -940,6 +951,47 @@ export const WORKSPACE_CSS = `
   background: var(--mdzip-code-background-color);
 }
 
+.mdzip-root .preview-content .mdzip-table-scroll {
+  width: 100%;
+  margin: 1em 0;
+  overflow-x: auto;
+}
+
+.mdzip-root .preview-content table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+}
+
+.mdzip-root .preview-content th,
+.mdzip-root .preview-content td {
+  padding: 8px 12px;
+  border: 1px solid var(--mdzip-border-color);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mdzip-root .preview-content th {
+  background: var(--mdzip-widget-background-color);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mdzip-root .preview-content td code,
+.mdzip-root .preview-content th code {
+  white-space: nowrap;
+}
+
+.mdzip-root .preview-content td:last-child {
+  min-width: 220px;
+  max-width: 320px;
+}
+
+.mdzip-root .preview-content tbody tr:nth-child(even) {
+  background: var(--mdzip-hover-background-color);
+}
+
 .mdzip-root .preview-content img {
   max-width: 100%;
   height: auto;
@@ -951,6 +1003,8 @@ export const WORKSPACE_CSS = `
   white-space: pre-wrap;
   word-break: break-word;
   font-family: "Cascadia Code", Consolas, monospace;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   font-size: calc(20px * var(--mdz-zoom));
   line-height: 1.5;
 }
@@ -1206,6 +1260,8 @@ export const WORKSPACE_CSS = `
   background: var(--mdzip-editor-background-color);
   border-radius: 4px;
   font-family: "Courier New", Courier, monospace;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
   font-size: 12px;
   color: var(--mdzip-editor-foreground-color);
 }

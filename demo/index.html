@@ -84,7 +84,7 @@
       display: none;
     }
 
-    .tab-panel.active { display: block; }
+    .tab-panel.active { display: flex; }
   </style>
 </head>
 <body>
@@ -92,7 +92,7 @@
     <h1>MDZip Editor</h1>
 
     <div class="tab-group" role="tablist">
-      <button class="tab-btn active" role="tab" data-tab="raw">Raw</button>
+      <button class="tab-btn active" role="tab" data-tab="raw">JS</button>
       <button class="tab-btn" role="tab" data-tab="angular">Angular</button>
       <button class="tab-btn" role="tab" data-tab="react">React</button>
       <button class="tab-btn" role="tab" data-tab="vue">Vue</button>
@@ -101,7 +101,7 @@
     <div class="demo-controls">
       <button id="btn-editable">Editable</button>
       <button id="btn-readonly">Read Only</button>
-      <label>Open .mdz <input type="file" id="file-input" accept=".mdz,.md" /></label>
+      <label>Open .mdz or .md <input type="file" id="file-input" accept=".mdz,.md,.markdown" /></label>
       <button id="btn-download">Download</button>
       <span id="status">Loading sample...</span>
     </div>

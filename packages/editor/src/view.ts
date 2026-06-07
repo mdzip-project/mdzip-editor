@@ -34,10 +34,15 @@ import {
   Sun,
   ZoomIn
 } from 'lucide';
-import type { MdzWorkspace } from 'mdzip-core-js';
+import type { MdzWorkspace, MdzWorkspaceAsset } from 'mdzip-core-js';
 import { browserClipboardHasImage, readBrowserClipboardImage } from './browser.js';
 import { MD_MARKDOWN_ICON, type LucideIconNode } from './icons/md-markdown.js';
-import type { MdzipEditorSnapshot, MdzipWorkspaceOpenOptions } from './workspace.js';
+import type {
+  MdzipDocumentChangeEvent,
+  MdzipEditorSnapshot,
+  MdzipRemoveAssetOptions,
+  MdzipWorkspaceOpenOptions
+} from './workspace.js';
 import { MdzipWorkspaceService } from './workspace.js';
 import {
   buildMdzipNavTree,
@@ -219,6 +224,10 @@ export interface MdzipWorkspaceViewOptions {
   navigationButtonActive?: boolean;
   onChanged?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
   onSaved?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
+  onWorkspaceChanged?: (event: MdzipDocumentChangeEvent) => void;
+  onDocumentChanged?: (event: MdzipDocumentChangeEvent) => void;
+  onAssetChanged?: (event: MdzipDocumentChangeEvent) => void;
+  onManifestChanged?: (event: MdzipDocumentChangeEvent) => void;
   onSnapshotChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onSelectionChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onDirtyChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
@@ -430,6 +439,8 @@ const mdzipEditorTheme = EditorView.theme({
     height: '100%',
     fontSize: 'calc(16px * var(--mdz-zoom, 1))',
     fontFamily: '"Cascadia Code", Consolas, monospace',
+    fontVariantLigatures: 'none',
+    fontFeatureSettings: '"liga" 0, "calt" 0',
     background: 'var(--mdzip-editor-background-color)',
   },
   '.cm-scroller': {
@@ -725,12 +736,12 @@ export class MdzipWorkspaceView {
         snap
       );
       this.cmEditor = this.createCmEditor(this.elEditorHost, snap.currentText, snap.mode);
-      this.unsub = ws.subscribe(() => {
+      this.unsub = ws.subscribe((event) => {
         this.render();
-        void this.notifyChanged();
+        void this.notifyChanged(event);
       });
       this.render();
-      void this.notifyChanged();
+      void this.notifyChanged(this.initialWorkspaceEvent(ws.snapshot()));
     } catch (error) {
       this.options.onFailed?.(error);
     }
@@ -751,12 +762,12 @@ export class MdzipWorkspaceView {
         snap
       );
       this.cmEditor = this.createCmEditor(this.elEditorHost, snap.currentText, snap.mode);
-      this.unsub = ws.subscribe(() => {
+      this.unsub = ws.subscribe((event) => {
         this.render();
-        void this.notifyChanged();
+        void this.notifyChanged(event);
       });
       this.render();
-      void this.notifyChanged();
+      void this.notifyChanged(this.initialWorkspaceEvent(ws.snapshot()));
     } catch (error) {
       this.options.onFailed?.(error);
     }
@@ -772,6 +783,29 @@ export class MdzipWorkspaceView {
 
   public async getCurrentSnapshot(): Promise<MdzipEditorSnapshot | null> {
     return this.workspace?.getCurrentSnapshot() ?? null;
+  }
+
+  public markPersisted(): void {
+    this.workspace?.markPersisted();
+  }
+
+  public async addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void> {
+    await this.workspace?.addAsset(archivePath, fileBytes);
+  }
+
+  public async replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean> {
+    return this.workspace?.replaceAsset(archivePath, fileBytes) ?? false;
+  }
+
+  public async removeAsset(
+    archivePath: string,
+    options?: MdzipRemoveAssetOptions
+  ): Promise<boolean> {
+    return this.workspace?.removeAsset(archivePath, options) ?? false;
+  }
+
+  public listAssets(): MdzWorkspaceAsset[] {
+    return this.workspace?.listAssets() ?? [];
   }
 
   public canExecuteCommand(command: MdzipEditorCommand): boolean {
@@ -1386,7 +1420,6 @@ export class MdzipWorkspaceView {
     try {
       const opened = await this.workspace.openPath(path);
       if (opened) {
-        this.options.onSelectionChanged?.(this.workspace.snapshot());
         this.layout = this.validLayoutForSnapshot(this.layout, this.workspace.snapshot());
         this.render();
       }
@@ -1475,14 +1508,38 @@ export class MdzipWorkspaceView {
       if (!workspace) {
         return;
       }
-      const bytes = await workspace.saveToBytes();
-      if (bytes) {
-        this.render();
-        this.options.onSaved?.(bytes, workspace.snapshot());
+      const saved = await workspace.flush();
+      const bytes = new Uint8Array(await saved.bytes.arrayBuffer());
+      const snapshot = workspace.snapshot();
+
+      if (this.options.onSaved) {
+        this.options.onSaved(bytes, snapshot);
+      } else {
+        this.downloadSavedBlob(saved.bytes, snapshot.fileName);
+        workspace.markPersisted();
       }
+      this.render();
     } catch (error) {
       this.options.onFailed?.(error);
     }
+  }
+
+  private downloadSavedBlob(blob: Blob, fileName: string): void {
+    const doc = this.elRoot.ownerDocument;
+    const urlApi = doc.defaultView?.URL;
+    if (!urlApi?.createObjectURL) {
+      throw new Error('Browser download is unavailable. Provide an onSaved handler to persist the file.');
+    }
+
+    const url = urlApi.createObjectURL(blob);
+    const anchor = doc.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.hidden = true;
+    doc.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    urlApi.revokeObjectURL(url);
   }
 
   private async saveTitle(): Promise<void> {
@@ -1814,20 +1871,43 @@ export class MdzipWorkspaceView {
     editor.focus();
   }
 
-  private async notifyChanged(): Promise<void> {
-    if (!this.workspace || !this.options.onChanged) {
+  private async notifyChanged(event: MdzipDocumentChangeEvent): Promise<void> {
+    if (!this.workspace) {
       return;
     }
     try {
-      const bytes = await this.workspace.exportBytes();
-      const snapshot = this.workspace.snapshot();
-      this.options.onChanged(bytes, snapshot);
+      const snapshot = event.snapshot;
+      if (this.options.onChanged) {
+        const bytes = await this.workspace.exportBytes();
+        this.options.onChanged(bytes, snapshot);
+      }
+      this.options.onWorkspaceChanged?.(event);
+      if (event.changes.includes('document')) {
+        this.options.onDocumentChanged?.(event);
+      }
+      if (event.changes.includes('asset')) {
+        this.options.onAssetChanged?.(event);
+      }
+      if (event.changes.includes('manifest')) {
+        this.options.onManifestChanged?.(event);
+      }
       this.options.onSnapshotChanged?.(snapshot);
       this.options.onDirtyChanged?.(snapshot);
       this.options.onValidationChanged?.(snapshot);
+      if (event.changes.includes('selection')) {
+        this.options.onSelectionChanged?.(snapshot);
+      }
     } catch (error) {
       this.options.onFailed?.(error);
     }
+  }
+
+  private initialWorkspaceEvent(snapshot: MdzipWorkspaceSnapshot): MdzipDocumentChangeEvent {
+    return {
+      reason: 'reload',
+      changes: ['workspace'],
+      snapshot
+    };
   }
 
   private setZoom(value: number): void {
@@ -1885,7 +1965,7 @@ export class MdzipWorkspaceView {
       return;
     }
     try {
-      await this.workspace?.removeAsset(path);
+      await this.workspace?.removeAsset(path, { requireOrphaned: true });
       this.render();
     } catch (error) {
       this.options.onFailed?.(error);

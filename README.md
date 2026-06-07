@@ -17,3 +17,10 @@ npm test
 npm run start:demo
 ```
 
+## Using The Library
+
+See [docs/developer-guide.md](docs/developer-guide.md) for standalone and hosted
+usage, granular toolbar configuration, and framework examples.
+
+See [docs/theming.md](docs/theming.md) for custom themes and the complete CSS
+variable reference.

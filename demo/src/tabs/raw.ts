@@ -3,10 +3,9 @@ import type { TabController } from '../tab-controller.js';
 
 export function initRaw(
   container: HTMLElement,
-  onSaved: (b: Uint8Array) => void,
+  onSaved: (b: Uint8Array, fileName?: string) => void,
   onFailed: (e: unknown) => void
 ): TabController {
-  container.style.display = 'flex';
   container.style.flexDirection = 'column';
   container.style.height = '100%';
   container.style.minHeight = '0';
@@ -127,7 +126,10 @@ export function initRaw(
 
   let view = new MdzipWorkspaceView(viewerContainer, {
     controls: currentControls,
-    onSaved,
+    onSaved: (bytes, snapshot) => {
+      onSaved(bytes, snapshot.fileName);
+      view.markPersisted();
+    },
     onFailed,
   });
   let lastControls = currentControls;
@@ -139,7 +141,10 @@ export function initRaw(
       view.destroy();
       view = new MdzipWorkspaceView(viewerContainer, {
         controls: currentControls,
-        onSaved,
+        onSaved: (bytes, snapshot) => {
+          onSaved(bytes, snapshot.fileName);
+          view.markPersisted();
+        },
         onFailed,
       });
       lastControls = currentControls;
@@ -159,6 +164,7 @@ export function initRaw(
       updateControlsAvailability();
       updateView();
     },
+    markPersisted: () => view.markPersisted(),
     destroy: () => view.destroy(),
   };
 }
