@@ -1,6 +1,6 @@
 {
   "name": "@mdzip/editor-ng",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Angular UI components for the MDZip workspace engine.",
   "license": "Apache-2.0",
   "type": "module",
