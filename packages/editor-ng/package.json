@@ -14,5 +14,8 @@
   },
   "scripts": {
     "build": "ng build @mdzip/editor-ng"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
