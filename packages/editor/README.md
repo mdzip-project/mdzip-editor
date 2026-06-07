@@ -1,19 +1,19 @@
-# mdzip-editor
+# @mdzip/editor
 
 Framework-independent MDZip workspace engine and browser view.
 
-`mdzip-editor` provides reusable helpers for opening `.mdz` archives, rendering Markdown previews, editing archive contents, comparing archive inventories, and embedding a configurable MDZip workspace UI.
+`@mdzip/editor` provides reusable helpers for opening `.mdz` archives, rendering Markdown previews, editing archive contents, comparing archive inventories, and embedding a configurable MDZip workspace UI.
 
 ## Install
 
 ```sh
-npm install mdzip-editor
+npm install @mdzip/editor
 ```
 
 ## Basic Usage
 
 ```ts
-import { MdzipWorkspaceView } from 'mdzip-editor';
+import { MdzipWorkspaceView } from '@mdzip/editor';
 
 const view = new MdzipWorkspaceView(container, {
   controls: 'viewer',
@@ -105,11 +105,11 @@ injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
 
 ## Developer Guide
 
-See the [Developer Guide](https://github.com/mdzip-project/mdzip-editor/blob/main/docs/developer-guide.md)
+See the [Developer Guide](https://github.com/mdzip-project/@mdzip/editor/blob/main/docs/developer-guide.md)
 for granular host controls, height requirements, lifecycle events, persistence,
 theming, and Raw, Angular, React, and Vue examples.
 
-See the [Theming Guide](https://github.com/mdzip-project/mdzip-editor/blob/main/docs/theming.md)
+See the [Theming Guide](https://github.com/mdzip-project/@mdzip/editor/blob/main/docs/theming.md)
 for custom theme examples and the complete CSS variable reference.
 
 ## Archive Helpers
@@ -120,7 +120,7 @@ import {
   readCanonicalMarkdown,
   createArchiveInventory,
   diffArchiveInventories
-} from 'mdzip-editor';
+} from '@mdzip/editor';
 ```
 
 These helpers are built on `mdzip-core-js` and are suitable for framework wrappers, desktop hosts, browser apps, and extension integrations.

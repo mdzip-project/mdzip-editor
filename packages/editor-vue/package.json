@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "mdzip-editor": "1.2.0"
+    "@mdzip/editor": "1.2.1"
   },
   "peerDependencies": {
     "vue": ">=3.0.0"
