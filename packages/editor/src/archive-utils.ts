@@ -5,7 +5,7 @@ import {
   type MdzManifest,
   type MdzValidationResult,
   type MdzWorkspace
-} from 'mdzip-core-js';
+} from '@mdzip/core-js';
 
 export interface ArchiveEntry {
   path: string;

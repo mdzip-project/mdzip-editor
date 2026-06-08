@@ -34,7 +34,7 @@ import {
   Sun,
   ZoomIn
 } from 'lucide';
-import type { MdzWorkspace, MdzWorkspaceAsset } from 'mdzip-core-js';
+import type { MdzWorkspace, MdzWorkspaceAsset } from '@mdzip/core-js';
 import { browserClipboardHasImage, readBrowserClipboardImage } from './browser.js';
 import { MD_MARKDOWN_ICON, type LucideIconNode } from './icons/md-markdown.js';
 import type {

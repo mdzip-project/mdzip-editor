@@ -1,4 +1,4 @@
-import { MdzArchiveCore, type MdzManifest } from 'mdzip-core-js';
+import { MdzArchiveCore, type MdzManifest } from '@mdzip/core-js';
 import { isMdzipManifestPath } from './workspace-view.js';
 
 export interface CanonicalMarkdownReadResult {

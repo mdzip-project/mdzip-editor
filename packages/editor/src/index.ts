@@ -1,4 +1,4 @@
-export type { MdzWorkspace, MdzWorkspaceAsset } from 'mdzip-core-js';
+export type { MdzWorkspace, MdzWorkspaceAsset } from '@mdzip/core-js';
 export * from './archive-utils.js';
 export * from './browser.js';
 export * from './diff.js';

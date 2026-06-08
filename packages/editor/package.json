@@ -33,7 +33,7 @@
     "isomorphic-dompurify": "^2.36.0",
     "lucide": "^1.17.0",
     "marked": "^15.0.12",
-    "mdzip-core-js": "^1.2.0"
+    "@mdzip/core-js": "^1.2.4"
   },
   "publishConfig": {
     "access": "public"

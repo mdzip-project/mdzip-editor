@@ -6,7 +6,7 @@ import {
   type MdzValidationStatus,
   type MdzWorkspace,
   type MdzWorkspaceAsset
-} from 'mdzip-core-js';
+} from '@mdzip/core-js';
 import {
   buildNewArchiveBytesWithTitle,
   blobToBytes,
