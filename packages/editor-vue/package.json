@@ -1,6 +1,6 @@
 {
   "name": "@mdzip/editor-vue",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Vue wrapper for the MDZip workspace editor.",
   "license": "Apache-2.0",
   "type": "module",
@@ -19,7 +19,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@mdzip/editor": "1.2.1"
+    "@mdzip/editor": "1.2.2"
   },
   "peerDependencies": {
     "vue": ">=3.0.0"
