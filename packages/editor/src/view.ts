@@ -43,7 +43,7 @@ import type {
   MdzipRemoveAssetOptions,
   MdzipWorkspaceOpenOptions
 } from './workspace.js';
-import { MdzipWorkspaceService } from './workspace.js';
+import { MdzipWorkspaceService, extensionForMime } from './workspace.js';
 import {
   buildMdzipNavTree,
   canEditMdzipPath,
@@ -714,6 +714,13 @@ export class MdzipWorkspaceView {
     this.render();
   }
 
+  /**
+   * Opens an `.mdz` archive or Markdown file from raw bytes.
+   *
+   * Parses the ZIP and resolves all assets in the browser. For large archives
+   * this can take several seconds. Prefer {@link openWorkspace} when the host
+   * has already parsed the archive on the native side.
+   */
   public async open(bytes: Uint8Array, options: MdzipWorkspaceOpenOptions = {}): Promise<void> {
     await this.openArchive(bytes, options);
   }
@@ -747,6 +754,20 @@ export class MdzipWorkspaceView {
     }
   }
 
+  /**
+   * Opens a pre-parsed `MdzWorkspace` without rebuilding the archive.
+   *
+   * Use this when the host (e.g. a VS Code extension) has already called
+   * `MdzipWorkspaceService.open()` on the native side and can pass the workspace
+   * object directly. Significantly faster than {@link open} for large archives
+   * because no ZIP parsing or asset decompression occurs in the browser.
+   *
+   * Assets must expose either `readDataUri` or `readBytes` so that subsequent
+   * ZIP rebuilds (e.g. on paste or asset removal) can read their bytes.
+   * Fields present at runtime but absent from the TypeScript interface —
+   * `validation`, `orphanedAssets`, and `asset.kind` — must be preserved on the
+   * workspace object or operations that depend on them will fail.
+   */
   public async openWorkspace(workspace: MdzWorkspace, options: MdzipWorkspaceOpenOptions = {}): Promise<void> {
     this.unsub?.();
     this.cmEditor?.destroy();
@@ -1619,6 +1640,20 @@ export class MdzipWorkspaceView {
       if (!image || !this.cmEditor) {
         return;
       }
+
+      // For markdown source, delegate to the conversion dialog instead of
+      // silently discarding the paste.
+      if (this.workspace?.sourceFormat === 'markdown') {
+        const extension = extensionForMime(image.mimeType);
+        const pastedFile = new window.File(
+          [new Blob([image.bytes as any], { type: image.mimeType })],
+          `pasted.${extension}`,
+          { type: image.mimeType }
+        );
+        this.requestMdzConversion({ kind: 'image-file', file: pastedFile });
+        return;
+      }
+
       await this.insertImageBytes(image.bytes, image.mimeType);
     } catch (error) {
       this.options.onFailed?.(error);

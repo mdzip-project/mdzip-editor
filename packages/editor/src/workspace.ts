@@ -45,6 +45,16 @@ export interface MdzipWorkspaceSnapshot {
   sourceFormat: MdzipSourceFormat;
   fileName: string;
   archiveBytes: Uint8Array;
+  /**
+   * The underlying `MdzWorkspace` object.
+   *
+   * The runtime object carries additional fields beyond what the TypeScript type
+   * declares: `validation` (required by `getValidationStatus`),
+   * `orphanedAssets` (used for orphan detection), and `asset.kind` on each
+   * asset entry. If you serialise and re-hydrate this object, spread the full
+   * runtime value rather than reconstructing it from declared fields only, or
+   * these operations will fail with runtime errors.
+   */
   workspace: MdzWorkspace;
   content: OpenedArchive;
   currentText: string;
@@ -120,6 +130,7 @@ export class MdzipWorkspaceService {
   private currentPathValue = 'index.md';
   private currentPathTypeValue: MdzipPathType = 'markdown';
   private dirtyValue = false;
+  private pendingTextDirty = false;
   private sourceFormatValue: MdzipSourceFormat;
   private readonly modeValue: MdzipWorkspaceMode;
   private fileName: string;
@@ -397,6 +408,18 @@ export class MdzipWorkspaceService {
     return this.workspaceValue.assets.slice();
   }
 
+  /**
+   * Embeds a pasted image into the current `.mdz` document and rebuilds the archive.
+   *
+   * Returns `null` — without throwing — when `sourceFormat` is `'markdown'`.
+   * Markdown source files do not support embedded images; hosts should intercept
+   * paste events and call `executeCommand('insert-image')` to show the MDZ
+   * conversion dialog instead.
+   *
+   * Note: this method always calls `serializeWorkspaceBytes()` (full ZIP rebuild)
+   * when text changes. For large documents this can take several hundred
+   * milliseconds in the browser.
+   */
   public async pasteImage(options: MdzipPasteImageOptions): Promise<MdzipPasteImageResult | null> {
     this.assertEditable('paste image');
     if (this.sourceFormatValue === 'markdown'
@@ -485,6 +508,9 @@ export class MdzipWorkspaceService {
       return this.archiveBytes;
     }
     this.commitPendingTextToWorkspace();
+    if (!this.pendingTextDirty) {
+      return this.archiveBytes;
+    }
     return this.serializeWorkspaceBytes();
   }
 
@@ -516,6 +542,7 @@ export class MdzipWorkspaceService {
     });
     this.contentValue = await openedArchiveFromWorkspace(this.workspaceValue);
     this.liveOrphanedPaths = null;
+    this.pendingTextDirty = false;
 
     if (removedPath && currentPath.toLowerCase() === removedPath.toLowerCase()) {
       this.currentTextValue = this.contentValue.markdownText;
@@ -541,16 +568,23 @@ export class MdzipWorkspaceService {
     }
     const document = this.workspaceValue.documents.find((doc) => doc.path.toLowerCase() === this.currentPathValue.toLowerCase());
     if (document) {
-      document.text = this.currentTextValue;
+      if (document.text !== this.currentTextValue) {
+        document.text = this.currentTextValue;
+        this.pendingTextDirty = true;
+      }
       return;
     }
     const asset = this.workspaceValue.assets.find((item) => item.path.toLowerCase() === this.currentPathValue.toLowerCase());
     if (asset) {
       const bytes = new TextEncoder().encode(this.currentTextValue);
-      asset.bytes = bytes;
-      asset.byteSize = bytes.byteLength;
-      delete asset.readBytes;
-      delete asset.readDataUri;
+      const newByteSize = bytes.byteLength;
+      if (asset.byteSize !== newByteSize) {
+        asset.bytes = bytes;
+        asset.byteSize = newByteSize;
+        delete asset.readBytes;
+        delete asset.readDataUri;
+        this.pendingTextDirty = true;
+      }
     }
   }
 
@@ -697,7 +731,7 @@ function mdzFileNameFromMarkdown(fileName: string): string {
   return fileName.toLowerCase().endsWith('.mdz') ? fileName : `${fileName}.mdz`;
 }
 
-function extensionForMime(mimeType: string): string {
+export function extensionForMime(mimeType: string): string {
   switch (mimeType.toLowerCase()) {
     case 'image/jpeg':
       return 'jpg';
