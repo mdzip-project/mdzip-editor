@@ -508,7 +508,9 @@ export class MdzipWorkspaceService {
       return this.archiveBytes;
     }
     this.commitPendingTextToWorkspace();
-    if (!this.pendingTextDirty) {
+    // If archiveBytes is empty, we're in the openWorkspace() path and must serialize.
+    // Empty bytes is a signal that bytes were never populated, not a valid zero-byte archive.
+    if (!this.pendingTextDirty && this.archiveBytes.length > 0) {
       return this.archiveBytes;
     }
     return this.serializeWorkspaceBytes();
