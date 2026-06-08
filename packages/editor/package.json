@@ -13,7 +13,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "AGENTS.md"
   ],
   "scripts": {
     "generate:icons": "node scripts/generate-icons.mjs",
