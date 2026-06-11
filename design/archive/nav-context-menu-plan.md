@@ -46,18 +46,18 @@ real mouse drags) now covers it.
 
 ## Current state
 
-- The nav tree is rendered by `renderNavNode()` ([view.ts:540](../packages/editor/src/view.ts#L540)). Files render as `<button data-nav-path="...">`; directories render as `<details class="nav-directory">` with **no path attribute** — but `MdzipNavNode` already has a `path` field ([workspace-view.ts:7](../packages/editor/src/workspace-view.ts#L7)), so it just isn't emitted.
+- The nav tree is rendered by `renderNavNode()` ([view.ts:540](../../packages/editor/src/view.ts#L540)). Files render as `<button data-nav-path="...">`; directories render as `<details class="nav-directory">` with **no path attribute** — but `MdzipNavNode` already has a `path` field ([workspace-view.ts:7](../../packages/editor/src/workspace-view.ts#L7)), so it just isn't emitted.
 - There is already a single-item context menu for orphaned assets:
-  - Markup: `.orphan-context-menu` / `data-ref="orphan-menu"` (view.ts ~2341), styles in [view-css.ts:621](../packages/editor/src/view-css.ts#L621).
-  - Positioning/open logic: `showOrphanMenu()` ([view.ts:2024](../packages/editor/src/view.ts#L2024)), state in `orphanMenuState`, rendered in `render()` (~line 1136).
+  - Markup: `.orphan-context-menu` / `data-ref="orphan-menu"` (view.ts ~2341), styles in [view-css.ts:621](../../packages/editor/src/view-css.ts#L621).
+  - Positioning/open logic: `showOrphanMenu()` ([view.ts:2024](../../packages/editor/src/view.ts#L2024)), state in `orphanMenuState`, rendered in `render()` (~line 1136).
   - Triggers: `contextmenu` on `elNavTree` (view.ts:1303), click on the warning badge, Enter key.
   - Action: `removeOrphan()` → `workspace.removeAsset(path, { requireOrphaned: true })` — **no confirmation prompt**.
 - **Important data-model split** (`MdzWorkspace` from `@mdzip/core-js`): markdown files live in `workspace.documents`; everything else non-manifest lives in `workspace.assets`. Consequences:
-  - `removeAsset()` ([workspace.ts:404](../packages/editor/src/workspace.ts#L404)) only filters `assets` — it **cannot delete a non-entry `.md` document today**. The workspace service needs a generalized removal.
-  - `addAsset()` ([workspace.ts:384](../packages/editor/src/workspace.ts#L384)) creates an *asset*, but it then re-serializes and re-opens the archive (`reloadPreservingCurrentText(serializeWorkspaceBytes())`), and re-opening classifies by extension — so a `.md` added via `addAsset` should land in `documents` after the reload. **Verify this round-trip in a test**; if it doesn't hold, add a dedicated `addMarkdownFile()`.
+  - `removeAsset()` ([workspace.ts:404](../../packages/editor/src/workspace.ts#L404)) only filters `assets` — it **cannot delete a non-entry `.md` document today**. The workspace service needs a generalized removal.
+  - `addAsset()` ([workspace.ts:384](../../packages/editor/src/workspace.ts#L384)) creates an *asset*, but it then re-serializes and re-opens the archive (`reloadPreservingCurrentText(serializeWorkspaceBytes())`), and re-opening classifies by extension — so a `.md` added via `addAsset` should land in `documents` after the reload. **Verify this round-trip in a test**; if it doesn't hold, add a dedicated `addMarkdownFile()`.
   - The entry-point markdown is a document, never an asset, so it is inherently protected from `removeAsset` — keep that protection explicit in the new removal path.
-- Entry point support already in core-js: `MdzWorkspace.entryPoint`, `MdzWorkspaceDocument.isEntryPoint`, and `MdzPackagerCore.updateManifest(manifest, { entryPoint })` (mdz-core.d.ts:901). The manifest patch flows through `serializeWorkspaceBytes()` → `MdzArchiveCore.updateFiles(..., { manifest })` ([workspace.ts:677](../packages/editor/src/workspace.ts#L677)).
-- Incremental serialization: `pendingWrites` / `pendingRemovals` maps ([workspace.ts:659](../packages/editor/src/workspace.ts#L659)) patch the archive in place. Rename/move can be expressed as *write at new path + removal at old path* with no new core-js API.
+- Entry point support already in core-js: `MdzWorkspace.entryPoint`, `MdzWorkspaceDocument.isEntryPoint`, and `MdzPackagerCore.updateManifest(manifest, { entryPoint })` (mdz-core.d.ts:901). The manifest patch flows through `serializeWorkspaceBytes()` → `MdzArchiveCore.updateFiles(..., { manifest })` ([workspace.ts:677](../../packages/editor/src/workspace.ts#L677)).
+- Incremental serialization: `pendingWrites` / `pendingRemovals` maps ([workspace.ts:659](../../packages/editor/src/workspace.ts#L659)) patch the archive in place. Rename/move can be expressed as *write at new path + removal at old path* with no new core-js API.
 - Gating precedent: `controlPolicy.orphanActions` boolean, plus `snapshot.mode !== 'read-only'` (view.ts:1085). Presets defined around view.ts:290–337.
 - Confirmation-dialog precedent: the MDZ conversion dialog (`elConversionDialog`). Name-input precedent: the title dialog (`elTitleInput` + validation + save/cancel).
 
@@ -130,7 +130,7 @@ public async setEntryPoint(archivePath: string): Promise<boolean>
 1. Guards: `assertEditable`, `sourceFormat === 'mdz'`, target exists in `workspaceValue.documents`, not already the entry point. Otherwise return `false`.
 2. `commitPendingTextToWorkspace()`.
 3. Update `workspaceValue.entryPoint`, flip `isEntryPoint` on the affected documents, and `workspaceValue.manifest = MdzPackagerCore.updateManifest(manifest, { entryPoint: path })`.
-4. Reserialize + `reloadPreservingCurrentText()`. `openedArchiveFromWorkspace` re-derives `content.entryPoint` / `markdownText` from the new entry document ([archive-utils.ts:39](../packages/editor/src/archive-utils.ts#L39)).
+4. Reserialize + `reloadPreservingCurrentText()`. `openedArchiveFromWorkspace` re-derives `content.entryPoint` / `markdownText` from the new entry document ([archive-utils.ts:39](../../packages/editor/src/archive-utils.ts#L39)).
 5. Reset `liveOrphanedPaths` so orphan analysis recomputes against the new entry document (referenced-image sets change with the entry).
 6. `dirty = true`, emit `edit` with `['manifest']` (or a new `'entry-point'` change kind — decide at implementation; new kind is more honest but touches the change-kind union).
 7. Keep the current selection; don't auto-navigate to the new entry point.
@@ -158,7 +158,7 @@ public async renameFile(oldPath: string, newPath: string): Promise<boolean>
 5. If `currentPath === oldPath`, retarget `currentPathValue` to `newPath` before reload.
 6. Reserialize + reload, `dirty = true`, emit `edit`.
 
-**Reference rewriting (best effort):** renaming an image that markdown references would dangle the links. After the rename, rewrite matching references in all loaded document texts: resolve each `![...](target)` via the existing relative-path logic (`referencedImagePaths` regex at [workspace.ts:772](../packages/editor/src/workspace.ts#L772) is the basis) and rewrite ones that resolved to `oldPath` using `relativeMarkdownAssetPath`. Same for renaming a `.md` that other docs link to (the preview link resolver `resolveMdzipArchiveLinkTarget` shows the resolution rules). Lazy documents (`readText`) must be materialized first — acceptable cost on rename. If this proves too fiddly for the first pass, ship rename with a dialog warning ("links to this file are not updated") and do rewriting as the immediate follow-up.
+**Reference rewriting (best effort):** renaming an image that markdown references would dangle the links. After the rename, rewrite matching references in all loaded document texts: resolve each `![...](target)` via the existing relative-path logic (`referencedImagePaths` regex at [workspace.ts:772](../../packages/editor/src/workspace.ts#L772) is the basis) and rewrite ones that resolved to `oldPath` using `relativeMarkdownAssetPath`. Same for renaming a `.md` that other docs link to (the preview link resolver `resolveMdzipArchiveLinkTarget` shows the resolution rules). Lazy documents (`readText`) must be materialized first — acceptable cost on rename. If this proves too fiddly for the first pass, ship rename with a dialog warning ("links to this file are not updated") and do rewriting as the immediate follow-up.
 
 ### 8. New folder
 
@@ -167,7 +167,7 @@ ZIP archives have no real empty directories in our model — `openedArchiveFromW
 - **New folder** creates an *ephemeral* folder node held in view state: `private pendingNewFolders: Set<string>` in `MdzipWorkspaceView`. `render()` merges these into the tree built by `buildMdzipNavTree` (insert empty `MdzipNavNode`s before rendering).
 - The ephemeral folder is a normal context-menu/drop target, so "New folder → right-click it → New .md file" works; once a file exists inside, the path is real and the pending entry is dropped (prune any `pendingNewFolders` entry that now has at least one archive file under it, on every render).
 - Pending folders are view-local: they don't dirty the workspace and vanish on reopen if left empty. Show them slightly dimmed (e.g. `opacity: 0.7`) to signal "not saved yet".
-- (Check during implementation whether core-js `addFile` accepts a trailing-slash directory entry — `ArchiveEntry.isDirectory` exists in [archive-utils.ts:14](../packages/editor/src/archive-utils.ts#L14) but is never set true. If real directory entries are cheap, prefer them; the ephemeral approach is the fallback and assumed default.)
+- (Check during implementation whether core-js `addFile` accepts a trailing-slash directory entry — `ArchiveEntry.isDirectory` exists in [archive-utils.ts:14](../../packages/editor/src/archive-utils.ts#L14) but is never set true. If real directory entries are cheap, prefer them; the ephemeral approach is the fallback and assumed default.)
 
 ### 9. Drag-and-drop
 
@@ -188,11 +188,11 @@ Internal DnD depends on `renameFile` (section 7); external drop only needs `addA
 
 ### 10. Copy markdown link / image embed
 
-View-level only — no workspace changes. Build the relative path from the *current* document to the target with `relativeMarkdownAssetPath` (already used by image paste, [workspace.ts:472](../packages/editor/src/workspace.ts#L472)); fall back to the archive-root path when no document is open. Images copy `![<basename>](rel/path)`, everything else copies `[<basename>](rel/path)`. Write via `navigator.clipboard.writeText` in a try/catch routed to `options.onFailed` — clipboard access can be denied in embedded webviews. (A separate "Copy archive path" item is subsumed by this; skip it.)
+View-level only — no workspace changes. Build the relative path from the *current* document to the target with `relativeMarkdownAssetPath` (already used by image paste, [workspace.ts:472](../../packages/editor/src/workspace.ts#L472)); fall back to the archive-root path when no document is open. Images copy `![<basename>](rel/path)`, everything else copies `[<basename>](rel/path)`. Write via `navigator.clipboard.writeText` in a try/catch routed to `options.onFailed` — clipboard access can be denied in embedded webviews. (A separate "Copy archive path" item is subsumed by this; skip it.)
 
 ### 11. Replace file…
 
-`workspace.replaceAsset(archivePath, bytes)` **already exists** ([workspace.ts:395](../packages/editor/src/workspace.ts#L395)). The menu item opens a hidden file input (same pattern as `elImageInput` for image insert), reads the picked file's bytes, and calls `replaceAsset`. Keep the original archive path regardless of the picked file's name; no extension check beyond a soft warning if the extension changes (content-type mismatch is the user's call). Assets only — documents are edited in place.
+`workspace.replaceAsset(archivePath, bytes)` **already exists** ([workspace.ts:395](../../packages/editor/src/workspace.ts#L395)). The menu item opens a hidden file input (same pattern as `elImageInput` for image insert), reads the picked file's bytes, and calls `replaceAsset`. Keep the original archive path regardless of the picked file's name; no extension check beyond a soft warning if the extension changes (content-type mismatch is the user's call). Assets only — documents are edited in place.
 
 ### 12. Download
 
@@ -200,7 +200,7 @@ View-level only — no workspace changes. Build the relative path from the *curr
 
 ### 13. Set as cover image / Remove cover image
 
-The manifest already has an editable `cover` field (`MdzManifestEditableMetadata.cover` in core-js). New workspace method mirroring `setManifestTitle` ([workspace.ts:508](../packages/editor/src/workspace.ts#L508)):
+The manifest already has an editable `cover` field (`MdzManifestEditableMetadata.cover` in core-js). New workspace method mirroring `setManifestTitle` ([workspace.ts:508](../../packages/editor/src/workspace.ts#L508)):
 
 ```ts
 public async setCoverImage(archivePath: string | null): Promise<boolean>
@@ -218,7 +218,7 @@ Add `fileActions?: boolean` to `MdzipControlPolicy` (resolved: `fileActions: boo
 
 ### 16. Host hook: `onConversionRequested`
 
-All three conversion triggers already funnel through one method, `requestMdzConversion(action)` ([view.ts:1637](../packages/editor/src/view.ts#L1637)), with action kinds `'navigation'` (nav button on a plain `.md`), `'image-picker'` (Insert Image toolbar button), and `'image-file'` (an image File already in hand — paste/drop). New option on `MdzipWorkspaceViewOptions`:
+All three conversion triggers already funnel through one method, `requestMdzConversion(action)` ([view.ts:1637](../../packages/editor/src/view.ts#L1637)), with action kinds `'navigation'` (nav button on a plain `.md`), `'image-picker'` (Insert Image toolbar button), and `'image-file'` (an image File already in hand — paste/drop). New option on `MdzipWorkspaceViewOptions`:
 
 ```ts
 onConversionRequested?: (action: { kind: 'navigation' | 'image-picker' | 'image-file'; file?: File })
@@ -236,8 +236,8 @@ Semantics:
 Implementation notes:
 
 - `requestMdzConversion` becomes async-tolerant: `void`-returning wrapper that awaits the hook then conditionally sets `conversionAction` + `render()`.
-- Export the `MdzipConversionAction` union (currently a private type at [view.ts:117](../packages/editor/src/view.ts#L117)) so hosts can type the parameter; the hook signature above matches it shape-wise (`file` optional covers all three kinds).
-- Wrappers enumerate callbacks explicitly (e.g. [editor-react/src/index.tsx:43](../packages/editor-react/src/index.tsx#L43)), so add the prop to all three wrappers and their READMEs.
+- Export the `MdzipConversionAction` union (currently a private type at [view.ts:117](../../packages/editor/src/view.ts#L117)) so hosts can type the parameter; the hook signature above matches it shape-wise (`file` optional covers all three kinds).
+- Wrappers enumerate callbacks explicitly (e.g. [editor-react/src/index.tsx:43](../../packages/editor-react/src/index.tsx#L43)), so add the prop to all three wrappers and their READMEs.
 - This directly removes the VS Code extension's capture-phase paste workaround documented in [mdzip-editor-improvements.md](mdzip-editor-improvements.md) §1a — with the hook, the host intercepts `'image-file'` conversions cleanly.
 
 ### 17. CSS
@@ -248,11 +248,11 @@ Rename/extend `.orphan-context-menu` styles (view-css.ts:621–648, plus the med
 
 | File | Change |
 |---|---|
-| [packages/editor/src/workspace.ts](../packages/editor/src/workspace.ts) | `removeFile()` (documents + assets), `setEntryPoint()`, `renameFile()` + reference rewriting, `setCoverImage()`; verify `.md`-via-`addAsset` round-trip |
-| [packages/editor/src/view.ts](../packages/editor/src/view.ts) | `data-nav-dir` on directories; generalize menu markup/state/open/render; contextmenu handler; new-file + rename dialogs; delete-confirm dialog; entry-point class; pending folders; DnD handlers; copy-link, replace (file input), download, duplicate actions; `onConversionRequested` option + export `MdzipConversionAction`; control-policy gating |
-| [packages/editor/src/view-css.ts](../packages/editor/src/view-css.ts) | menu rename + separators; entry-point bold; cover badge; drag-over + pending-folder styles; dialog styles (reuse title-dialog classes if possible) |
-| [packages/editor/src/control-policy.test.ts](../packages/editor/src/control-policy.test.ts) | `fileActions` flag + preset defaults |
-| [packages/editor/tests/workspace.test.mjs](../packages/editor/tests/workspace.test.mjs) | add-`.md`-becomes-document round-trip; `removeFile` on document/asset/entry/manifest; `setEntryPoint` (manifest patch, orphan recompute, old entry demoted); `renameFile` (move, collision, entry-point rename, reference rewrite); `setCoverImage` (set, remove, non-image rejected) |
+| [packages/editor/src/workspace.ts](../../packages/editor/src/workspace.ts) | `removeFile()` (documents + assets), `setEntryPoint()`, `renameFile()` + reference rewriting, `setCoverImage()`; verify `.md`-via-`addAsset` round-trip |
+| [packages/editor/src/view.ts](../../packages/editor/src/view.ts) | `data-nav-dir` on directories; generalize menu markup/state/open/render; contextmenu handler; new-file + rename dialogs; delete-confirm dialog; entry-point class; pending folders; DnD handlers; copy-link, replace (file input), download, duplicate actions; `onConversionRequested` option + export `MdzipConversionAction`; control-policy gating |
+| [packages/editor/src/view-css.ts](../../packages/editor/src/view-css.ts) | menu rename + separators; entry-point bold; cover badge; drag-over + pending-folder styles; dialog styles (reuse title-dialog classes if possible) |
+| [packages/editor/src/control-policy.test.ts](../../packages/editor/src/control-policy.test.ts) | `fileActions` flag + preset defaults |
+| [packages/editor/tests/workspace.test.mjs](../../packages/editor/tests/workspace.test.mjs) | add-`.md`-becomes-document round-trip; `removeFile` on document/asset/entry/manifest; `setEntryPoint` (manifest patch, orphan recompute, old entry demoted); `renameFile` (move, collision, entry-point rename, reference rewrite); `setCoverImage` (set, remove, non-image rejected) |
 | Framework wrappers (react/vue/ng) | add `onConversionRequested` prop/input to all three; document it and `fileActions` in the three READMEs (`controls` itself passes through unchanged) |
 
 ## Suggested phasing
