@@ -1,12 +1,8 @@
 import { createApp, h, ref } from 'vue';
 import { MdzipWorkspace, type MdzipWorkspaceExposed } from '@mdzip/editor-vue';
-import type {
-  MdzipControlPreset,
-  MdzipWorkspaceMode,
-  MdzipWorkspaceSave,
-} from 'mdzip-editor';
+import type { MdzipControlPreset, MdzipWorkspaceSave } from 'mdzip-editor';
+import { modeFromControls } from '../tab-controls.js';
 import type { TabController } from '../tab-controller.js';
-import { createDemoTabControls } from '../tab-controls.js';
 
 export function initVue(
   container: HTMLElement,
@@ -15,56 +11,32 @@ export function initVue(
 ): TabController {
   container.replaceChildren();
   let currentBytes: Uint8Array | null = null;
-  let currentMode: MdzipWorkspaceMode = 'editable';
   let currentControls: MdzipControlPreset = 'standalone-editor';
   let currentFileName = 'document.mdz';
   const workspaceRef = ref<MdzipWorkspaceExposed | null>(null);
-
-  const handleSaved = (event: MdzipWorkspaceSave): void => {
-    onSaved(event.bytes, event.snapshot.fileName);
-    workspaceRef.value?.markPersisted();
-  };
-
-  const handleFailed = (e: unknown): void => {
-    onFailed(e);
-  };
 
   const app = createApp({
     render: () => h(MdzipWorkspace, {
       ref: workspaceRef,
       bytes: currentBytes,
-      mode: currentMode,
+      mode: modeFromControls(currentControls),
       fileName: currentFileName,
       controls: currentControls,
-      onSaved: handleSaved,
-      onFailed: handleFailed,
+      onSaved: (event: MdzipWorkspaceSave) => { onSaved(event.bytes, event.snapshot.fileName); workspaceRef.value?.markPersisted(); },
+      onFailed,
     }),
   });
 
-  const tabControls = createDemoTabControls(
-    container,
-    currentMode,
-    currentControls,
-    (mode, controls) => {
-      currentMode = mode;
-      currentControls = controls;
-      app._instance?.proxy?.$forceUpdate();
-    }
-  );
-  app.mount(tabControls.content);
+  app.mount(container);
 
   return {
-    update: (bytes, mode, fileName) => {
+    update: (bytes, fileName, controls) => {
       currentBytes = bytes;
-      currentMode = mode as MdzipWorkspaceMode;
-      currentControls = tabControls.setMode(currentMode);
       currentFileName = fileName;
+      currentControls = controls;
       app._instance?.proxy?.$forceUpdate();
     },
     markPersisted: () => workspaceRef.value?.markPersisted(),
-    destroy: () => {
-      app.unmount();
-      tabControls.destroy();
-    },
+    destroy: () => app.unmount(),
   };
 }

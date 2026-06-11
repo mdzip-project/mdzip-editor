@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { JSDOM } from 'jsdom';
 import { MdzArchiveCore } from '@mdzip/core-js';
+
+// The default renderer sanitizes through DOMPurify, which needs a DOM window
+// in Node. The library resolves it lazily from globalThis.window.
+if (typeof globalThis.window === 'undefined') {
+  globalThis.window = new JSDOM('').window;
+}
 import {
   MdzipReadOnlyError,
   MdzipRenderingService,
@@ -10,8 +17,10 @@ import {
   buildMdzipNavTree,
   canEditMdzipPath,
   inferMdzipSourceFormat,
+  normalizeArchivePath,
   openMdzArchive,
   readTextFileFromArchive,
+  relativeArchivePath,
   resolveMdzipArchiveLinkTarget,
   resolveMdzipControlPolicy,
   defaultSafeMarkdownRenderer
@@ -137,6 +146,22 @@ test('opens a normalized core workspace directly and flushes a host snapshot', a
   assert.equal(workspace.dirty, false);
 });
 
+test('openWorkspace accepts original archive bytes to enable fast mutation patching', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Entry\n', 'Patched');
+  const coreWorkspace = await MdzArchiveCore.openWorkspace(bytes, { includeLazyDocumentReaders: true });
+  const workspace = await MdzipWorkspaceService.openWorkspace(coreWorkspace, {
+    mode: 'editable',
+    archiveBytes: bytes
+  });
+
+  assert.equal(workspace.snapshot().archiveBytes, bytes);
+
+  await workspace.addAsset('images/new.png', PNG_1X1);
+  const saved = await workspace.saveToBytes();
+  assert.equal(await readTextFileFromArchive(saved, 'index.md'), '# Entry\n');
+  assert.equal((await openMdzArchive(saved)).paths.some((entry) => entry.path === 'images/new.png'), true);
+});
+
 test('opens a normalized workspace without eagerly rebuilding archive bytes', async () => {
   const bytes = await buildNewArchiveBytesWithTitle('# Direct\n', 'Direct');
   const coreWorkspace = await MdzArchiveCore.openWorkspace(bytes);
@@ -208,6 +233,7 @@ test('manages manifest title and orphaned assets', async () => {
   const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
 
   await workspace.addAsset('images/unused.png', PNG_1X1);
+  await workspace.ensureOrphanedAssetsAnalyzed();
   assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths, ['images/unused.png']);
 
   const removed = await workspace.removeAsset('images/unused.png');
@@ -216,6 +242,107 @@ test('manages manifest title and orphaned assets', async () => {
   await workspace.setManifestTitle('Renamed');
   const saved = await workspace.saveToBytes();
   assert.equal((await openMdzArchive(saved)).manifest.title, 'Renamed');
+});
+
+test('addAsset preserves the content of lazily-opened documents the user never visited', async () => {
+  const seedBytes = await buildNewArchiveBytesWithTitle('# Entry\n', 'Lazy');
+  const seedWorkspace = await MdzArchiveCore.openWorkspace(seedBytes);
+  seedWorkspace.documents.push({
+    path: 'chapter2.md',
+    title: 'Chapter 2',
+    text: '# Chapter 2\n',
+    isEntryPoint: false
+  });
+  const seed = await MdzipWorkspaceService.openWorkspace(seedWorkspace, { mode: 'editable' });
+  const twoDocBytes = await seed.saveToBytes();
+
+  // MdzipWorkspaceService.open uses includeLazyDocumentReaders, so chapter2.md
+  // has text '' plus a readText() reader until it is opened.
+  const workspace = await MdzipWorkspaceService.open(twoDocBytes, { mode: 'editable' });
+  await workspace.addAsset('images/new.png', PNG_1X1);
+
+  assert.equal(
+    await readTextFileFromArchive(workspace.snapshot().archiveBytes, 'chapter2.md'),
+    '# Chapter 2\n'
+  );
+  const saved = await workspace.saveToBytes();
+  assert.equal(await readTextFileFromArchive(saved, 'chapter2.md'), '# Chapter 2\n');
+});
+
+test('opening a lazy document whose readText reader was lost throws instead of rendering empty', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Entry\n', 'Lazy');
+  const coreWorkspace = await MdzArchiveCore.openWorkspace(bytes);
+  // Simulate a workspace that crossed a serialization boundary (postMessage):
+  // the isLazy flag survives but the readText closure is dropped.
+  coreWorkspace.documents.push({
+    path: 'chapter2.md',
+    title: 'Chapter 2',
+    text: '',
+    isEntryPoint: false,
+    isLazy: true
+  });
+  const workspace = await MdzipWorkspaceService.openWorkspace(coreWorkspace, { mode: 'editable' });
+
+  await assert.rejects(() => workspace.openPath('chapter2.md'), /ERR_LAZY_TEXT_UNAVAILABLE/);
+});
+
+test('setManifestTitle patches archive bytes without reading lazy documents', async () => {
+  const seedWorkspace = await MdzArchiveCore.openWorkspace(await buildNewArchiveBytesWithTitle('# Entry\n', 'Before'));
+  seedWorkspace.documents.push({
+    path: 'chapter2.md',
+    title: 'Chapter 2',
+    text: '# Chapter 2\n',
+    isEntryPoint: false
+  });
+  const seed = await MdzipWorkspaceService.openWorkspace(seedWorkspace, { mode: 'editable' });
+  const twoDocBytes = await seed.saveToBytes();
+
+  const workspace = await MdzipWorkspaceService.open(twoDocBytes, { mode: 'editable' });
+  let lazyReads = 0;
+  for (const doc of workspace.workspace.documents) {
+    if (doc.readText) {
+      const original = doc.readText;
+      doc.readText = async () => {
+        lazyReads++;
+        return original();
+      };
+    }
+  }
+
+  await workspace.setManifestTitle('After');
+  assert.equal(lazyReads, 0, 'manifest-only change must not resolve lazy documents');
+
+  const saved = await workspace.saveToBytes();
+  assert.equal((await openMdzArchive(saved)).manifest.title, 'After');
+  assert.equal(await readTextFileFromArchive(saved, 'chapter2.md'), '# Chapter 2\n');
+});
+
+test('setManifestTitle on a pre-parsed workspace defers serialization until save', async () => {
+  const core = await MdzArchiveCore.openWorkspace(await buildNewArchiveBytesWithTitle('# Entry\n', 'Before'));
+  let lazyReads = 0;
+  core.documents.push({
+    path: 'chapter2.md',
+    title: 'Chapter 2',
+    text: '',
+    isEntryPoint: false,
+    isLazy: true,
+    readText: async () => {
+      lazyReads++;
+      return '# Chapter 2\n';
+    }
+  });
+  const workspace = await MdzipWorkspaceService.openWorkspace(core, { mode: 'editable' });
+
+  await workspace.setManifestTitle('After');
+  assert.equal(lazyReads, 0, 'no archive rebuild may happen for a manifest-only change');
+  assert.equal(workspace.dirty, true);
+  assert.equal(workspace.snapshot().displayTitle, 'After');
+  assert.equal(workspace.manifest().title, 'After');
+
+  const saved = await workspace.saveToBytes();
+  assert.equal(lazyReads, 1, 'lazy text is read once, at serialization time');
+  assert.equal((await openMdzArchive(saved)).manifest.title, 'After');
+  assert.equal(await readTextFileFromArchive(saved, 'chapter2.md'), '# Chapter 2\n');
 });
 
 test('pastes an image through the framework-independent workspace service', async () => {
@@ -293,7 +420,8 @@ test('resolves control policy presets for common host scenarios', () => {
     save: false,
     zoom: true,
     colorScheme: true,
-    orphanActions: false
+    orphanActions: false,
+    fileActions: false
   });
 
   assert.equal(resolveMdzipControlPolicy('standalone-editor').save, true);
@@ -453,4 +581,219 @@ test('built-in save downloads and acknowledges when no host handler is provided'
 
   assert.deepEqual(downloaded, { blob: savedBlob, fileName: 'notes.md' });
   assert.equal(markPersistedCalls, 1);
+});
+
+// --- Nav-pane file management (context menu feature set) ---
+
+test('a markdown file added via addAsset becomes a document after reload', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Hello\n', 'Demo');
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  await workspace.addAsset('docs/extra.md', new TextEncoder().encode('# Extra\n'));
+
+  const entry = workspace.snapshot().content.paths.find((item) => item.path === 'docs/extra.md');
+  assert.ok(entry, 'new path appears in the archive');
+  assert.equal(entry.isMarkdown, true);
+  assert.ok(
+    workspace.workspace.documents.some((doc) => doc.path === 'docs/extra.md'),
+    'classified as a document, not an asset'
+  );
+});
+
+test('removeFile deletes assets and non-entry documents but protects entry and manifest', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Hello\n', 'Demo', [
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+  await workspace.addAsset('docs/extra.md', new TextEncoder().encode('# Extra\n'));
+
+  assert.equal(await workspace.removeFile('index.md'), false, 'entry point is protected');
+  assert.equal(await workspace.removeFile('manifest.json'), false, 'manifest is protected');
+  assert.equal(await workspace.removeFile('missing.txt'), false, 'unknown path rejected');
+
+  assert.equal(await workspace.removeFile('images/logo.png'), true, 'asset removed');
+  assert.equal(await workspace.removeFile('docs/extra.md'), true, 'document removed');
+
+  const paths = workspace.snapshot().content.paths.map((entry) => entry.path);
+  assert.deepEqual(paths.sort(), ['index.md', 'manifest.json']);
+
+  const saved = await workspace.saveToBytes();
+  const reopened = await MdzipWorkspaceService.open(saved, { mode: 'read-only' });
+  assert.deepEqual(
+    reopened.snapshot().content.paths.map((entry) => entry.path).sort(),
+    ['index.md', 'manifest.json']
+  );
+});
+
+test('setEntryPoint promotes a document and persists through save', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Main\n', 'Demo');
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+  await workspace.addAsset('docs/extra.md', new TextEncoder().encode('# Extra\n'));
+
+  assert.equal(await workspace.setEntryPoint('index.md'), false, 'already the entry');
+  assert.equal(await workspace.setEntryPoint('nope.md'), false, 'unknown path');
+
+  assert.equal(await workspace.setEntryPoint('docs/extra.md'), true);
+  const snapshot = workspace.snapshot();
+  assert.equal(snapshot.content.entryPoint, 'docs/extra.md');
+  assert.equal(snapshot.content.manifest.entryPoint, 'docs/extra.md');
+  assert.equal(snapshot.content.markdownText, '# Extra\n');
+
+  assert.equal(await workspace.removeFile('index.md'), true, 'old entry is now deletable');
+
+  const saved = await workspace.saveToBytes();
+  const reopened = await MdzipWorkspaceService.open(saved, { mode: 'read-only' });
+  assert.equal(reopened.snapshot().content.entryPoint, 'docs/extra.md');
+});
+
+test('renameFile moves an asset and rewrites markdown references', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Hello\n\n![Logo](images/logo.png)\n', 'Demo', [
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  assert.equal(await workspace.renameFile('images/logo.png', 'assets/brand.png'), true);
+
+  const paths = workspace.snapshot().content.paths.map((entry) => entry.path);
+  assert.ok(paths.includes('assets/brand.png'));
+  assert.ok(!paths.includes('images/logo.png'));
+  assert.equal(workspace.currentText, '# Hello\n\n![Logo](assets/brand.png)\n');
+
+  const saved = await workspace.saveToBytes();
+  assert.equal(
+    await readTextFileFromArchive(saved, 'index.md'),
+    '# Hello\n\n![Logo](assets/brand.png)\n'
+  );
+});
+
+test('renameFile rejects collisions, manifest, and invalid paths', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Hello\n', 'Demo', [
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  assert.equal(await workspace.renameFile('images/logo.png', 'index.md'), false, 'collision');
+  assert.equal(await workspace.renameFile('images/logo.png', 'manifest.json'), false, 'reserved');
+  assert.equal(await workspace.renameFile('images/logo.png', '../escape.png'), false, 'dot-dot');
+  assert.equal(await workspace.renameFile('manifest.json', 'other.json'), false, 'manifest source');
+  assert.equal(await workspace.renameFile('images/logo.png', 'images/logo.png'), false, 'no-op');
+});
+
+test('renameFile moves the entry document, updating manifest and its own refs', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Main\n\n![Logo](images/logo.png)\n', 'Demo', [
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  assert.equal(await workspace.renameFile('index.md', 'docs/main.md'), true);
+
+  const snapshot = workspace.snapshot();
+  assert.equal(snapshot.content.entryPoint, 'docs/main.md');
+  assert.equal(snapshot.content.manifest.entryPoint, 'docs/main.md');
+  assert.equal(snapshot.currentPath, 'docs/main.md');
+  assert.equal(snapshot.currentText, '# Main\n\n![Logo](../images/logo.png)\n');
+});
+
+test('setCoverImage sets and clears the manifest cover for image assets only', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Hello\n', 'Demo', [
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  assert.equal(await workspace.setCoverImage('index.md'), false, 'not an image');
+  assert.equal(await workspace.setCoverImage('images/logo.png'), true);
+  assert.equal(workspace.snapshot().content.manifest.cover, 'images/logo.png');
+
+  assert.equal(await workspace.setCoverImage(null), true);
+  assert.ok(!workspace.snapshot().content.manifest.cover, 'cover cleared');
+});
+
+test('resolves fileActions per control preset', () => {
+  assert.equal(resolveMdzipControlPolicy('preview').fileActions, false);
+  assert.equal(resolveMdzipControlPolicy('viewer').fileActions, false);
+  assert.equal(resolveMdzipControlPolicy('standalone-editor').fileActions, true);
+  assert.equal(resolveMdzipControlPolicy('hosted-editor').fileActions, true);
+  assert.equal(
+    resolveMdzipControlPolicy({ preset: 'viewer', fileActions: true }).fileActions,
+    true
+  );
+});
+
+test('normalizes and relativizes archive paths', () => {
+  assert.equal(normalizeArchivePath('a\\b\\c.md'), 'a/b/c.md');
+  assert.equal(normalizeArchivePath('/a//b/'), 'a/b');
+  assert.equal(normalizeArchivePath('a/../b'), null);
+  assert.equal(normalizeArchivePath('   '), null);
+  assert.equal(relativeArchivePath('', 'images/x.png'), 'images/x.png');
+  assert.equal(relativeArchivePath('docs', 'images/x.png'), '../images/x.png');
+  assert.equal(relativeArchivePath('docs', 'docs/a.md'), 'a.md');
+  assert.equal(relativeArchivePath('a/b', 'a/c/d.md'), '../c/d.md');
+});
+
+// --- onConversionRequested host hook ---
+
+const conversionHookTarget = (hook, onFailed) => {
+  const calls = { dialog: 0 };
+  const target = {
+    workspace: { snapshot: () => ({ mode: 'editable', sourceFormat: 'markdown' }) },
+    options: { onConversionRequested: hook, onFailed },
+    conversionHookPending: false,
+    openConversionDialog: () => { calls.dialog += 1; }
+  };
+  return { target, calls };
+};
+
+const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+test('onConversionRequested=true suppresses the built-in conversion dialog', async () => {
+  const seen = [];
+  const { target, calls } = conversionHookTarget((action) => { seen.push(action); return true; });
+
+  MdzipWorkspaceView.prototype.requestMdzConversion.call(target, { kind: 'image-picker' });
+  await flushMicrotasks();
+
+  assert.deepEqual(seen, [{ kind: 'image-picker' }]);
+  assert.equal(calls.dialog, 0);
+});
+
+test('onConversionRequested=false falls through to the built-in dialog', async () => {
+  const { target, calls } = conversionHookTarget(async () => false);
+
+  MdzipWorkspaceView.prototype.requestMdzConversion.call(target, { kind: 'navigation' });
+  await flushMicrotasks();
+
+  assert.equal(calls.dialog, 1);
+});
+
+test('a rejecting onConversionRequested reports onFailed and shows the dialog', async () => {
+  const failures = [];
+  const { target, calls } = conversionHookTarget(
+    () => Promise.reject(new Error('host broke')),
+    (error) => failures.push(error)
+  );
+
+  MdzipWorkspaceView.prototype.requestMdzConversion.call(target, { kind: 'navigation' });
+  await flushMicrotasks();
+
+  assert.equal(failures.length, 1);
+  assert.equal(calls.dialog, 1);
+});
+
+test('a pending onConversionRequested blocks duplicate triggers', async () => {
+  let resolveHook;
+  let hookCalls = 0;
+  const { target, calls } = conversionHookTarget(() => {
+    hookCalls += 1;
+    return new Promise((resolve) => { resolveHook = resolve; });
+  });
+
+  MdzipWorkspaceView.prototype.requestMdzConversion.call(target, { kind: 'image-picker' });
+  await flushMicrotasks();
+  MdzipWorkspaceView.prototype.requestMdzConversion.call(target, { kind: 'image-picker' });
+  await flushMicrotasks();
+  assert.equal(hookCalls, 1, 'second trigger ignored while pending');
+
+  resolveHook(true);
+  await flushMicrotasks();
+  assert.equal(calls.dialog, 0);
 });

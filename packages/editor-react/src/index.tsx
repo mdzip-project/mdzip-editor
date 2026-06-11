@@ -1,9 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { MdzipWorkspaceView } from 'mdzip-editor';
+import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipColorScheme,
+  MdzipConversionAction,
   MdzipDocumentChangeEvent,
   MdzipEditorCommand,
   MdzipEditorSnapshot,
@@ -17,7 +18,7 @@ import type {
   MdzipWorkspaceSnapshot,
   MdzWorkspace,
   MdzWorkspaceAsset,
-} from 'mdzip-editor';
+} from '@mdzip/editor';
 
 export interface MdzipWorkspaceProps {
   bytes?: Uint8Array | null;
@@ -42,6 +43,11 @@ export interface MdzipWorkspaceProps {
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
   onFailed?: (error: unknown) => void;
+  /**
+   * Host hook for the markdown→MDZ conversion flow. Return/resolve `true`
+   * to take over (the built-in conversion dialog is suppressed).
+   */
+  onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
 }
 
 export interface MdzipWorkspaceHandle {
@@ -55,6 +61,10 @@ export interface MdzipWorkspaceHandle {
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
   removeAsset(archivePath: string, options?: MdzipRemoveAssetOptions): Promise<boolean>;
+  removeFile(archivePath: string): Promise<boolean>;
+  renameFile(oldPath: string, newPath: string): Promise<boolean>;
+  setEntryPoint(archivePath: string): Promise<boolean>;
+  setCoverImage(archivePath: string | null): Promise<boolean>;
   listAssets(): MdzWorkspaceAsset[];
   focus(): void;
 }
@@ -83,6 +93,7 @@ function MdzipWorkspace({
   onValidationChanged,
   onColorSchemeChanged,
   onFailed,
+  onConversionRequested,
 }, forwardedRef) {
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MdzipWorkspaceView | null>(null);
@@ -102,6 +113,14 @@ function MdzipWorkspace({
       viewRef.current?.replaceAsset(archivePath, fileBytes) ?? Promise.resolve(false),
     removeAsset: (archivePath, options) =>
       viewRef.current?.removeAsset(archivePath, options) ?? Promise.resolve(false),
+    removeFile: (archivePath) =>
+      viewRef.current?.removeFile(archivePath) ?? Promise.resolve(false),
+    renameFile: (oldPath, newPath) =>
+      viewRef.current?.renameFile(oldPath, newPath) ?? Promise.resolve(false),
+    setEntryPoint: (archivePath) =>
+      viewRef.current?.setEntryPoint(archivePath) ?? Promise.resolve(false),
+    setCoverImage: (archivePath) =>
+      viewRef.current?.setCoverImage(archivePath) ?? Promise.resolve(false),
     listAssets: () => viewRef.current?.listAssets() ?? [],
     focus: () => viewRef.current?.focus()
   }), []);
@@ -126,6 +145,7 @@ function MdzipWorkspace({
       onValidationChanged,
       onColorSchemeChanged,
       onFailed: (e) => onFailed?.(e),
+      onConversionRequested,
     });
     viewRef.current = view;
     return () => { view.destroy(); viewRef.current = null; };
@@ -146,7 +166,8 @@ function MdzipWorkspace({
     onDirtyChanged,
     onValidationChanged,
     onColorSchemeChanged,
-    onFailed
+    onFailed,
+    onConversionRequested
   ]);
 
   useEffect(() => {

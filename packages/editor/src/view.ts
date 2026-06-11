@@ -2,7 +2,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { Compartment, EditorState } from '@codemirror/state';
-import { EditorView, keymap, lineNumbers } from '@codemirror/view';
+import { EditorView, dropCursor, keymap, lineNumbers } from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import {
   Bold,
@@ -43,7 +43,12 @@ import type {
   MdzipRemoveAssetOptions,
   MdzipWorkspaceOpenOptions
 } from './workspace.js';
-import { MdzipWorkspaceService, extensionForMime } from './workspace.js';
+import {
+  MdzipWorkspaceService,
+  extensionForMime,
+  normalizeArchivePath,
+  relativeArchivePath
+} from './workspace.js';
 import {
   buildMdzipNavTree,
   canEditMdzipPath,
@@ -114,10 +119,29 @@ export type MdzipEditorCommand =
   | 'link'
   | 'insert-image';
 
-type MdzipConversionAction =
+export type MdzipConversionAction =
   | { kind: 'navigation' }
   | { kind: 'image-picker' }
   | { kind: 'image-file'; file: File };
+
+type MdzipNavMenuTarget =
+  | {
+      kind: 'file';
+      path: string;
+      orphaned: boolean;
+      isMarkdown: boolean;
+      isEntryPoint: boolean;
+      isImage: boolean;
+      isManifest: boolean;
+    }
+  | { kind: 'directory'; path: string };
+
+interface MdzipNavMenuItem {
+  action: string;
+  label: string;
+}
+
+type MdzipNameDialogMode = 'new-file' | 'new-folder' | 'rename';
 
 export type MdzipControlPreset =
   | 'preview'
@@ -165,6 +189,8 @@ export interface MdzipControlPolicy {
   zoom?: boolean;
   colorScheme?: boolean;
   orphanActions?: boolean;
+  /** Enables nav-pane file management (create, rename, delete, move, …). */
+  fileActions?: boolean;
 }
 
 export interface MdzipResolvedTitleControlPolicy {
@@ -204,6 +230,7 @@ export interface MdzipResolvedControlPolicy {
   zoom: boolean;
   colorScheme: boolean;
   orphanActions: boolean;
+  fileActions: boolean;
 }
 
 export interface MdzipWorkspaceChange {
@@ -227,6 +254,20 @@ export interface MdzipWorkspaceViewOptions {
   onWorkspaceChanged?: (event: MdzipDocumentChangeEvent) => void;
   onDocumentChanged?: (event: MdzipDocumentChangeEvent) => void;
   onAssetChanged?: (event: MdzipDocumentChangeEvent) => void;
+  /**
+   * Fires when a change event includes the manifest.
+   *
+   * Registering this callback also opts in to host-delegated manifest
+   * persistence: for manifest-only events (`changes` is exactly
+   * `['manifest']`), the view skips the `exportBytes()`/`onChanged` path —
+   * which on a workspace opened without `archiveBytes` would rebuild the
+   * whole archive and resolve every lazy document — and expects the host to
+   * apply the manifest change where the real archive bytes live (e.g. via
+   * `MdzArchiveCore.updateFiles(bytes, [], [], { manifest })` or
+   * `updateManifestTitleInArchive`). Read the new manifest from
+   * `event.snapshot.workspace.manifest`. Hosts that do not register this
+   * callback keep the full `onChanged` behavior for manifest edits.
+   */
   onManifestChanged?: (event: MdzipDocumentChangeEvent) => void;
   onSnapshotChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onSelectionChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
@@ -234,6 +275,15 @@ export interface MdzipWorkspaceViewOptions {
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
   onFailed?: (error: unknown) => void;
+  /**
+   * Lets the host take over the markdown→MDZ conversion flow (triggered by the
+   * nav button, the Insert Image control, or an image paste on a plain `.md`
+   * source). Return or resolve `true` to suppress the built-in conversion
+   * dialog — the host owns the flow from there. Return `false` (or omit the
+   * callback) to keep the built-in dialog. If the callback throws or rejects,
+   * the error is reported via `onFailed` and the built-in dialog is shown.
+   */
+  onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
 }
 
 const ALL_HEADINGS: MdzipHeadingLevel[] = [1, 2, 3, 4, 5, 6];
@@ -281,7 +331,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     save: false,
     zoom: false,
     colorScheme: false,
-    orphanActions: false
+    orphanActions: false,
+    fileActions: false
   },
   viewer: {
     preset: 'viewer',
@@ -294,7 +345,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     save: false,
     zoom: true,
     colorScheme: true,
-    orphanActions: false
+    orphanActions: false,
+    fileActions: false
   },
   'standalone-editor': {
     preset: 'standalone-editor',
@@ -307,7 +359,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     save: true,
     zoom: true,
     colorScheme: true,
-    orphanActions: true
+    orphanActions: true,
+    fileActions: true
   },
   'hosted-editor': {
     preset: 'hosted-editor',
@@ -320,7 +373,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     save: false,
     zoom: true,
     colorScheme: true,
-    orphanActions: true
+    orphanActions: true,
+    fileActions: true
   }
 };
 
@@ -523,46 +577,69 @@ function attributesToHtml(attrs: Record<string, string | number | undefined>): s
     .join('');
 }
 
+interface NavRenderOptions {
+  allowOrphanActions: boolean;
+  allowFileActions: boolean;
+  /**
+   * Files are draggable whenever the workspace is editable — dropping on the
+   * editor inserts a markdown link, which only needs edit access, not
+   * `fileActions`. Tree-internal moves are still gated by `fileActions` at
+   * drop time.
+   */
+  allowDrag: boolean;
+  pendingFolders: ReadonlySet<string>;
+}
+
 function renderNavNode(
   node: MdzipNavNode,
   state: MdzipWorkspaceSnapshot,
-  allowOrphanActions: boolean
+  options: NavRenderOptions
 ): string {
   if (node.entry) {
     const isCurrent = node.entry.path === state.currentPath;
     const isOrphaned = isOrphanedMdzipAsset(node.entry, state);
+    const isEntryPoint = node.entry.path === state.content.entryPoint;
+    const isManifest = isMdzipManifestPath(node.entry.path);
     const iconKind = mdzipEntryIconKind(node.entry);
     const safePath = escapeHtml(node.entry.path);
     const safeName = escapeHtml(node.name);
     const title = isOrphaned
       ? `${safePath} - not referenced by the entry markdown`
+      : isEntryPoint
+      ? `${safePath} — entry point`
       : safePath;
-    const classes = ['nav-file', isCurrent ? 'current-entry' : '', isOrphaned ? 'orphaned-asset' : '']
-      .filter(Boolean).join(' ');
+    const classes = [
+      'nav-file',
+      isCurrent ? 'current-entry' : '',
+      isOrphaned ? 'orphaned-asset' : '',
+      isEntryPoint ? 'entry-point' : ''
+    ].filter(Boolean).join(' ');
     const iconHtml = node.entry.isMarkdown
       ? MARKDOWN_ICON_HTML
-      : isMdzipManifestPath(node.entry.path)
+      : isManifest
       ? MANIFEST_ICON_HTML
       : isImageFile(node.entry.path)
       ? IMAGE_ICON_HTML
       : FILE_ICON_HTML;
-    const orphanBtnHtml = isOrphaned && allowOrphanActions ? `
+    const orphanBtnHtml = isOrphaned && options.allowOrphanActions ? `
       <span class="nav-orphan-button" role="button" tabindex="0"
         title="Orphaned asset" aria-label="Orphaned asset actions"
         data-orphan-path="${safePath}">
         ${ORPHAN_ICON_HTML}
       </span>` : '';
+    const draggable = options.allowDrag && !isManifest;
     return `<button type="button" class="${classes}" title="${title}"
-      data-nav-path="${safePath}" data-orphan="${isOrphaned ? 'true' : ''}">
+      data-nav-path="${safePath}" data-orphan="${isOrphaned ? 'true' : ''}"${draggable ? ' draggable="true"' : ''}>
       <span class="nav-caret"></span>
       <span class="nav-file-icon ${iconKind}">${iconHtml}</span>
       ${orphanBtnHtml}
       <span class="nav-label">${safeName}</span>
     </button>`;
   }
-  const children = node.children.map(c => renderNavNode(c, state, allowOrphanActions)).join('');
-  return `<details class="nav-directory" open>
-    <summary>
+  const children = node.children.map(c => renderNavNode(c, state, options)).join('');
+  const pending = options.pendingFolders.has(node.path.toLowerCase());
+  return `<details class="nav-directory${pending ? ' pending-folder' : ''}" open data-nav-dir="${escapeHtml(node.path)}">
+    <summary${pending ? ` title="${escapeHtml(node.path)} — not saved until it contains a file"` : ''}>
       <span class="nav-caret" aria-hidden="true"></span>
       <span class="nav-folder-icon closed">${FOLDER_CLOSED_ICON_HTML}</span>
       <span class="nav-folder-icon open">${FOLDER_OPEN_ICON_HTML}</span>
@@ -572,13 +649,46 @@ function renderNavNode(
   </details>`;
 }
 
+// Inserts view-local pending (not yet saved) folders into the nav tree so they
+// can be browsed and targeted before any file exists inside them.
+function mergePendingFolders(nodes: MdzipNavNode[], pendingPaths: ReadonlySet<string>): MdzipNavNode[] {
+  if (pendingPaths.size === 0) {
+    return nodes;
+  }
+  const result = nodes.map(cloneNavNode);
+  for (const path of pendingPaths) {
+    let children = result;
+    let prefix = '';
+    for (const segment of path.split('/').filter(Boolean)) {
+      prefix = prefix ? `${prefix}/${segment}` : segment;
+      let dir = children.find((n) => !n.entry && n.path.toLowerCase() === prefix.toLowerCase());
+      if (!dir) {
+        dir = { name: segment, path: prefix, children: [] };
+        children.push(dir);
+        children.sort(navNodeOrder);
+      }
+      children = dir.children;
+    }
+  }
+  return result;
+}
+
+function cloneNavNode(node: MdzipNavNode): MdzipNavNode {
+  return { ...node, children: node.children.map(cloneNavNode) };
+}
+
+function navNodeOrder(a: MdzipNavNode, b: MdzipNavNode): number {
+  if (a.entry && !b.entry) return -1;
+  if (!a.entry && b.entry) return 1;
+  return a.name.localeCompare(b.name);
+}
+
 export class MdzipWorkspaceView {
   private workspace: MdzipWorkspaceService | null = null;
   private unsub: (() => void) | null = null;
   private readonly options: MdzipWorkspaceViewOptions;
   private readonly controlPolicy: MdzipResolvedControlPolicy;
   private readonly navigationMode: MdzipNavigationMode;
-  private pendingOrphanPath: string | null = null;
 
   private layout: MdzipWorkspaceLayout = 'split';
   private navVisible = true;
@@ -592,7 +702,20 @@ export class MdzipWorkspaceView {
   private navPaneWidth = 280;
   private splitRatio = 0.5;
   private resizing = false;
-  private orphanMenuState: { path: string; x: number; y: number } | null = null;
+  private navMenuState: { target: MdzipNavMenuTarget; x: number; y: number } | null = null;
+  private nameDialogState: {
+    mode: MdzipNameDialogMode;
+    dir: string;
+    oldPath: string;
+    value: string;
+    error: string;
+  } | null = null;
+  private deleteDialogState: { path: string } | null = null;
+  private readonly pendingNewFolders = new Set<string>();
+  private pendingReplacePath: string | null = null;
+  private conversionHookPending = false;
+  private dragSourcePath: string | null = null;
+  private dragOverElement: HTMLElement | null = null;
   private tooltipState: { text: string; x: number; y: number } | null = null;
   private tooltipShowTimer: ReturnType<typeof setTimeout> | null = null;
   private tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
@@ -643,7 +766,16 @@ export class MdzipWorkspaceView {
   private readonly elMetadataList: HTMLElement;
   private readonly elConversionDialog: HTMLElement;
   private readonly elConversionConfirmBtn: HTMLButtonElement;
-  private readonly elOrphanMenu: HTMLElement;
+  private readonly elNavMenu: HTMLElement;
+  private readonly elNameDialog: HTMLElement;
+  private readonly elNameDialogHeading: HTMLElement;
+  private readonly elNameInput: HTMLInputElement;
+  private readonly elNameValidation: HTMLElement;
+  private readonly elNameConfirmBtn: HTMLButtonElement;
+  private readonly elDeleteDialog: HTMLElement;
+  private readonly elDeleteDialogText: HTMLElement;
+  private readonly elDeleteConfirmBtn: HTMLButtonElement;
+  private readonly elReplaceInput: HTMLInputElement;
   private readonly elTooltip: HTMLElement;
   private readonly elEmptyState: HTMLElement;
 
@@ -705,7 +837,16 @@ export class MdzipWorkspaceView {
     this.elMetadataList = q('[data-ref="metadata-list"]');
     this.elConversionDialog = q('[data-ref="conversion-dialog"]');
     this.elConversionConfirmBtn = q('[data-ref="conversion-confirm-btn"]');
-    this.elOrphanMenu = q('[data-ref="orphan-menu"]');
+    this.elNavMenu = q('[data-ref="nav-menu"]');
+    this.elNameDialog = q('[data-ref="name-dialog"]');
+    this.elNameDialogHeading = q('[data-ref="name-dialog-heading"]');
+    this.elNameInput = q('[data-ref="name-input"]');
+    this.elNameValidation = q('[data-ref="name-validation"]');
+    this.elNameConfirmBtn = q('[data-ref="name-confirm-btn"]');
+    this.elDeleteDialog = q('[data-ref="delete-dialog"]');
+    this.elDeleteDialogText = q('[data-ref="delete-dialog-text"]');
+    this.elDeleteConfirmBtn = q('[data-ref="delete-confirm-btn"]');
+    this.elReplaceInput = q('[data-ref="replace-input"]');
     this.elTooltip = q('[data-ref="tooltip"]');
     this.elEmptyState = q('[data-ref="empty-state"]');
 
@@ -764,9 +905,21 @@ export class MdzipWorkspaceView {
    *
    * Assets must expose either `readDataUri` or `readBytes` so that subsequent
    * ZIP rebuilds (e.g. on paste or asset removal) can read their bytes.
+   * Since 1.2.7, non-entry-point documents are lazy when the workspace was
+   * opened with `includeLazyDocumentReaders`: `text` is `''`, `isLazy` is
+   * `true`, and the content is only reachable via the `readText()` closure.
    * Fields present at runtime but absent from the TypeScript interface —
    * `validation`, `orphanedAssets`, and `asset.kind` — must be preserved on the
    * workspace object or operations that depend on them will fail.
+   *
+   * WARNING: `readText`, `readBytes`, and `readDataUri` are closures and do
+   * not survive serialization boundaries such as `postMessage` to a webview.
+   * Hosts that serialize the workspace must materialize them first — resolve
+   * `readText()` into `text` for each document and `readDataUri()` into a data
+   * field for each asset — or rehydrate the reader functions on the far side.
+   * A document that arrives with `isLazy: true`, empty `text`, and no
+   * `readText` makes opening or archive rebuilds throw
+   * `ERR_LAZY_TEXT_UNAVAILABLE` instead of silently producing an empty file.
    */
   public async openWorkspace(workspace: MdzWorkspace, options: MdzipWorkspaceOpenOptions = {}): Promise<void> {
     this.unsub?.();
@@ -823,6 +976,22 @@ export class MdzipWorkspaceView {
     options?: MdzipRemoveAssetOptions
   ): Promise<boolean> {
     return this.workspace?.removeAsset(archivePath, options) ?? false;
+  }
+
+  public async removeFile(archivePath: string): Promise<boolean> {
+    return this.workspace?.removeFile(archivePath) ?? false;
+  }
+
+  public async renameFile(oldPath: string, newPath: string): Promise<boolean> {
+    return this.workspace?.renameFile(oldPath, newPath) ?? false;
+  }
+
+  public async setEntryPoint(archivePath: string): Promise<boolean> {
+    return this.workspace?.setEntryPoint(archivePath) ?? false;
+  }
+
+  public async setCoverImage(archivePath: string | null): Promise<boolean> {
+    return this.workspace?.setCoverImage(archivePath) ?? false;
   }
 
   public listAssets(): MdzWorkspaceAsset[] {
@@ -913,6 +1082,7 @@ export class MdzipWorkspaceView {
         markdown(),
         syntaxHighlighting(mdzipMarkdownHighlight),
         EditorView.lineWrapping,
+        dropCursor(),
         mdzipEditorTheme,
         this.readOnlyCompartment.of(EditorState.readOnly.of(mode === 'read-only')),
         EditorView.updateListener.of((update) => {
@@ -930,6 +1100,36 @@ export class MdzipWorkspaceView {
             if (browserClipboardHasImage(clipEvent.clipboardData)) {
               event.preventDefault();
               void self.handlePaste(clipEvent);
+              return true;
+            }
+          },
+          dragover(event) {
+            if (!self.canAcceptEditorDrop()) {
+              return;
+            }
+            const types = event.dataTransfer?.types;
+            if (types?.includes('application/x-mdzip-path') || types?.includes('Files')) {
+              event.preventDefault();
+              if (event.dataTransfer) {
+                event.dataTransfer.dropEffect = 'copy';
+              }
+              return true;
+            }
+          },
+          drop(event) {
+            if (!self.canAcceptEditorDrop()) {
+              return;
+            }
+            const archivePath = event.dataTransfer?.getData('application/x-mdzip-path');
+            if (archivePath) {
+              event.preventDefault();
+              self.insertArchiveLinkAtCoords(archivePath, event.clientX, event.clientY);
+              return true;
+            }
+            const file = event.dataTransfer?.files?.[0];
+            if (file && (file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/i.test(file.name))) {
+              event.preventDefault();
+              void self.handleEditorImageDrop(file, event.clientX, event.clientY);
               return true;
             }
           }
@@ -1053,11 +1253,19 @@ export class MdzipWorkspaceView {
     this.elNavPane.classList.toggle('hidden', !showNavigationPane);
     this.elNavResizer.classList.toggle('hidden', !showNavigationPane);
 
+    this.prunePendingFolders(snapshot);
     const navTree = snapshot.sourceFormat === 'mdz'
-      ? buildMdzipNavTree(snapshot.content.paths)
+      ? mergePendingFolders(buildMdzipNavTree(snapshot.content.paths), this.pendingNewFolders)
       : [];
     const allowOrphanActions = this.controlPolicy.orphanActions && snapshot.mode !== 'read-only';
-    this.elNavTree.innerHTML = navTree.map(n => renderNavNode(n, snapshot, allowOrphanActions)).join('');
+    const allowFileActions = this.allowFileActions(snapshot);
+    const navRenderOptions: NavRenderOptions = {
+      allowOrphanActions,
+      allowFileActions,
+      allowDrag: snapshot.mode !== 'read-only' && snapshot.sourceFormat === 'mdz',
+      pendingFolders: new Set([...this.pendingNewFolders].map((path) => path.toLowerCase()))
+    };
+    this.elNavTree.innerHTML = navTree.map(n => renderNavNode(n, snapshot, navRenderOptions)).join('');
     this.prepareTooltips();
 
     if (this.cmEditor) {
@@ -1101,17 +1309,76 @@ export class MdzipWorkspaceView {
     this.elConversionDialog.hidden = this.conversionAction === null;
     this.elMetadataDialog.hidden = !this.metadataDialogOpen;
 
-    if (!allowOrphanActions) {
-      this.orphanMenuState = null;
-      this.pendingOrphanPath = null;
+    if (this.navMenuState) {
+      const items = this.navMenuItems(this.navMenuState.target, snapshot);
+      if (items.length === 0) {
+        this.navMenuState = null;
+      } else {
+        this.elNavMenu.innerHTML = items
+          .map((item) => item === null
+            ? '<div class="nav-menu-separator" role="separator"></div>'
+            : `<button type="button" role="menuitem" data-menu-action="${escapeHtml(item.action)}">${escapeHtml(item.label)}</button>`)
+          .join('');
+        this.elNavMenu.hidden = false;
+        const rect = this.elNavMenu.getBoundingClientRect();
+        const win = this.elRoot.ownerDocument.defaultView ?? window;
+        const x = Math.max(4, Math.min(this.navMenuState.x, win.innerWidth - rect.width - 8));
+        const y = Math.max(4, Math.min(this.navMenuState.y, win.innerHeight - rect.height - 8));
+        this.elNavMenu.style.left = `${x}px`;
+        this.elNavMenu.style.top = `${y}px`;
+      }
+    }
+    if (!this.navMenuState) {
+      this.elNavMenu.hidden = true;
     }
 
-    if (this.orphanMenuState) {
-      this.elOrphanMenu.hidden = false;
-      this.elOrphanMenu.style.left = `${this.orphanMenuState.x}px`;
-      this.elOrphanMenu.style.top = `${this.orphanMenuState.y}px`;
-    } else {
-      this.elOrphanMenu.hidden = true;
+    this.elNameDialog.hidden = this.nameDialogState === null;
+    if (this.nameDialogState) {
+      const headings: Record<MdzipNameDialogMode, string> = {
+        'new-file': 'New Markdown File',
+        'new-folder': 'New Folder',
+        'rename': 'Rename File'
+      };
+      const confirms: Record<MdzipNameDialogMode, string> = {
+        'new-file': 'Create',
+        'new-folder': 'Create',
+        'rename': 'Rename'
+      };
+      this.elNameDialogHeading.textContent = headings[this.nameDialogState.mode];
+      this.elNameConfirmBtn.textContent = confirms[this.nameDialogState.mode];
+      if (this.elNameInput.value !== this.nameDialogState.value) {
+        this.elNameInput.value = this.nameDialogState.value;
+      }
+      this.elNameValidation.hidden = !this.nameDialogState.error;
+      this.elNameValidation.textContent = this.nameDialogState.error;
+      this.elNameConfirmBtn.disabled = Boolean(this.nameDialogState.error);
+    }
+
+    this.elDeleteDialog.hidden = this.deleteDialogState === null;
+    if (this.deleteDialogState) {
+      this.elDeleteDialogText.textContent =
+        `Delete "${this.deleteDialogState.path}" from the archive? This cannot be undone.`;
+    }
+  }
+
+  private allowFileActions(snapshot: MdzipWorkspaceSnapshot): boolean {
+    return this.controlPolicy.fileActions
+      && snapshot.mode !== 'read-only'
+      && snapshot.sourceFormat === 'mdz';
+  }
+
+  // Drops pending folders that now contain at least one archive file (the
+  // path became real) so they render as normal directories.
+  private prunePendingFolders(snapshot: MdzipWorkspaceSnapshot): void {
+    if (this.pendingNewFolders.size === 0 || snapshot.sourceFormat !== 'mdz') {
+      this.pendingNewFolders.clear();
+      return;
+    }
+    const lowerPaths = snapshot.content.paths.map((entry) => entry.path.toLowerCase());
+    for (const folder of [...this.pendingNewFolders]) {
+      if (lowerPaths.some((path) => path.startsWith(`${folder.toLowerCase()}/`))) {
+        this.pendingNewFolders.delete(folder);
+      }
     }
   }
 
@@ -1120,10 +1387,21 @@ export class MdzipWorkspaceView {
 
     doc.addEventListener('click', () => {
       this.closeFormatMenus();
-      if (this.zoomOpen || this.orphanMenuState) {
+      if (this.zoomOpen || this.navMenuState) {
         this.zoomOpen = false;
-        this.orphanMenuState = null;
-        this.pendingOrphanPath = null;
+        this.navMenuState = null;
+        this.render();
+      }
+    });
+
+    doc.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') {
+        return;
+      }
+      if (this.navMenuState || this.deleteDialogState || this.nameDialogState) {
+        this.navMenuState = null;
+        this.deleteDialogState = null;
+        this.nameDialogState = null;
         this.render();
       }
     });
@@ -1141,6 +1419,13 @@ export class MdzipWorkspaceView {
       }
       this.navVisible = !this.navVisible;
       this.render();
+      if (this.navVisible && this.workspace) {
+        void this.workspace.ensureOrphanedAssetsAnalyzed().then((updated) => {
+          if (updated) {
+            this.render();
+          }
+        });
+      }
     });
 
     this.elTitleBtn.addEventListener('click', () => {
@@ -1189,8 +1474,8 @@ export class MdzipWorkspaceView {
       .addEventListener('click', () => this.setZoom(this.zoom + 0.1));
     this.elZoomPopover.querySelector('[data-action="zoom-reset"]')!
       .addEventListener('click', () => this.setZoom(1));
-    this.elDarkThemeBtn.addEventListener('click', () => this.setColorScheme('dark'));
-    this.elLightThemeBtn.addEventListener('click', () => this.setColorScheme('light'));
+    this.elDarkThemeBtn.addEventListener('click', () => this.setColorSchemeFromToolbar('dark'));
+    this.elLightThemeBtn.addEventListener('click', () => this.setColorSchemeFromToolbar('light'));
 
     this.elEditToolbar.addEventListener('click', (event) => {
       const menuToggle = (event.target as HTMLElement)
@@ -1258,7 +1543,7 @@ export class MdzipWorkspaceView {
         }
         e.preventDefault();
         e.stopPropagation();
-        this.showOrphanMenu(orphanBtn.getAttribute('data-orphan-path')!, e);
+        this.showNavMenuForPath(orphanBtn.getAttribute('data-orphan-path')!, e);
         return;
       }
       const navFile = target.closest<HTMLElement>('[data-nav-path]');
@@ -1267,22 +1552,27 @@ export class MdzipWorkspaceView {
       }
     });
 
-    this.elNavTree.addEventListener('contextmenu', (e) => {
-      const navFile = (e.target as HTMLElement).closest<HTMLElement>('[data-nav-path]');
-      if (this.controlPolicy.orphanActions && navFile?.getAttribute('data-orphan') === 'true') {
-        e.preventDefault();
-        this.showOrphanMenu(navFile.getAttribute('data-nav-path')!, e);
+    this.elNavPane.addEventListener('contextmenu', (e) => {
+      const target = this.navMenuTargetFromElement(e.target as HTMLElement);
+      if (!target) {
+        return;
       }
+      e.preventDefault();
+      e.stopPropagation();
+      this.showNavMenu(target, e);
     });
 
     this.elNavTree.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         const orphanBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-orphan-path]');
         if (this.controlPolicy.orphanActions && orphanBtn) {
-          this.showOrphanMenu(orphanBtn.getAttribute('data-orphan-path')!, e);
+          e.preventDefault();
+          this.showNavMenuForPath(orphanBtn.getAttribute('data-orphan-path')!, e);
         }
       }
     });
+
+    this.attachNavDragAndDrop();
 
     this.elNavResizer.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) {
@@ -1375,11 +1665,61 @@ export class MdzipWorkspaceView {
       void this.confirmMdzConversion();
     });
 
-    this.elOrphanMenu.addEventListener('click', (e) => e.stopPropagation());
-    this.elOrphanMenu.querySelector('[data-action="remove-orphan"]')!
+    this.elNavMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const item = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-menu-action]');
+      if (item) {
+        void this.handleNavMenuAction(item.dataset['menuAction'] ?? '');
+      }
+    });
+
+    this.elNameInput.addEventListener('input', () => {
+      if (!this.nameDialogState) {
+        return;
+      }
+      this.nameDialogState.value = this.elNameInput.value;
+      this.nameDialogState.error = this.validateNameDialog(this.nameDialogState);
+      this.elNameValidation.hidden = !this.nameDialogState.error;
+      this.elNameValidation.textContent = this.nameDialogState.error;
+      this.elNameConfirmBtn.disabled = Boolean(this.nameDialogState.error);
+    });
+    this.elNameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        void this.confirmNameDialog();
+      }
+    });
+    this.elNameDialog.querySelector<HTMLButtonElement>('[data-action="cancel-name"]')!
       .addEventListener('click', () => {
-        if (this.controlPolicy.orphanActions) { void this.removeOrphan(); }
+        this.nameDialogState = null;
+        this.render();
       });
+    this.elNameConfirmBtn.addEventListener('click', () => {
+      void this.confirmNameDialog();
+    });
+
+    this.elDeleteDialog.querySelector<HTMLButtonElement>('[data-action="cancel-delete"]')!
+      .addEventListener('click', () => {
+        this.deleteDialogState = null;
+        this.render();
+      });
+    this.elDeleteConfirmBtn.addEventListener('click', () => {
+      const path = this.deleteDialogState?.path;
+      this.deleteDialogState = null;
+      this.render();
+      if (path) {
+        void this.deleteFile(path);
+      }
+    });
+
+    this.elReplaceInput.addEventListener('change', () => {
+      const file = this.elReplaceInput.files?.[0];
+      const path = this.pendingReplacePath;
+      this.elReplaceInput.value = '';
+      this.pendingReplacePath = null;
+      if (file && path) {
+        void this.replaceFileFromPicker(path, file);
+      }
+    });
 
     this.elPreviewPane.addEventListener('scroll', () => this.syncScrollFromPreview());
     this.elPreviewPane.addEventListener('click', (event) => {
@@ -1606,6 +1946,31 @@ export class MdzipWorkspaceView {
     if (!snapshot || snapshot.mode === 'read-only' || snapshot.sourceFormat !== 'markdown') {
       return;
     }
+    const hook = this.options.onConversionRequested;
+    if (!hook) {
+      this.openConversionDialog(action);
+      return;
+    }
+    if (this.conversionHookPending) {
+      return;
+    }
+    this.conversionHookPending = true;
+    void Promise.resolve()
+      .then(() => hook(action))
+      .then((handled) => {
+        this.conversionHookPending = false;
+        if (!handled) {
+          this.openConversionDialog(action);
+        }
+      })
+      .catch((error) => {
+        this.conversionHookPending = false;
+        this.options.onFailed?.(error);
+        this.openConversionDialog(action);
+      });
+  }
+
+  private openConversionDialog(action: MdzipConversionAction): void {
     this.conversionAction = action;
     this.render();
     requestAnimationFrame(() => this.elConversionConfirmBtn.focus());
@@ -1912,7 +2277,13 @@ export class MdzipWorkspaceView {
     }
     try {
       const snapshot = event.snapshot;
-      if (this.options.onChanged) {
+      // Manifest-only changes are delegated to onManifestChanged when the
+      // host registered it: exporting bytes here would force a full archive
+      // rebuild on workspaces opened without archiveBytes.
+      const delegatedToManifestHandler = this.options.onManifestChanged
+        && event.changes.length === 1
+        && event.changes[0] === 'manifest';
+      if (this.options.onChanged && !delegatedToManifestHandler) {
         const bytes = await this.workspace.exportBytes();
         this.options.onChanged(bytes, snapshot);
       }
@@ -1950,12 +2321,29 @@ export class MdzipWorkspaceView {
     this.render();
   }
 
-  private setColorScheme(colorScheme: MdzipColorScheme): void {
+  /**
+   * Sets the active color scheme after construction.
+   *
+   * Use for host-driven theme synchronization — e.g. a VS Code webview
+   * reacting to `data-vscode-theme-kind` changes via MutationObserver — so the
+   * editor follows the host theme without being recreated (recreation would
+   * destroy the CodeMirror instance and lose unsaved edits). No-op when the
+   * scheme is unchanged. Does not fire `onColorSchemeChanged`, which only
+   * reports user-initiated toggles from the built-in toolbar buttons.
+   */
+  public setColorScheme(colorScheme: MdzipColorScheme): void {
     if (this.colorScheme === colorScheme) {
       return;
     }
     this.colorScheme = colorScheme;
     this.render();
+  }
+
+  private setColorSchemeFromToolbar(colorScheme: MdzipColorScheme): void {
+    if (this.colorScheme === colorScheme) {
+      return;
+    }
+    this.setColorScheme(colorScheme);
     this.options.onColorSchemeChanged?.(colorScheme);
   }
 
@@ -1965,20 +2353,557 @@ export class MdzipWorkspaceView {
     this.render();
   }
 
-  private showOrphanMenu(path: string, event: Event): void {
-    if (!this.controlPolicy.orphanActions) {
+  private navMenuTargetFromElement(element: HTMLElement | null): MdzipNavMenuTarget | null {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot || snapshot.sourceFormat !== 'mdz' || !element) {
+      return null;
+    }
+    const navFile = element.closest<HTMLElement>('[data-nav-path]');
+    if (navFile) {
+      return this.fileMenuTarget(navFile.getAttribute('data-nav-path')!, snapshot);
+    }
+    const directory = element.closest<HTMLElement>('details[data-nav-dir]');
+    if (directory) {
+      return { kind: 'directory', path: directory.getAttribute('data-nav-dir') ?? '' };
+    }
+    return { kind: 'directory', path: '' };
+  }
+
+  private fileMenuTarget(path: string, snapshot: MdzipWorkspaceSnapshot): MdzipNavMenuTarget | null {
+    const entry = snapshot.content.paths.find(
+      (item) => item.path.toLowerCase() === path.toLowerCase()
+    );
+    if (!entry) {
+      return null;
+    }
+    return {
+      kind: 'file',
+      path: entry.path,
+      orphaned: snapshot.content.orphanedAssetPaths
+        .some((orphan) => orphan.toLowerCase() === entry.path.toLowerCase()),
+      isMarkdown: entry.isMarkdown,
+      isEntryPoint: entry.path.toLowerCase() === snapshot.content.entryPoint.toLowerCase(),
+      isImage: entry.isImage,
+      isManifest: isMdzipManifestPath(entry.path)
+    };
+  }
+
+  private showNavMenuForPath(path: string, event: Event): void {
+    const snapshot = this.workspace?.snapshot();
+    const target = snapshot ? this.fileMenuTarget(path, snapshot) : null;
+    if (target) {
+      this.showNavMenu(target, event);
+    }
+  }
+
+  private showNavMenu(target: MdzipNavMenuTarget, event: Event): void {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot || this.navMenuItems(target, snapshot).length === 0) {
       return;
     }
     const bounds = (event.target as HTMLElement | null)?.getBoundingClientRect();
     const clientX = event instanceof MouseEvent ? event.clientX : (bounds?.left ?? 0);
     const clientY = event instanceof MouseEvent ? event.clientY : (bounds?.bottom ?? 0);
-    this.pendingOrphanPath = path;
-    this.orphanMenuState = {
-      path,
-      x: Math.max(4, Math.min(clientX, window.innerWidth - 210)),
-      y: Math.max(4, Math.min(clientY, window.innerHeight - 44))
+    this.navMenuState = { target, x: clientX, y: clientY };
+    this.render();
+  }
+
+  // Items for the nav context menu; null entries render as separators.
+  private navMenuItems(
+    target: MdzipNavMenuTarget,
+    snapshot: MdzipWorkspaceSnapshot
+  ): Array<MdzipNavMenuItem | null> {
+    const canMutate = this.allowFileActions(snapshot);
+    if (target.kind === 'directory') {
+      if (!canMutate) {
+        return [];
+      }
+      return [
+        { action: 'new-file', label: 'New .md File' },
+        { action: 'new-folder', label: 'New Folder' }
+      ];
+    }
+
+    if (target.isManifest) {
+      return [{ action: 'download', label: 'Download' }];
+    }
+
+    const groups: Array<Array<MdzipNavMenuItem>> = [];
+    if (canMutate) {
+      const stateGroup: MdzipNavMenuItem[] = [];
+      if (target.isMarkdown && !target.isEntryPoint) {
+        stateGroup.push({ action: 'set-entry-point', label: 'Set as Entry Point' });
+      }
+      if (target.isImage) {
+        const cover = snapshot.content.manifest?.cover;
+        stateGroup.push(cover && cover.toLowerCase() === target.path.toLowerCase()
+          ? { action: 'remove-cover', label: 'Remove Cover Image' }
+          : { action: 'set-cover', label: 'Set as Cover Image' });
+      }
+      if (stateGroup.length > 0) {
+        groups.push(stateGroup);
+      }
+    }
+    groups.push([{
+      action: 'copy-link',
+      label: target.isImage ? 'Copy Image Embed' : 'Copy Markdown Link'
+    }]);
+    if (canMutate) {
+      const editGroup: MdzipNavMenuItem[] = [
+        { action: 'rename', label: 'Rename…' },
+        { action: 'duplicate', label: 'Duplicate' }
+      ];
+      if (!target.isMarkdown) {
+        editGroup.push({ action: 'replace', label: 'Replace…' });
+      }
+      groups.push(editGroup);
+    }
+    groups.push([{ action: 'download', label: 'Download' }]);
+    if (canMutate && !target.isEntryPoint) {
+      groups.push([{
+        action: 'delete',
+        label: target.orphaned ? 'Delete Orphaned Asset' : 'Delete…'
+      }]);
+    }
+
+    return groups.flatMap((group, index) => index === 0 ? group : [null, ...group]);
+  }
+
+  private async handleNavMenuAction(action: string): Promise<void> {
+    const state = this.navMenuState;
+    this.navMenuState = null;
+    this.render();
+    if (!state) {
+      return;
+    }
+    const target = state.target;
+    try {
+      switch (action) {
+        case 'new-file':
+          if (target.kind === 'directory') {
+            this.openNameDialog({ mode: 'new-file', dir: target.path, value: 'untitled.md' });
+          }
+          break;
+        case 'new-folder':
+          if (target.kind === 'directory') {
+            this.openNameDialog({ mode: 'new-folder', dir: target.path, value: 'new-folder' });
+          }
+          break;
+        case 'rename':
+          if (target.kind === 'file') {
+            this.openNameDialog({ mode: 'rename', oldPath: target.path, value: target.path });
+          }
+          break;
+        case 'delete':
+          if (target.kind === 'file') {
+            if (target.orphaned) {
+              await this.deleteFile(target.path);
+            } else {
+              this.deleteDialogState = { path: target.path };
+              this.render();
+            }
+          }
+          break;
+        case 'set-entry-point':
+          if (target.kind === 'file') {
+            await this.workspace?.setEntryPoint(target.path);
+            this.render();
+          }
+          break;
+        case 'set-cover':
+          if (target.kind === 'file') {
+            await this.workspace?.setCoverImage(target.path);
+            this.render();
+          }
+          break;
+        case 'remove-cover':
+          await this.workspace?.setCoverImage(null);
+          this.render();
+          break;
+        case 'copy-link':
+          if (target.kind === 'file') {
+            await this.copyMarkdownLink(target);
+          }
+          break;
+        case 'download':
+          if (target.kind === 'file') {
+            await this.downloadArchiveFile(target.path);
+          }
+          break;
+        case 'duplicate':
+          if (target.kind === 'file') {
+            await this.duplicateFile(target.path);
+          }
+          break;
+        case 'replace':
+          if (target.kind === 'file') {
+            this.pendingReplacePath = target.path;
+            this.elReplaceInput.click();
+          }
+          break;
+        default:
+          break;
+      }
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private openNameDialog(state: { mode: MdzipNameDialogMode; dir?: string; oldPath?: string; value: string }): void {
+    this.nameDialogState = {
+      mode: state.mode,
+      dir: state.dir ?? '',
+      oldPath: state.oldPath ?? '',
+      value: state.value,
+      error: ''
     };
     this.render();
+    requestAnimationFrame(() => {
+      this.elNameInput.focus();
+      const dot = state.mode === 'rename'
+        ? -1
+        : this.elNameInput.value.lastIndexOf('.');
+      this.elNameInput.setSelectionRange(0, dot > 0 ? dot : this.elNameInput.value.length);
+    });
+  }
+
+  // Returns '' when valid, otherwise the validation message to show.
+  private validateNameDialog(state: { mode: MdzipNameDialogMode; dir: string; oldPath: string; value: string }): string {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot) {
+      return 'No workspace loaded.';
+    }
+    const value = state.value.trim();
+    if (!value) {
+      return 'Name cannot be empty.';
+    }
+    if (state.mode !== 'rename' && /[\\/]/.test(value)) {
+      return 'Name cannot contain slashes.';
+    }
+    const fullPath = state.mode === 'rename'
+      ? value
+      : state.dir ? `${state.dir}/${value}` : value;
+    const normalized = normalizeArchivePath(fullPath);
+    if (!normalized) {
+      return 'Not a valid archive path.';
+    }
+    if (normalized.toLowerCase() === 'manifest.json') {
+      return 'That name is reserved for the package manifest.';
+    }
+    if (state.mode === 'new-folder') {
+      return '';
+    }
+    const finalPath = state.mode === 'new-file' && !/\.[^/.]+$/.test(normalized)
+      ? `${normalized}.md`
+      : normalized;
+    const collision = snapshot.content.paths.some((entry) =>
+      entry.path.toLowerCase() === finalPath.toLowerCase()
+      && entry.path.toLowerCase() !== state.oldPath.toLowerCase());
+    if (collision) {
+      return `"${finalPath}" already exists.`;
+    }
+    return '';
+  }
+
+  private async confirmNameDialog(): Promise<void> {
+    const state = this.nameDialogState;
+    if (!state) {
+      return;
+    }
+    state.error = this.validateNameDialog(state);
+    if (state.error) {
+      this.render();
+      return;
+    }
+    this.nameDialogState = null;
+    const value = state.value.trim();
+    try {
+      if (state.mode === 'new-folder') {
+        const folderPath = normalizeArchivePath(state.dir ? `${state.dir}/${value}` : value)!;
+        this.pendingNewFolders.add(folderPath);
+        this.render();
+        return;
+      }
+      if (state.mode === 'new-file') {
+        let path = normalizeArchivePath(state.dir ? `${state.dir}/${value}` : value)!;
+        if (!/\.[^/.]+$/.test(path)) {
+          path = `${path}.md`;
+        }
+        const baseName = path.slice(path.lastIndexOf('/') + 1).replace(/\.[^.]+$/, '');
+        await this.workspace?.addAsset(path, new TextEncoder().encode(`# ${baseName}\n`));
+        await this.openPath(path);
+        return;
+      }
+      // rename
+      const renamed = await this.workspace?.renameFile(state.oldPath, value);
+      if (!renamed) {
+        this.nameDialogState = { ...state, error: 'Could not rename the file.' };
+      }
+      this.render();
+    } catch (error) {
+      this.render();
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private async deleteFile(path: string): Promise<void> {
+    try {
+      await this.workspace?.removeFile(path);
+      this.render();
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  // Builds a `[name](relative/path)` (or `![…]` for images) reference from the
+  // currently open document to an archive path.
+  private markdownLinkSnippet(
+    targetPath: string,
+    isImage: boolean,
+    snapshot: MdzipWorkspaceSnapshot
+  ): string {
+    const fromDir = snapshot.currentPath.includes('/')
+      ? snapshot.currentPath.slice(0, snapshot.currentPath.lastIndexOf('/'))
+      : '';
+    const relative = relativeArchivePath(fromDir, targetPath);
+    const encoded = relative.split('/').map(encodeURIComponent).join('/');
+    const name = targetPath.slice(targetPath.lastIndexOf('/') + 1);
+    return isImage ? `![${name}](${encoded})` : `[${name}](${encoded})`;
+  }
+
+  private async copyMarkdownLink(target: Extract<MdzipNavMenuTarget, { kind: 'file' }>): Promise<void> {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot) {
+      return;
+    }
+    const markdown = this.markdownLinkSnippet(target.path, target.isImage, snapshot);
+    const clipboard = this.elRoot.ownerDocument.defaultView?.navigator.clipboard;
+    if (!clipboard) {
+      throw new Error('Clipboard access is unavailable in this context.');
+    }
+    await clipboard.writeText(markdown);
+  }
+
+  private canAcceptEditorDrop(): boolean {
+    const snapshot = this.workspace?.snapshot();
+    return Boolean(
+      snapshot
+      && this.cmEditor
+      && snapshot.mode !== 'read-only'
+      && snapshot.currentPathType === 'markdown'
+    );
+  }
+
+  // Inserts a markdown link/image embed for a nav-tree file dropped onto the
+  // editor, at the document position under the pointer.
+  private insertArchiveLinkAtCoords(archivePath: string, x: number, y: number): void {
+    const editor = this.cmEditor;
+    const snapshot = this.workspace?.snapshot();
+    if (!editor || !snapshot || snapshot.sourceFormat !== 'mdz') {
+      return;
+    }
+    const entry = snapshot.content.paths.find(
+      (item) => item.path.toLowerCase() === archivePath.toLowerCase()
+    );
+    if (!entry || isMdzipManifestPath(entry.path)) {
+      return;
+    }
+    const snippet = this.markdownLinkSnippet(entry.path, entry.isImage, snapshot);
+    const pos = editor.posAtCoords({ x, y }) ?? editor.state.selection.main.head;
+    editor.dispatch({
+      changes: { from: pos, insert: snippet },
+      selection: { anchor: pos + snippet.length }
+    });
+    editor.focus();
+  }
+
+  // An OS image file dropped onto the editor embeds it like a paste would,
+  // anchored at the pointer position (or via the conversion dialog for plain
+  // markdown sources).
+  private async handleEditorImageDrop(file: File, x: number, y: number): Promise<void> {
+    try {
+      if (this.workspace?.sourceFormat === 'markdown') {
+        this.requestMdzConversion({ kind: 'image-file', file });
+        return;
+      }
+      const editor = this.cmEditor;
+      if (editor) {
+        const pos = editor.posAtCoords({ x, y });
+        if (pos !== null) {
+          editor.dispatch({ selection: { anchor: pos } });
+        }
+      }
+      await this.insertImageFile(file);
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private async downloadArchiveFile(path: string): Promise<void> {
+    const bytes = await this.workspace?.readPathBytes(path);
+    if (!bytes) {
+      return;
+    }
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const fileName = path.slice(path.lastIndexOf('/') + 1);
+    this.downloadSavedBlob(new Blob([buffer]), fileName);
+  }
+
+  private async duplicateFile(path: string): Promise<void> {
+    const workspace = this.workspace;
+    const snapshot = workspace?.snapshot();
+    if (!workspace || !snapshot) {
+      return;
+    }
+    const bytes = await workspace.readPathBytes(path);
+    if (!bytes) {
+      return;
+    }
+    const existing = new Set(snapshot.content.paths.map((entry) => entry.path.toLowerCase()));
+    const dot = path.lastIndexOf('.');
+    const slash = path.lastIndexOf('/');
+    const stem = dot > slash ? path.slice(0, dot) : path;
+    const extension = dot > slash ? path.slice(dot) : '';
+    let counter = 2;
+    let candidate = `${stem}-${counter}${extension}`;
+    while (existing.has(candidate.toLowerCase())) {
+      counter += 1;
+      candidate = `${stem}-${counter}${extension}`;
+    }
+    await workspace.addAsset(candidate, bytes);
+    await this.openPath(candidate);
+  }
+
+  private async replaceFileFromPicker(path: string, file: File): Promise<void> {
+    try {
+      await this.workspace?.replaceAsset(path, new Uint8Array(await file.arrayBuffer()));
+      this.render();
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private attachNavDragAndDrop(): void {
+    this.elNavTree.addEventListener('dragstart', (e) => {
+      const navFile = (e.target as HTMLElement).closest<HTMLElement>('[data-nav-path][draggable="true"]');
+      const snapshot = this.workspace?.snapshot();
+      if (!navFile || !snapshot
+        || snapshot.mode === 'read-only' || snapshot.sourceFormat !== 'mdz') {
+        return;
+      }
+      this.dragSourcePath = navFile.getAttribute('data-nav-path');
+      e.dataTransfer?.setData('application/x-mdzip-path', this.dragSourcePath ?? '');
+      if (e.dataTransfer) {
+        // Must permit both effects: tree drops are 'move', editor drops are
+        // 'copy'. A dropEffect outside effectAllowed makes the browser cancel
+        // the drop without firing the drop event at all.
+        e.dataTransfer.effectAllowed = 'copyMove';
+      }
+    });
+    this.elNavTree.addEventListener('dragend', () => {
+      this.dragSourcePath = null;
+      this.setDragOverElement(null);
+    });
+
+    this.elNavPane.addEventListener('dragover', (e) => {
+      const snapshot = this.workspace?.snapshot();
+      if (!snapshot || !this.allowFileActions(snapshot)) {
+        return;
+      }
+      const internal = this.dragSourcePath !== null
+        || (e.dataTransfer?.types.includes('application/x-mdzip-path') ?? false);
+      const external = e.dataTransfer?.types.includes('Files') ?? false;
+      if (!internal && !external) {
+        return;
+      }
+      e.preventDefault();
+      if (e.dataTransfer) {
+        e.dataTransfer.dropEffect = internal ? 'move' : 'copy';
+      }
+      const directory = (e.target as HTMLElement).closest<HTMLElement>('details[data-nav-dir]');
+      this.setDragOverElement(directory ?? this.elNavTree);
+    });
+    this.elNavPane.addEventListener('dragleave', (e) => {
+      if (!this.elNavPane.contains(e.relatedTarget as Node | null)) {
+        this.setDragOverElement(null);
+      }
+    });
+    this.elNavPane.addEventListener('drop', (e) => {
+      const snapshot = this.workspace?.snapshot();
+      this.setDragOverElement(null);
+      if (!snapshot || !this.allowFileActions(snapshot)) {
+        return;
+      }
+      const directory = (e.target as HTMLElement).closest<HTMLElement>('details[data-nav-dir]');
+      const targetDir = directory?.getAttribute('data-nav-dir') ?? '';
+      const internalPath = e.dataTransfer?.getData('application/x-mdzip-path') || this.dragSourcePath;
+      this.dragSourcePath = null;
+      if (internalPath) {
+        e.preventDefault();
+        void this.moveFileToDirectory(internalPath, targetDir);
+        return;
+      }
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        e.preventDefault();
+        void this.addDroppedFiles(targetDir, Array.from(files));
+      }
+    });
+  }
+
+  private setDragOverElement(element: HTMLElement | null): void {
+    if (this.dragOverElement === element) {
+      return;
+    }
+    this.dragOverElement?.classList.remove('drag-over');
+    this.dragOverElement = element;
+    element?.classList.add('drag-over');
+  }
+
+  private async moveFileToDirectory(path: string, targetDir: string): Promise<void> {
+    const baseName = path.slice(path.lastIndexOf('/') + 1);
+    const newPath = targetDir ? `${targetDir}/${baseName}` : baseName;
+    if (newPath.toLowerCase() === path.toLowerCase()) {
+      return;
+    }
+    try {
+      await this.workspace?.renameFile(path, newPath);
+      this.render();
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private async addDroppedFiles(targetDir: string, files: File[]): Promise<void> {
+    const workspace = this.workspace;
+    if (!workspace) {
+      return;
+    }
+    try {
+      for (const file of files) {
+        const normalized = normalizeArchivePath(targetDir ? `${targetDir}/${file.name}` : file.name);
+        if (!normalized || normalized.toLowerCase() === 'manifest.json') {
+          continue;
+        }
+        const existing = new Set(
+          workspace.snapshot().content.paths.map((entry) => entry.path.toLowerCase())
+        );
+        const dot = normalized.lastIndexOf('.');
+        const slash = normalized.lastIndexOf('/');
+        const stem = dot > slash ? normalized.slice(0, dot) : normalized;
+        const extension = dot > slash ? normalized.slice(dot) : '';
+        let candidate = normalized;
+        let counter = 2;
+        while (existing.has(candidate.toLowerCase())) {
+          candidate = `${stem}-${counter}${extension}`;
+          counter += 1;
+        }
+        await workspace.addAsset(candidate, new Uint8Array(await file.arrayBuffer()));
+      }
+      this.render();
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
   }
 
   private validLayoutForSnapshot(
@@ -1989,22 +2914,6 @@ export class MdzipWorkspaceView {
       return canShowSourceLayout(snapshot) ? requested : 'preview';
     }
     return requested;
-  }
-
-  private async removeOrphan(): Promise<void> {
-    const path = this.pendingOrphanPath;
-    this.orphanMenuState = null;
-    this.pendingOrphanPath = null;
-    this.render();
-    if (!path) {
-      return;
-    }
-    try {
-      await this.workspace?.removeAsset(path, { requireOrphaned: true });
-      this.render();
-    } catch (error) {
-      this.options.onFailed?.(error);
-    }
   }
 
   private syncScrollFromPreview(): void {
@@ -2282,9 +3191,34 @@ const SHELL_HTML = `
     </div>
   </div>
 
-  <div class="orphan-context-menu" data-ref="orphan-menu" hidden role="menu">
-    <button type="button" role="menuitem" data-action="remove-orphan">Remove Orphaned Asset</button>
+  <div class="title-dialog-backdrop" data-ref="name-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-name-dialog-heading">
+    <div class="title-dialog">
+      <h3 id="mdzip-name-dialog-heading" data-ref="name-dialog-heading">New Markdown File</h3>
+      <input type="text" maxlength="260" data-ref="name-input" aria-label="File name" />
+      <p class="title-dialog-validation" data-ref="name-validation" hidden></p>
+      <div class="title-dialog-actions">
+        <button type="button" data-action="cancel-name">Cancel</button>
+        <button type="button" class="save-title" data-ref="name-confirm-btn">Create</button>
+      </div>
+    </div>
   </div>
+
+  <div class="title-dialog-backdrop" data-ref="delete-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-delete-dialog-heading">
+    <div class="title-dialog">
+      <h3 id="mdzip-delete-dialog-heading">Delete File?</h3>
+      <p data-ref="delete-dialog-text"></p>
+      <div class="title-dialog-actions">
+        <button type="button" data-action="cancel-delete">Cancel</button>
+        <button type="button" class="danger-action" data-ref="delete-confirm-btn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <input type="file" data-ref="replace-input" hidden />
+
+  <div class="nav-context-menu" data-ref="nav-menu" hidden role="menu"></div>
 
   <div class="mdzip-tooltip" data-ref="tooltip" role="tooltip" hidden></div>
 

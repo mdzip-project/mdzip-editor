@@ -1,9 +1,10 @@
 import { defineComponent, h, onMounted, onUnmounted, ref, watch, type PropType } from 'vue';
-import { MdzipWorkspaceView } from 'mdzip-editor';
+import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipColorScheme,
+  MdzipConversionAction,
   MdzipEditorSnapshot,
   MdzipEditorCommand,
   MdzipWorkspaceLayout,
@@ -13,7 +14,8 @@ import type {
   MdzipSourceFormat,
   MdzWorkspace,
   MdzWorkspaceAsset,
-} from 'mdzip-editor';
+  MdzipWorkspaceSnapshot,
+} from '@mdzip/editor';
 
 export interface MdzipWorkspaceExposed {
   canExecuteCommand(command: MdzipEditorCommand): boolean;
@@ -26,6 +28,10 @@ export interface MdzipWorkspaceExposed {
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
   removeAsset(archivePath: string, options?: MdzipRemoveAssetOptions): Promise<boolean>;
+  removeFile(archivePath: string): Promise<boolean>;
+  renameFile(oldPath: string, newPath: string): Promise<boolean>;
+  setEntryPoint(archivePath: string): Promise<boolean>;
+  setCoverImage(archivePath: string | null): Promise<boolean>;
   listAssets(): MdzWorkspaceAsset[];
   focus(): void;
 }
@@ -49,6 +55,15 @@ export const MdzipWorkspace = defineComponent({
       default: 'editor'
     },
     navigationButtonActive: { type: Boolean, default: true },
+    /**
+     * Host hook for the markdown→MDZ conversion flow. A function prop (not an
+     * emit) because it must return/resolve `true` to suppress the built-in
+     * conversion dialog.
+     */
+    onConversionRequested: {
+      type: Function as PropType<(action: MdzipConversionAction) => boolean | Promise<boolean>>,
+      default: undefined
+    },
   },
   emits: [
     'changed',
@@ -84,6 +99,14 @@ export const MdzipWorkspace = defineComponent({
         view?.replaceAsset(archivePath, fileBytes) ?? Promise.resolve(false),
       removeAsset: (archivePath: string, options?: MdzipRemoveAssetOptions) =>
         view?.removeAsset(archivePath, options) ?? Promise.resolve(false),
+      removeFile: (archivePath: string) =>
+        view?.removeFile(archivePath) ?? Promise.resolve(false),
+      renameFile: (oldPath: string, newPath: string) =>
+        view?.renameFile(oldPath, newPath) ?? Promise.resolve(false),
+      setEntryPoint: (archivePath: string) =>
+        view?.setEntryPoint(archivePath) ?? Promise.resolve(false),
+      setCoverImage: (archivePath: string | null) =>
+        view?.setCoverImage(archivePath) ?? Promise.resolve(false),
       listAssets: () => view?.listAssets() ?? [],
       focus: () => view?.focus()
     } satisfies MdzipWorkspaceExposed);
@@ -103,12 +126,13 @@ export const MdzipWorkspace = defineComponent({
         onDocumentChanged: (event) => emit('documentChanged', event),
         onAssetChanged: (event) => emit('assetChanged', event),
         onManifestChanged: (event) => emit('manifestChanged', event),
-        onSnapshotChanged: (snapshot) => emit('snapshotChanged', snapshot),
-        onSelectionChanged: (snapshot) => emit('selectionChanged', snapshot),
-        onDirtyChanged: (snapshot) => emit('dirtyChanged', snapshot),
-        onValidationChanged: (snapshot) => emit('validationChanged', snapshot),
-        onColorSchemeChanged: (colorScheme) => emit('colorSchemeChanged', colorScheme),
-        onFailed: (e) => emit('failed', e),
+        onSnapshotChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('snapshotChanged', snapshot),
+        onSelectionChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('selectionChanged', snapshot),
+        onDirtyChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('dirtyChanged', snapshot),
+        onValidationChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('validationChanged', snapshot),
+        onColorSchemeChanged: (colorScheme: MdzipColorScheme) => emit('colorSchemeChanged', colorScheme),
+        onFailed: (e: unknown) => emit('failed', e),
+        onConversionRequested: props.onConversionRequested,
       });
       if (props.workspace) {
         void view.openWorkspace(props.workspace, {

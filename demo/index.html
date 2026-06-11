@@ -30,25 +30,28 @@
     .demo-header h1 { font-size: 13px; font-weight: 600; margin-right: 4px; }
 
     .tab-group {
-      display: flex;
-      gap: 2px;
-      padding: 4px 0;
+      display: inline-flex;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      overflow: hidden;
     }
 
     .tab-btn {
       padding: 3px 10px;
       font-size: 12px;
       font-family: inherit;
-      border: 1px solid #d0d7de;
-      border-radius: 6px;
-      background: #f6f8fa;
+      border: none;
+      border-left: 1px solid #d0d7de;
+      background: transparent;
       cursor: pointer;
       color: #57606a;
+      line-height: 1.5;
     }
+
+    .tab-btn:first-child { border-left: none; }
 
     .tab-btn.active {
       background: #0969da;
-      border-color: #0969da;
       color: #ffffff;
       font-weight: 500;
     }
@@ -74,6 +77,8 @@
     }
 
     .demo-controls input[type="file"] { display: none; }
+    .mode-label { font-size: 12px; font-weight: 500; color: #57606a; user-select: none; }
+    #mode-desc { font-size: 12px; color: #57606a; white-space: nowrap; }
     #status { color: #57606a; font-size: 12px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
     #tab-panels { flex: 1; min-height: 0; position: relative; }
@@ -85,6 +90,13 @@
     }
 
     .tab-panel.active { display: flex; }
+
+    /* The mounted editor (and any wrapper element) must fill the panel. */
+    .tab-panel > * {
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+    }
   </style>
 </head>
 <body>
@@ -98,11 +110,18 @@
       <button class="tab-btn" role="tab" data-tab="vue">Vue</button>
     </div>
 
+    <span class="mode-label">Mode</span>
+    <div id="mode-group" class="tab-group" role="group" aria-label="Mode">
+      <button class="tab-btn" data-preset="preview">Preview</button>
+      <button class="tab-btn" data-preset="viewer">Viewer</button>
+      <button class="tab-btn active" data-preset="standalone-editor">Standalone</button>
+      <button class="tab-btn" data-preset="hosted-editor">Hosted</button>
+    </div>
+
+    <span id="mode-desc"></span>
+
     <div class="demo-controls">
-      <button id="btn-editable">Editable</button>
-      <button id="btn-readonly">Read Only</button>
       <label>Open .mdz or .md <input type="file" id="file-input" accept=".mdz,.md,.markdown" /></label>
-      <button id="btn-download">Download</button>
       <span id="status">Loading sample...</span>
     </div>
   </header>

@@ -1,5 +1,40 @@
 # Changelog
 
+## [1.3.0] - 2026-06-11
+
+### Added
+- Navigation-pane context menu for file management: New .md File, New Folder,
+  Rename/Move (edit the full archive path), Duplicate, Replace…, Download,
+  Copy Markdown Link / Copy Image Embed, Set as Entry Point, Set/Remove Cover
+  Image, and Delete (confirmation prompt; orphaned assets delete immediately,
+  matching the previous orphan menu). The entry point and `manifest.json` are
+  protected from deletion; the manifest offers Download only.
+- Drag and drop: move files between folders in the nav tree, drop OS files
+  onto the pane to add them as assets (duplicate names auto-suffixed), drag
+  tree files onto the editor to insert a markdown link or image embed at the
+  pointer position, and drop OS image files onto the editor to embed them
+  like a paste.
+- The entry-point document is shown bold in the nav tree; folders created via
+  New Folder render dimmed until they contain a file.
+- New workspace/view APIs: `removeFile()` (deletes assets *and* non-entry
+  markdown documents — previously `removeAsset` could not delete documents),
+  `renameFile()` (rewrites markdown references across documents, including
+  re-basing a moved document's own relative links), `setEntryPoint()`, and
+  `setCoverImage()`. Exported path helpers `normalizeArchivePath` and
+  `relativeArchivePath`.
+- New `fileActions` control-policy flag gating the mutating file operations
+  (enabled in the `standalone-editor` and `hosted-editor` presets). Copy and
+  Download remain available in read-only/viewer contexts.
+- `onConversionRequested` host hook on the view options (and all framework
+  wrappers): return/resolve `true` to take over the markdown→MDZ conversion
+  flow and suppress the built-in dialog. `MdzipConversionAction` is exported.
+- Angular, React, and Vue wrappers expose the new file-management methods and
+  the conversion hook.
+
+### Changed
+- The orphan-asset context menu was generalized into the nav context menu;
+  orphan delete semantics are unchanged.
+
 ## [1.2.0] - 2026-06-07
 
 ### Added

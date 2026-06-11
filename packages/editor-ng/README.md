@@ -1,0 +1,114 @@
+# @mdzip/editor-ng
+
+Angular component wrapper for the MDZip workspace editor.
+
+`@mdzip/editor-ng` provides a standalone `MdzipWorkspaceComponent` that embeds the full MDZip workspace UI — document preview, editor, package navigator, and asset manager — as a native Angular component.
+
+## Install
+
+```sh
+npm install @mdzip/editor @mdzip/editor-ng
+```
+
+Peer dependencies: `@angular/common` and `@angular/core` >=20.
+
+## Basic Usage
+
+```ts
+import { MdzipWorkspaceComponent } from '@mdzip/editor-ng';
+
+@Component({
+  imports: [MdzipWorkspaceComponent],
+  template: `
+    <mdzip-workspace
+      [bytes]="fileBytes"
+      fileName="document.mdz"
+      mode="read-only"
+      controls="viewer"
+      (failed)="onError($event)"
+    />
+  `,
+  styles: [':host { display: block; height: 600px; }']
+})
+export class AppComponent {
+  fileBytes: Uint8Array | null = null;
+}
+```
+
+The host element must have an explicit height. The component expands to fill it.
+
+## Editor Mode
+
+```ts
+<mdzip-workspace
+  [bytes]="fileBytes"
+  fileName="document.mdz"
+  mode="editable"
+  controls="standalone-editor"
+  (saved)="onSaved($event)"
+  (changed)="onChanged($event)"
+/>
+```
+
+## Inputs
+
+| Input | Type | Default | Description |
+|-------|------|---------|-------------|
+| `bytes` | `Uint8Array \| null` | `null` | Raw archive bytes to open |
+| `workspace` | `MdzWorkspace \| null` | `null` | Pre-built workspace object |
+| `fileName` | `string` | `'document.mdz'` | Filename used for format detection and Save dialogs |
+| `mode` | `MdzipWorkspaceMode` | `'read-only'` | `'read-only'` or `'editable'` |
+| `sourceFormat` | `MdzipSourceFormat` | — | Override format detection: `'mdz'` or `'markdown'` |
+| `controls` | `MdzipControlPreset \| MdzipControlPolicy` | `'viewer'` | `'preview'`, `'viewer'`, `'standalone-editor'`, `'hosted-editor'`, or a policy object |
+| `initialLayout` | `MdzipWorkspaceLayout` | — | Starting layout: `'preview'`, `'editor'`, `'split'` |
+| `initialColorScheme` | `MdzipColorScheme` | — | `'light'` or `'dark'` |
+| `navigationMode` | `MdzipNavigationMode` | `'editor'` | Package navigation mode |
+| `navigationButtonActive` | `boolean` | `true` | Whether the navigation button is shown |
+
+## Outputs
+
+| Output | Payload | Description |
+|--------|---------|-------------|
+| `changed` | `MdzipWorkspaceChange` | Emitted when archive bytes change |
+| `saved` | `MdzipWorkspaceSave` | Emitted on Save |
+| `snapshotChanged` | `MdzipWorkspaceSnapshot` | Emitted on any state change |
+| `selectionChanged` | `MdzipWorkspaceSnapshot` | Emitted when the editor selection changes |
+| `dirtyChanged` | `MdzipWorkspaceSnapshot` | Emitted when the dirty flag changes |
+| `validationChanged` | `MdzipWorkspaceSnapshot` | Emitted when validation state changes |
+| `colorSchemeChanged` | `MdzipColorScheme` | Emitted when the color scheme changes |
+| `failed` | `unknown` | Emitted on unrecoverable errors |
+
+## Conversion hook
+
+`onConversionRequested` is an **input function** (not an output, because it must return a
+value): bind `[onConversionRequested]="handler"` where `handler` is
+`(action: MdzipConversionAction) => boolean | Promise<boolean>`. It fires when the user
+triggers the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a
+plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog.
+
+## File management (nav pane)
+
+With `controls="standalone-editor"` or `"hosted-editor"` (or `fileActions: true` in a custom
+policy), the navigation pane offers a right-click context menu: new `.md` file, new folder,
+rename/move, duplicate, replace, download, copy markdown link, set entry point, set cover
+image, and delete. Files can also be dragged between folders, and OS files can be dropped
+onto the pane. Copy and Download remain available in read-only mode. The same operations are
+exposed as component methods: `removeFile`, `renameFile`, `setEntryPoint`, and `setCoverImage`.
+
+## Imperative API
+
+```ts
+@ViewChild(MdzipWorkspaceComponent) workspace!: MdzipWorkspaceComponent;
+
+// Flush pending edits and persist
+const snapshot = await this.workspace.flush();
+if (snapshot) {
+  await save(snapshot.bytes);
+  this.workspace.markPersisted();
+}
+
+// Execute editor commands
+await this.workspace.executeCommand('bold');
+```
+
+See the [`@mdzip/editor`](https://www.npmjs.com/package/@mdzip/editor) package for the full API reference, theming guide, and framework-agnostic usage.

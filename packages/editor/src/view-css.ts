@@ -27,6 +27,7 @@ export const WORKSPACE_CSS = `
 
   display: flex;
   flex-direction: column;
+  width: 100%;
   height: 100%;
   min-height: 520px;
   background: var(--mdzip-editor-background-color);
@@ -197,6 +198,10 @@ export const WORKSPACE_CSS = `
   top: 50%;
   transform: translate(-50%, -50%);
   gap: 2px;
+  /* Paint above the edit toolbar (z-index 6) with an opaque surface so any
+     residual overlap at unusual widths reads as a clean layered control. */
+  z-index: 7;
+  background: var(--mdzip-widget-background-color);
 }
 
 .mdzip-root .icon-toggle {
@@ -613,7 +618,7 @@ export const WORKSPACE_CSS = `
   fill: currentColor;
 }
 
-.mdzip-root .orphan-context-menu {
+.mdzip-root .nav-context-menu {
   position: fixed;
   z-index: 200;
   min-width: 190px;
@@ -625,7 +630,7 @@ export const WORKSPACE_CSS = `
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
 }
 
-.mdzip-root .orphan-context-menu button {
+.mdzip-root .nav-context-menu button {
   display: block;
   width: 100%;
   min-height: 28px;
@@ -639,10 +644,36 @@ export const WORKSPACE_CSS = `
   cursor: pointer;
 }
 
-.mdzip-root .orphan-context-menu button:hover,
-.mdzip-root .orphan-context-menu button:focus-visible {
+.mdzip-root .nav-context-menu button:hover,
+.mdzip-root .nav-context-menu button:focus-visible {
   outline: none;
   background: var(--mdzip-hover-background-color);
+}
+
+.mdzip-root .nav-menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--mdzip-border-color);
+}
+
+.mdzip-root .nav-file.entry-point .nav-label {
+  font-weight: 600;
+}
+
+.mdzip-root .nav-directory.pending-folder > summary {
+  opacity: 0.7;
+}
+
+.mdzip-root details.nav-directory.drag-over > summary,
+.mdzip-root .nav-tree.drag-over {
+  background: var(--mdzip-hover-background-color);
+  border-radius: 4px;
+}
+
+.mdzip-root .title-dialog-actions .danger-action {
+  border-color: #b42318;
+  background: #b42318;
+  color: #ffffff;
 }
 
 .mdzip-root .mdzip-tooltip {
@@ -1202,6 +1233,13 @@ export const WORKSPACE_CSS = `
 
 @media (max-width: 900px) {
   .mdzip-root { --nav-pane-width: 220px; }
+}
+
+/* Stack the formatting toolbar onto its own row before the absolutely
+   centered view-mode toggle can collide with it. Without the navigation pane
+   the collision band starts just under ~1000px; with the (resizable, default
+   280px) navigation pane open everything shifts right, so stack earlier. */
+@media (max-width: 1000px) {
   .mdzip-root .toolbar {
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     row-gap: 4px;
@@ -1230,6 +1268,35 @@ export const WORKSPACE_CSS = `
   }
 }
 
+@media (max-width: 1280px) {
+  .mdzip-root.navigation-pane-visible .toolbar {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    row-gap: 4px;
+  }
+  .mdzip-root.navigation-pane-visible .toolbar-start {
+    display: contents;
+  }
+  .mdzip-root.navigation-pane-visible .toolbar-left {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .mdzip-root.navigation-pane-visible .edit-toolbar {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: start;
+    position: static;
+    transform: none;
+  }
+  .mdzip-root.navigation-pane-visible .view-mode-toggle-group {
+    position: static;
+    transform: none;
+  }
+  .mdzip-root.navigation-pane-visible .toolbar-controls {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mdzip-root .nav-pane,
   .mdzip-root .nav-resizer {
@@ -1249,6 +1316,89 @@ export const WORKSPACE_CSS = `
     grid-column: 3;
     grid-row: 1;
     justify-self: end;
+  }
+}
+
+@media print {
+  .mdzip-root {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    display: block;
+    background: #ffffff;
+    color: #000000;
+  }
+
+  .mdzip-root .toolbar,
+  .mdzip-root .document-strip,
+  .mdzip-root .nav-pane,
+  .mdzip-root .nav-resizer,
+  .mdzip-root .split-resizer,
+  .mdzip-root .edit-pane,
+  .mdzip-root .edit-toolbar,
+  .mdzip-root .mdzip-tooltip,
+  .mdzip-root .nav-context-menu,
+  .mdzip-root .title-dialog-backdrop,
+  .mdzip-root .zoom-popover {
+    display: none !important;
+  }
+
+  .mdzip-root .workspace-shell {
+    display: block;
+  }
+
+  .mdzip-root .pane-stack,
+  .mdzip-root .pane-stack.split-mode {
+    display: block;
+    height: auto;
+  }
+
+  .mdzip-root .preview-pane {
+    display: block !important;
+    overflow: visible;
+    height: auto;
+  }
+
+  .mdzip-root .preview-content {
+    max-width: 100%;
+    padding: 0;
+    font-size: 11pt;
+    line-height: 1.6;
+  }
+
+  .mdzip-root .preview-content h1,
+  .mdzip-root .preview-content h2,
+  .mdzip-root .preview-content h3,
+  .mdzip-root .preview-content h4,
+  .mdzip-root .preview-content h5,
+  .mdzip-root .preview-content h6 {
+    page-break-after: avoid;
+    color: #000000;
+  }
+
+  .mdzip-root .preview-content pre,
+  .mdzip-root .preview-content blockquote,
+  .mdzip-root .preview-content img,
+  .mdzip-root .preview-content table {
+    page-break-inside: avoid;
+  }
+
+  .mdzip-root .preview-content pre,
+  .mdzip-root .preview-content code {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f6f8fa;
+    color: #000000;
+    border-color: #d0d7de;
+  }
+
+  .mdzip-root .preview-content a {
+    color: #000000;
+    text-decoration: underline;
+  }
+
+  .mdzip-root .preview-content img {
+    max-width: 100%;
   }
 }
 

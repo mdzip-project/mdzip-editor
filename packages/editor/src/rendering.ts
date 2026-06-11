@@ -1,6 +1,29 @@
-import DOMPurify from 'isomorphic-dompurify';
+import DOMPurify from 'dompurify';
 import hljs from 'highlight.js';
 import { Marked, type Tokens } from 'marked';
+
+// In browsers the dompurify default export is already bound to the global
+// window. In Node it is an unbound factory, so bind it to a host-provided DOM
+// (e.g. jsdom assigned to globalThis.window) on first use.
+let purifier: typeof DOMPurify | null = null;
+
+function resolvePurifier(): typeof DOMPurify {
+  if (purifier) {
+    return purifier;
+  }
+  if (typeof DOMPurify.sanitize === 'function') {
+    purifier = DOMPurify;
+    return purifier;
+  }
+  const globalWindow = (globalThis as { window?: unknown }).window;
+  if (!globalWindow) {
+    throw new Error(
+      'DOMPurify requires a DOM. In non-browser environments, assign a DOM window (e.g. from jsdom) to globalThis.window before rendering.'
+    );
+  }
+  purifier = DOMPurify(globalWindow as Window & typeof globalThis);
+  return purifier;
+}
 
 export interface MdzipMarkdownRenderer {
   render(markdown: string, options?: Record<string, unknown>): string;
@@ -58,7 +81,7 @@ export const defaultSafeMarkdownRenderer: MdzipMarkdownRenderer = {
   render(markdown: string): string {
     const rendered = marked.parse(markdown, { async: false });
     const html = typeof rendered === 'string' ? rendered : escapeHtml(markdown);
-    return DOMPurify.sanitize(html, {
+    return resolvePurifier().sanitize(html, {
       USE_PROFILES: { html: true },
       ADD_ATTR: ['class'],
       FORBID_TAGS: ['base', 'embed', 'form', 'iframe', 'input', 'link', 'meta', 'object', 'script', 'style'],

@@ -16,6 +16,7 @@ describe('Control Policy', () => {
       expect(policy.save).toBe(false);
       expect(policy.zoom).toBe(false);
       expect(policy.orphanActions).toBe(false);
+      expect(policy.fileActions).toBe(false);
     });
 
     it('resolves viewer preset', () => {
@@ -27,6 +28,7 @@ describe('Control Policy', () => {
       expect(policy.save).toBe(false);
       expect(policy.zoom).toBe(true);
       expect(policy.orphanActions).toBe(false);
+      expect(policy.fileActions).toBe(false);
     });
 
     it('resolves standalone-editor preset', () => {
@@ -38,6 +40,7 @@ describe('Control Policy', () => {
       expect(policy.save).toBe(true);
       expect(policy.zoom).toBe(true);
       expect(policy.orphanActions).toBe(true);
+      expect(policy.fileActions).toBe(true);
     });
 
     it('resolves hosted-editor preset', () => {
@@ -49,6 +52,7 @@ describe('Control Policy', () => {
       expect(policy.save).toBe(false);
       expect(policy.zoom).toBe(true);
       expect(policy.orphanActions).toBe(true);
+      expect(policy.fileActions).toBe(true);
     });
 
     it('resolves custom preset with explicit overrides', () => {

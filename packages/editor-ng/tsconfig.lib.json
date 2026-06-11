@@ -6,12 +6,13 @@
     "declarationMap": true,
     "inlineSources": true,
     "paths": {
-      "mdzip-editor": ["../editor/dist/index.d.ts"]
+      "@mdzip/editor": ["../editor/dist/index.d.ts"]
     },
     "types": []
   },
   "angularCompilerOptions": {
-    "strictTemplates": true
+    "strictTemplates": true,
+    "compilationMode": "partial"
   },
   "exclude": ["**/*.spec.ts"],
   "include": ["src/**/*.ts"]

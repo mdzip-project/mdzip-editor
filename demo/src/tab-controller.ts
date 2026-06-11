@@ -1,5 +1,7 @@
+import type { MdzipControlPreset } from 'mdzip-editor';
+
 export interface TabController {
-  update(bytes: Uint8Array, mode: string, fileName: string): void;
+  update(bytes: Uint8Array, fileName: string, controls: MdzipControlPreset): void;
   markPersisted(): void;
   destroy(): void;
 }

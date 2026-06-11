@@ -10,6 +10,7 @@ import {
 import {
   buildNewArchiveBytesWithTitle,
   blobToBytes,
+  findOrphanedAssetPathsInArchive,
   openedArchiveFromWorkspace,
   readBinaryFileFromArchive,
   type ArchiveEntry,
@@ -38,7 +39,18 @@ export interface MdzipWorkspaceOpenOptions {
   mode?: MdzipWorkspaceMode;
   sourceFormat?: MdzipSourceFormat;
   fileName?: string;
+  /**
+   * Original archive bytes backing a workspace opened via `openWorkspace`.
+   * When provided, mutations (paste image, add/remove asset, save) patch these
+   * bytes at the entry level instead of rebuilding the whole archive from the
+   * workspace model — on large archives this is the difference between
+   * milliseconds and tens of seconds, and it avoids resolving every lazy
+   * document. Ignored by `open`, which already has the bytes.
+   */
+  archiveBytes?: Uint8Array;
 }
+
+type ResolvedMdzipWorkspaceOpenOptions = Required<Omit<MdzipWorkspaceOpenOptions, 'archiveBytes'>>;
 
 export interface MdzipWorkspaceSnapshot {
   mode: MdzipWorkspaceMode;
@@ -131,6 +143,12 @@ export class MdzipWorkspaceService {
   private currentPathTypeValue: MdzipPathType = 'markdown';
   private dirtyValue = false;
   private pendingTextDirty = false;
+  // Ledger of entry-level changes not yet written to archiveBytes. Lets
+  // serializeWorkspaceBytes() patch the existing archive in place instead of
+  // rebuilding it from the workspace model (which would force every lazy
+  // document to be decompressed and recompressed).
+  private readonly pendingWrites = new Map<string, { path: string; content: string | Uint8Array }>();
+  private readonly pendingRemovals = new Map<string, string>();
   private sourceFormatValue: MdzipSourceFormat;
   private readonly modeValue: MdzipWorkspaceMode;
   private fileName: string;
@@ -141,7 +159,7 @@ export class MdzipWorkspaceService {
     bytes: Uint8Array,
     workspace: MdzWorkspace,
     content: OpenedArchive,
-    options: Required<MdzipWorkspaceOpenOptions>
+    options: ResolvedMdzipWorkspaceOpenOptions
   ) {
     this.archiveBytes = bytes;
     this.workspaceValue = workspace;
@@ -158,7 +176,7 @@ export class MdzipWorkspaceService {
     options: MdzipWorkspaceOpenOptions = {}
   ): Promise<MdzipWorkspaceService> {
     const fileName = options.fileName ?? 'document.mdz';
-    const resolvedOptions: Required<MdzipWorkspaceOpenOptions> = {
+    const resolvedOptions: ResolvedMdzipWorkspaceOpenOptions = {
       mode: options.mode ?? 'editable',
       sourceFormat: options.sourceFormat ?? inferMdzipSourceFormat(bytes, fileName),
       fileName
@@ -169,7 +187,8 @@ export class MdzipWorkspaceService {
       const title = suggestedTitleFromMarkdown(markdown, fileBaseNameFromPath(resolvedOptions.fileName));
       const archiveBytes = await buildNewArchiveBytesWithTitle(markdown, title);
       const coreWorkspace = await MdzArchiveCore.openWorkspace(archiveBytes, {
-        includeOrphanedAssetAnalysis: true
+        includeOrphanedAssetAnalysis: false,
+        includeLazyDocumentReaders: true
       });
       const workspace = new MdzipWorkspaceService(
         archiveBytes,
@@ -182,7 +201,8 @@ export class MdzipWorkspaceService {
     }
 
     const coreWorkspace = await MdzArchiveCore.openWorkspace(bytes, {
-      includeOrphanedAssetAnalysis: true
+      includeOrphanedAssetAnalysis: false,
+      includeLazyDocumentReaders: true
     });
     return new MdzipWorkspaceService(bytes, coreWorkspace, await openedArchiveFromWorkspace(coreWorkspace), resolvedOptions);
   }
@@ -191,13 +211,13 @@ export class MdzipWorkspaceService {
     workspace: MdzWorkspace,
     options: MdzipWorkspaceOpenOptions = {}
   ): Promise<MdzipWorkspaceService> {
-    const resolvedOptions: Required<MdzipWorkspaceOpenOptions> = {
+    const resolvedOptions: ResolvedMdzipWorkspaceOpenOptions = {
       mode: options.mode ?? 'editable',
       sourceFormat: options.sourceFormat ?? 'mdz',
       fileName: options.fileName ?? 'document.mdz'
     };
     return new MdzipWorkspaceService(
-      new Uint8Array(),
+      options.archiveBytes ?? new Uint8Array(),
       workspace,
       await openedArchiveFromWorkspace(workspace),
       resolvedOptions
@@ -366,6 +386,7 @@ export class MdzipWorkspaceService {
     this.commitPendingTextToWorkspace();
     const asset = await MdzPackagerCore.createWorkspaceAssetFromFile(fileBytes, archivePath);
     this.upsertWorkspaceAsset(asset);
+    this.recordPendingWrite(archivePath, fileBytes);
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
     this.dirtyValue = true;
     this.emit('edit', ['asset'], archivePath);
@@ -391,21 +412,207 @@ export class MdzipWorkspaceService {
     }
     this.commitPendingTextToWorkspace();
     if (options.requireOrphaned) {
-      const orphaned = this.workspaceValue.orphanedAssets?.orphanedAssetPaths ?? this.contentValue.orphanedAssetPaths;
+      const orphaned = this.liveOrphanedPaths
+        ?? this.workspaceValue.orphanedAssets?.orphanedAssetPaths
+        ?? this.contentValue.orphanedAssetPaths;
       if (!new Set(orphaned.map((path) => path.toLowerCase())).has(target.path.toLowerCase())) {
         return false;
       }
     }
 
     this.workspaceValue.assets = this.workspaceValue.assets.filter((asset) => asset.path.toLowerCase() !== target.path.toLowerCase());
+    this.recordPendingRemoval(target.path);
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes(), target.path);
     this.dirtyValue = true;
     this.emit('edit', ['asset'], target.path);
     return true;
   }
 
+  /**
+   * Removes any deletable file from the archive: assets (like `removeAsset`)
+   * and non-entry markdown documents. The entry-point document and
+   * `manifest.json` are never removable; returns `false` for those.
+   */
+  public async removeFile(archivePath: string): Promise<boolean> {
+    this.assertEditable('remove file');
+    const target = this.findPath(archivePath);
+    if (!target) {
+      return false;
+    }
+    const lower = target.path.toLowerCase();
+    if (lower === 'manifest.json') {
+      return false;
+    }
+    const document = this.workspaceValue.documents.find((doc) => doc.path.toLowerCase() === lower);
+    if (!document) {
+      return this.removeAsset(target.path);
+    }
+    if (lower === this.entryPointPath().toLowerCase()) {
+      return false;
+    }
+    this.commitPendingTextToWorkspace();
+    this.workspaceValue.documents = this.workspaceValue.documents.filter((doc) => doc !== document);
+    this.recordPendingRemoval(target.path);
+    await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes(), target.path);
+    this.dirtyValue = true;
+    this.emit('edit', ['document'], target.path);
+    return true;
+  }
+
+  /**
+   * Makes an existing markdown document the archive entry point. Updates the
+   * manifest (`entryPoint`) and the in-memory workspace model, then reloads.
+   * Returns `false` when the path is not a document or is already the entry.
+   */
+  public async setEntryPoint(archivePath: string): Promise<boolean> {
+    this.assertEditable('set entry point');
+    if (this.sourceFormatValue !== 'mdz') {
+      return false;
+    }
+    const document = this.workspaceValue.documents.find(
+      (doc) => doc.path.toLowerCase() === archivePath.toLowerCase()
+    );
+    if (!document || document.path.toLowerCase() === this.entryPointPath().toLowerCase()) {
+      return false;
+    }
+    this.commitPendingTextToWorkspace();
+    for (const doc of this.workspaceValue.documents) {
+      doc.isEntryPoint = doc === document;
+    }
+    this.workspaceValue.entryPoint = document.path;
+    this.workspaceValue.manifest = MdzPackagerCore.updateManifest(
+      this.workspaceValue.manifest,
+      { entryPoint: document.path }
+    );
+    if (this.archiveBytes.length > 0) {
+      await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
+    } else {
+      // No bytes to patch (openWorkspace host) — keep the change in memory,
+      // mirroring setManifestTitle, so lazy documents are not all resolved.
+      const entryBytes = await this.readWorkspacePathBytes(document.path);
+      this.contentValue = {
+        ...this.contentValue,
+        manifest: this.workspaceValue.manifest,
+        entryPoint: document.path,
+        markdownText: entryBytes ? new TextDecoder('utf-8').decode(entryBytes) : ''
+      };
+      this.liveOrphanedPaths = null;
+    }
+    this.dirtyValue = true;
+    this.emit('edit', ['manifest'], 'manifest.json');
+    return true;
+  }
+
+  /**
+   * Renames (or moves, when the directory part changes) a file inside the
+   * archive. Markdown references to the file — and the file's own relative
+   * references when it is a moved document — are rewritten best-effort.
+   * Returns `false` on unknown source, invalid target, or collision.
+   */
+  public async renameFile(oldPath: string, newPath: string): Promise<boolean> {
+    this.assertEditable('rename file');
+    if (this.sourceFormatValue !== 'mdz') {
+      return false;
+    }
+    const target = this.findPath(oldPath);
+    const normalized = normalizeArchivePath(newPath);
+    if (!target || !normalized
+      || target.path.toLowerCase() === 'manifest.json'
+      || normalized.toLowerCase() === 'manifest.json') {
+      return false;
+    }
+    if (normalized === target.path) {
+      return false;
+    }
+    if (normalized.toLowerCase() !== target.path.toLowerCase() && this.findPath(normalized)) {
+      return false;
+    }
+    this.commitPendingTextToWorkspace();
+    const bytes = await this.readWorkspacePathBytes(target.path);
+    if (!bytes) {
+      return false;
+    }
+    this.recordPendingRemoval(target.path);
+    this.recordPendingWrite(normalized, bytes);
+
+    const document = this.workspaceValue.documents.find(
+      (doc) => doc.path.toLowerCase() === target.path.toLowerCase()
+    );
+    const asset = this.workspaceValue.assets.find(
+      (item) => item.path.toLowerCase() === target.path.toLowerCase()
+    );
+    if (document) {
+      document.path = normalized;
+    } else if (asset) {
+      asset.path = normalized;
+    }
+    if (this.entryPointPath().toLowerCase() === target.path.toLowerCase()) {
+      this.workspaceValue.entryPoint = normalized;
+      this.workspaceValue.manifest = MdzPackagerCore.updateManifest(
+        this.workspaceValue.manifest,
+        { entryPoint: normalized }
+      );
+    }
+
+    if (this.currentPathValue.toLowerCase() === target.path.toLowerCase()) {
+      this.currentPathValue = normalized;
+    }
+    await this.rewriteReferencesForRename(target.path, normalized);
+    await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
+    this.dirtyValue = true;
+    this.emit('edit', document ? ['document'] : ['asset'], normalized);
+    return true;
+  }
+
+  /**
+   * Sets (or clears, with `null`) the manifest `cover` field. The path must
+   * resolve to an existing image asset.
+   */
+  public async setCoverImage(archivePath: string | null): Promise<boolean> {
+    this.assertEditable('set cover image');
+    if (this.sourceFormatValue !== 'mdz') {
+      return false;
+    }
+    let coverPath: string | null = null;
+    if (archivePath !== null) {
+      const target = this.findPath(archivePath);
+      if (!target || !target.isImage) {
+        return false;
+      }
+      coverPath = target.path;
+    }
+    this.commitPendingTextToWorkspace();
+    this.workspaceValue.manifest = MdzPackagerCore.updateManifest(
+      this.workspaceValue.manifest,
+      { cover: coverPath }
+    );
+    if (this.archiveBytes.length > 0) {
+      await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
+    } else {
+      this.contentValue = { ...this.contentValue, manifest: this.workspaceValue.manifest };
+    }
+    this.dirtyValue = true;
+    this.emit('edit', ['manifest'], 'manifest.json');
+    return true;
+  }
+
   public listAssets(): MdzWorkspaceAsset[] {
     return this.workspaceValue.assets.slice();
+  }
+
+  public async ensureOrphanedAssetsAnalyzed(): Promise<boolean> {
+    if (this.liveOrphanedPaths !== null) {
+      return false;
+    }
+    if (this.sourceFormatValue === 'markdown') {
+      this.liveOrphanedPaths = [];
+      return false;
+    }
+    const bytes = this.archiveBytes.length > 0
+      ? this.archiveBytes
+      : await this.serializeWorkspaceBytes();
+    this.liveOrphanedPaths = await findOrphanedAssetPathsInArchive(bytes);
+    return true;
   }
 
   /**
@@ -440,6 +647,7 @@ export class MdzipWorkspaceService {
     this.currentTextValue = text;
     this.commitPendingTextToWorkspace();
     this.upsertWorkspaceAsset(await MdzPackagerCore.createWorkspaceAssetFromFile(options.bytes, archivePath));
+    this.recordPendingWrite(archivePath, options.bytes);
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
     this.dirtyValue = true;
     this.emit('edit', ['document', 'asset'], archivePath);
@@ -453,12 +661,31 @@ export class MdzipWorkspaceService {
     };
   }
 
+  /**
+   * Sets the manifest title.
+   *
+   * When archive bytes are available the manifest entry is patched into them
+   * incrementally (no document is read). When the workspace was opened via
+   * `openWorkspace` without `archiveBytes`, no archive is built at all: the
+   * manifest changes in memory only and is included whenever bytes are next
+   * serialized (`saveToBytes`, `exportBytes`, `flush`). Hosts holding the real
+   * archive bytes natively can instead apply the change themselves from the
+   * `['manifest']` change event — see `onManifestChanged` in the view options.
+   */
   public async setManifestTitle(newTitle: string): Promise<void> {
     this.assertEditable('set manifest title');
     this.commitPendingTextToWorkspace();
     this.workspaceValue.manifest = MdzPackagerCore.updateManifest(this.workspaceValue.manifest, { title: newTitle });
     this.workspaceValue.title = newTitle;
-    await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
+    if (this.archiveBytes.length > 0) {
+      await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
+    } else {
+      // No bytes to patch. A full buildWorkspace() here would resolve every
+      // lazy document (a webview round-trip per document in serialized-
+      // workspace hosts). Keep the change in memory; it is picked up by the
+      // next serialization.
+      this.contentValue = { ...this.contentValue, manifest: this.workspaceValue.manifest };
+    }
     this.dirtyValue = true;
     this.emit('edit', ['manifest'], 'manifest.json');
   }
@@ -525,13 +752,15 @@ export class MdzipWorkspaceService {
   private async reload(bytes: Uint8Array): Promise<void> {
     this.archiveBytes = bytes;
     this.workspaceValue = await MdzArchiveCore.openWorkspace(bytes, {
-      includeOrphanedAssetAnalysis: true
+      includeOrphanedAssetAnalysis: false,
+      includeLazyDocumentReaders: true
     });
     this.contentValue = await openedArchiveFromWorkspace(this.workspaceValue);
     this.currentTextValue = this.contentValue.markdownText;
     this.currentPathValue = this.contentValue.entryPoint;
     this.currentPathTypeValue = 'markdown';
     this.liveOrphanedPaths = null;
+    this.clearPendingChanges();
   }
 
   private async reloadPreservingCurrentText(bytes: Uint8Array, removedPath?: string): Promise<void> {
@@ -540,11 +769,12 @@ export class MdzipWorkspaceService {
     const currentPathType = this.currentPathTypeValue;
     this.archiveBytes = bytes;
     this.workspaceValue = await MdzArchiveCore.openWorkspace(bytes, {
-      includeOrphanedAssetAnalysis: true
+      includeOrphanedAssetAnalysis: false,
+      includeLazyDocumentReaders: true
     });
     this.contentValue = await openedArchiveFromWorkspace(this.workspaceValue);
     this.liveOrphanedPaths = null;
-    this.pendingTextDirty = false;
+    this.clearPendingChanges();
 
     if (removedPath && currentPath.toLowerCase() === removedPath.toLowerCase()) {
       this.currentTextValue = this.contentValue.markdownText;
@@ -564,6 +794,54 @@ export class MdzipWorkspaceService {
     );
   }
 
+  private entryPointPath(): string {
+    return this.workspaceValue.entryPoint ?? this.contentValue.entryPoint;
+  }
+
+  // Rewrites markdown links/images across all documents after a rename so they
+  // still resolve: refs that pointed at oldPath now point at newPath, and the
+  // moved document's own relative refs are re-based to its new directory.
+  // Only refs that resolve to a known archive path are touched.
+  private async rewriteReferencesForRename(oldPath: string, newPath: string): Promise<void> {
+    const oldLower = oldPath.toLowerCase();
+    const knownPaths = new Set(this.contentValue.paths.map((entry) => entry.path.toLowerCase()));
+    for (const doc of this.workspaceValue.documents) {
+      const wasRenamedDoc = doc.path.toLowerCase() === newPath.toLowerCase();
+      // Refs were authored relative to the document's pre-rename location.
+      const authoredDir = archiveDirName(wasRenamedDoc ? oldPath : doc.path);
+      const currentDir = archiveDirName(doc.path);
+      if (!wasRenamedDoc && doc.isLazy && !doc.text && !doc.readText) {
+        continue; // unreadable lazy doc; leave as-is rather than throwing
+      }
+      let text = doc.text;
+      if (doc.readText && !text) {
+        text = await doc.readText();
+      }
+      if (!text) {
+        continue;
+      }
+      const rewritten = rewriteArchiveRefs(text, (ref) => {
+        const resolved = resolveArchiveRef(ref, authoredDir);
+        const targetLower = resolved.toLowerCase();
+        if (targetLower !== oldLower && !knownPaths.has(targetLower)) {
+          return null;
+        }
+        const finalTarget = targetLower === oldLower ? newPath : resolved;
+        const next = relativeArchivePath(currentDir, finalTarget);
+        return next === ref ? null : next;
+      });
+      if (rewritten !== text) {
+        doc.text = rewritten;
+        delete doc.readText;
+        delete doc.isLazy;
+        this.recordPendingWrite(doc.path, rewritten);
+        if (doc.path.toLowerCase() === this.currentPathValue.toLowerCase()) {
+          this.currentTextValue = rewritten;
+        }
+      }
+    }
+  }
+
   private commitPendingTextToWorkspace(): void {
     if (!isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)) {
       return;
@@ -572,6 +850,9 @@ export class MdzipWorkspaceService {
     if (document) {
       if (document.text !== this.currentTextValue) {
         document.text = this.currentTextValue;
+        delete document.readText;
+        delete document.isLazy;
+        this.recordPendingWrite(document.path, this.currentTextValue);
         this.pendingTextDirty = true;
       }
       return;
@@ -585,12 +866,43 @@ export class MdzipWorkspaceService {
         asset.byteSize = newByteSize;
         delete asset.readBytes;
         delete asset.readDataUri;
+        this.recordPendingWrite(asset.path, bytes);
         this.pendingTextDirty = true;
       }
     }
   }
 
+  private recordPendingWrite(archivePath: string, content: string | Uint8Array): void {
+    const lower = archivePath.toLowerCase();
+    this.pendingRemovals.delete(lower);
+    this.pendingWrites.set(lower, { path: archivePath, content });
+  }
+
+  private recordPendingRemoval(archivePath: string): void {
+    const lower = archivePath.toLowerCase();
+    this.pendingWrites.delete(lower);
+    this.pendingRemovals.set(lower, archivePath);
+  }
+
+  private clearPendingChanges(): void {
+    this.pendingWrites.clear();
+    this.pendingRemovals.clear();
+    this.pendingTextDirty = false;
+  }
+
   private async serializeWorkspaceBytes(): Promise<Uint8Array> {
+    // Patch the existing archive when we have its bytes: unchanged entries are
+    // copied verbatim, so large archives serialize in milliseconds instead of
+    // decompressing and recompressing every document.
+    if (this.archiveBytes.length > 0) {
+      const result = await MdzArchiveCore.updateFiles(
+        this.archiveBytes,
+        [...this.pendingWrites.values()].map((write) => ({ path: write.path, content: write.content })),
+        [...this.pendingRemovals.values()],
+        { manifest: this.workspaceValue.manifest }
+      );
+      return blobToBytes(result.blob);
+    }
     return blobToBytes((await MdzPackagerCore.buildWorkspace(this.workspaceValue)).blob);
   }
 
@@ -608,6 +920,13 @@ export class MdzipWorkspaceService {
     }
     const document = this.workspaceValue.documents.find((doc) => doc.path.toLowerCase() === archivePath.toLowerCase());
     if (document) {
+      if (document.readText && !document.text) {
+        document.text = await document.readText();
+        delete document.readText;
+        delete document.isLazy;
+      } else if (document.isLazy && !document.text) {
+        throw new Error(`ERR_LAZY_TEXT_UNAVAILABLE: document "${document.path}" was opened lazily but its readText() reader is missing — likely dropped by a serialization boundary (e.g. postMessage). Materialize document text before serializing the workspace, or rehydrate readText on the receiving side.`);
+      }
       return new TextEncoder().encode(document.text);
     }
     const asset = this.workspaceValue.assets.find((item) => item.path.toLowerCase() === archivePath.toLowerCase());
@@ -680,6 +999,89 @@ function referencedImagePaths(markdown: string, baseDir: string): Set<string> {
     refs.add(resolved);
   }
   return refs;
+}
+
+function archiveDirName(path: string): string {
+  return path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+}
+
+/**
+ * Normalizes a user-supplied archive path: backslashes to slashes, collapsed
+ * separators, no leading/trailing slash. Returns `null` when the result is
+ * empty or contains `.`/`..` segments.
+ */
+export function normalizeArchivePath(path: string): string | null {
+  const segments = path.trim().replace(/\\/g, '/').split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+  if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
+    return null;
+  }
+  return segments.join('/');
+}
+
+/**
+ * Builds the relative markdown reference from a directory (`''` = archive
+ * root) to an archive path, using `../` segments where needed.
+ */
+export function relativeArchivePath(fromDir: string, toPath: string): string {
+  const fromParts = fromDir.split('/').filter(Boolean);
+  const toParts = toPath.split('/').filter(Boolean);
+  const toDir = toParts.slice(0, -1);
+  let common = 0;
+  while (common < fromParts.length && common < toDir.length && fromParts[common] === toDir[common]) {
+    common += 1;
+  }
+  return '../'.repeat(fromParts.length - common) + toParts.slice(common).join('/');
+}
+
+// Resolves a markdown ref against a base directory, handling ./ and ../ and
+// leading-slash (archive-root) refs.
+function resolveArchiveRef(ref: string, baseDir: string): string {
+  const combined = ref.startsWith('/') ? ref.slice(1) : `${baseDir ? `${baseDir}/` : ''}${ref}`;
+  const out: string[] = [];
+  for (const segment of combined.split('/')) {
+    if (!segment || segment === '.') {
+      continue;
+    }
+    if (segment === '..') {
+      out.pop();
+    } else {
+      out.push(segment);
+    }
+  }
+  return out.join('/');
+}
+
+// Applies mapRef to every markdown link/image target. mapRef receives the
+// decoded path part (query/hash stripped) and returns the replacement path or
+// null to leave the ref unchanged. External (scheme) and fragment-only refs
+// are skipped.
+function rewriteArchiveRefs(markdown: string, mapRef: (ref: string) => string | null): string {
+  const regex = /(!?\[[^\]]*\]\()(<[^>]*>|[^)\s]+)((?:\s+"[^"]*")?\))/g;
+  return markdown.replace(regex, (match, prefix: string, rawTarget: string, suffix: string) => {
+    const angled = rawTarget.startsWith('<') && rawTarget.endsWith('>');
+    const target = angled ? rawTarget.slice(1, -1) : rawTarget;
+    if (!target || target.startsWith('#') || /^[a-z][a-z0-9+.-]*:/i.test(target)) {
+      return match;
+    }
+    const splitAt = target.search(/[?#]/);
+    const pathPart = splitAt === -1 ? target : target.slice(0, splitAt);
+    const rest = splitAt === -1 ? '' : target.slice(splitAt);
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(pathPart);
+    } catch {
+      return match;
+    }
+    const mapped = mapRef(decoded);
+    if (mapped === null) {
+      return match;
+    }
+    const encoded = mapped.split('/').map(encodeURIComponent).join('/');
+    const next = `${encoded}${rest}`;
+    return `${prefix}${angled ? `<${next}>` : next}${suffix}`;
+  });
 }
 
 function pathTypeForEntry(entry: { isMarkdown: boolean; isImage: boolean }): MdzipPathType {

@@ -11,11 +11,12 @@ import {
   SimpleChanges,
   ViewChild,
 } from '@angular/core';
-import { MdzipWorkspaceView } from 'mdzip-editor';
+import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipColorScheme,
+  MdzipConversionAction,
   MdzipEditorCommand,
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
@@ -29,7 +30,7 @@ import type {
   MdzipWorkspaceMode,
   MdzipWorkspaceSave,
   MdzipWorkspaceSnapshot,
-} from 'mdzip-editor';
+} from '@mdzip/editor';
 
 @Component({
   selector: 'mdzip-workspace',
@@ -49,6 +50,12 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
   @Input() initialColorScheme?: MdzipColorScheme;
   @Input() navigationMode: MdzipNavigationMode = 'editor';
   @Input() navigationButtonActive = true;
+  /**
+   * Host hook for the markdown→MDZ conversion flow. An input function (not an
+   * output) because it must return/resolve `true` to suppress the built-in
+   * conversion dialog.
+   */
+  @Input() onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
   @Output() readonly changed = new EventEmitter<MdzipWorkspaceChange>();
   @Output() readonly saved = new EventEmitter<MdzipWorkspaceSave>();
   @Output() readonly workspaceChanged = new EventEmitter<MdzipDocumentChangeEvent>();
@@ -132,6 +139,22 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
     return this.view?.removeAsset(archivePath, options) ?? Promise.resolve(false);
   }
 
+  removeFile(archivePath: string): Promise<boolean> {
+    return this.view?.removeFile(archivePath) ?? Promise.resolve(false);
+  }
+
+  renameFile(oldPath: string, newPath: string): Promise<boolean> {
+    return this.view?.renameFile(oldPath, newPath) ?? Promise.resolve(false);
+  }
+
+  setEntryPoint(archivePath: string): Promise<boolean> {
+    return this.view?.setEntryPoint(archivePath) ?? Promise.resolve(false);
+  }
+
+  setCoverImage(archivePath: string | null): Promise<boolean> {
+    return this.view?.setCoverImage(archivePath) ?? Promise.resolve(false);
+  }
+
   listAssets(): MdzWorkspaceAsset[] {
     return this.view?.listAssets() ?? [];
   }
@@ -167,11 +190,14 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
       onAssetChanged: (event) => this.assetChanged.emit(event),
       onManifestChanged: (event) => this.manifestChanged.emit(event),
       onSnapshotChanged: (snapshot) => this.snapshotChanged.emit(snapshot),
-      onSelectionChanged: (snapshot) => this.selectionChanged.emit(snapshot),
-      onDirtyChanged: (snapshot) => this.dirtyChanged.emit(snapshot),
-      onValidationChanged: (snapshot) => this.validationChanged.emit(snapshot),
-      onColorSchemeChanged: (colorScheme) => this.colorSchemeChanged.emit(colorScheme),
-      onFailed: (e) => this.failed.emit(e),
+      onSelectionChanged: (snapshot: MdzipWorkspaceSnapshot) => this.selectionChanged.emit(snapshot),
+      onDirtyChanged: (snapshot: MdzipWorkspaceSnapshot) => this.dirtyChanged.emit(snapshot),
+      onValidationChanged: (snapshot: MdzipWorkspaceSnapshot) => this.validationChanged.emit(snapshot),
+      onColorSchemeChanged: (colorScheme: MdzipColorScheme) => this.colorSchemeChanged.emit(colorScheme),
+      onFailed: (e: unknown) => this.failed.emit(e),
+      onConversionRequested: this.onConversionRequested
+        ? (action) => this.onConversionRequested!(action)
+        : undefined,
     });
   }
 }

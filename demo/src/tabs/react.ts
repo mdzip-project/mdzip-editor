@@ -1,13 +1,9 @@
 import { createElement, createRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MdzipWorkspace, type MdzipWorkspaceHandle } from '@mdzip/editor-react';
-import type {
-  MdzipControlPreset,
-  MdzipWorkspaceMode,
-  MdzipWorkspaceSave,
-} from 'mdzip-editor';
+import type { MdzipControlPreset, MdzipWorkspaceSave } from 'mdzip-editor';
+import { modeFromControls } from '../tab-controls.js';
 import type { TabController } from '../tab-controller.js';
-import { createDemoTabControls } from '../tab-controls.js';
 
 export function initReact(
   container: HTMLElement,
@@ -16,57 +12,33 @@ export function initReact(
 ): TabController {
   container.replaceChildren();
   let currentBytes: Uint8Array | null = null;
-  let currentMode: MdzipWorkspaceMode = 'editable';
   let currentControls: MdzipControlPreset = 'standalone-editor';
   let currentFileName = 'document.mdz';
   const workspaceRef = createRef<MdzipWorkspaceHandle>();
-
-  const handleSaved = (event: MdzipWorkspaceSave): void => {
-    onSaved(event.bytes, event.snapshot.fileName);
-    workspaceRef.current?.markPersisted();
-  };
-
-  const handleFailed = (e: unknown): void => {
-    onFailed(e);
-  };
 
   function render() {
     root.render(createElement(MdzipWorkspace, {
       ref: workspaceRef,
       bytes: currentBytes,
-      mode: currentMode,
+      mode: modeFromControls(currentControls),
       fileName: currentFileName,
       controls: currentControls,
-      onSaved: handleSaved,
-      onFailed: handleFailed,
+      onSaved: (event: MdzipWorkspaceSave) => { onSaved(event.bytes, event.snapshot.fileName); workspaceRef.current?.markPersisted(); },
+      onFailed,
     }));
   }
 
-  const tabControls = createDemoTabControls(
-    container,
-    currentMode,
-    currentControls,
-    (mode, controls) => {
-      currentMode = mode;
-      currentControls = controls;
-      render();
-    }
-  );
-  const root = createRoot(tabControls.content);
+  const root = createRoot(container);
   render();
 
   return {
-    update: (bytes, mode, fileName) => {
+    update: (bytes, fileName, controls) => {
       currentBytes = bytes;
-      currentMode = mode as MdzipWorkspaceMode;
-      currentControls = tabControls.setMode(currentMode);
       currentFileName = fileName;
+      currentControls = controls;
       render();
     },
     markPersisted: () => workspaceRef.current?.markPersisted(),
-    destroy: () => {
-      root.unmount();
-      tabControls.destroy();
-    },
+    destroy: () => root.unmount(),
   };
 }

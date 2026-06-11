@@ -1,6 +1,6 @@
 # MDZip Editor Developer Guide
 
-`@mdzip/editor` can run as a complete standalone editor or as an embedded
+`mdzip-editor` can run as a complete standalone editor or as an embedded
 workspace inside a larger web or desktop application. The same workspace view
 is available through the raw browser API and the Angular, React, and Vue
 wrappers.
@@ -8,7 +8,7 @@ wrappers.
 ## Packages
 
 ```sh
-npm install @mdzip/editor
+npm install mdzip-editor
 ```
 
 Install the wrapper for your framework when needed:
@@ -105,7 +105,7 @@ click-to-edit title behavior.
 ## Raw Browser API
 
 ```ts
-import { MdzipWorkspaceView } from '@mdzip/editor';
+import { MdzipWorkspaceView } from 'mdzip-editor';
 
 const container = document.querySelector<HTMLElement>('#editor')!;
 const view = new MdzipWorkspaceView(container, {
@@ -181,10 +181,9 @@ view.focus();
 view.destroy();
 ```
 
-Use `navigationMode: 'editor'` (the default) to keep the editor's built-in
-navigation panel. Use `navigationMode: 'host'` when the application supplies its
-own document and asset navigation. Use `navigationMode: 'none'` when neither the
-editor nor host should display package navigation.
+Use `navigationMode: 'host'` when the application supplies its own document and
+asset navigation. Use `navigationMode: 'none'` when neither the editor nor host
+should display package navigation.
 
 ## Custom Host Toolbars
 
@@ -237,7 +236,7 @@ import { MdzipWorkspaceComponent } from '@mdzip/editor-ng';
 import type {
   MdzipControlPolicy,
   MdzipWorkspaceChange
-} from '@mdzip/editor';
+} from 'mdzip-editor';
 
 const editorControls: MdzipControlPolicy = {
   preset: 'hosted-editor',
@@ -283,8 +282,7 @@ export class EditorPage {
 }
 ```
 
-Angular outputs include `changed`, `saved`, `workspaceChanged`,
-`documentChanged`, `assetChanged`, `manifestChanged`, `snapshotChanged`,
+Angular outputs include `changed`, `saved`, `snapshotChanged`,
 `selectionChanged`, `dirtyChanged`, `validationChanged`,
 `colorSchemeChanged`, and `failed`.
 
@@ -296,7 +294,7 @@ import {
   MdzipWorkspace,
   type MdzipWorkspaceHandle
 } from '@mdzip/editor-react';
-import type { MdzipControlPolicy } from '@mdzip/editor';
+import type { MdzipControlPolicy } from 'mdzip-editor';
 
 const controls: MdzipControlPolicy = {
   preset: 'hosted-editor',
@@ -338,7 +336,7 @@ frequently rendering parents to avoid unnecessary wrapper recreation.
 import { ref } from 'vue';
 import { MdzipWorkspace } from '@mdzip/editor-vue';
 import type { MdzipWorkspaceExposed } from '@mdzip/editor-vue';
-import type { MdzipControlPolicy } from '@mdzip/editor';
+import type { MdzipControlPolicy } from 'mdzip-editor';
 
 defineProps<{ bytes: Uint8Array }>();
 const workspace = ref<MdzipWorkspaceExposed | null>(null);
