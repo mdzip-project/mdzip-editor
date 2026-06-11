@@ -100,6 +100,44 @@ Structured callbacks are available for workspace, document, asset, manifest,
 selection, dirty, validation, and snapshot changes. Asset hosts can also call
 `addAsset()`, `replaceAsset()`, `removeAsset()`, and `listAssets()`.
 
+## File Management (navigation pane)
+
+With `controls: 'standalone-editor'` or `'hosted-editor'` (or `fileActions: true`
+in a custom policy), the navigation pane offers a right-click context menu: new
+`.md` file, new folder, rename/move (edit the full archive path), duplicate,
+replace, download, copy markdown link / image embed, set entry point (shown bold
+in the tree), set/remove cover image, and delete with a confirmation prompt
+(orphaned assets delete immediately). The entry-point document and
+`manifest.json` cannot be deleted. Copy and Download remain available in
+read-only contexts.
+
+Drag and drop is supported in all directions: move files between folders, drop
+OS files onto the pane to add them as assets, drag a tree file onto the editor
+to insert a markdown link or image embed at the pointer, and drop an OS image
+onto the editor to embed it like a paste.
+
+The same operations are available programmatically: `removeFile()`,
+`renameFile()` (rewrites markdown references, including a moved document's own
+relative links), `setEntryPoint()`, and `setCoverImage()`.
+
+## Conversion Hook
+
+For plain-markdown sources, hosts can take over the markdown→MDZ conversion
+flow (triggered by the nav button, Insert Image, or an image paste/drop):
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  onConversionRequested(action) {
+    // action.kind: 'navigation' | 'image-picker' | 'image-file' (with action.file)
+    return hostHandlesConversion(action); // true suppresses the built-in dialog
+  }
+});
+```
+
+Returning or resolving `false` (or omitting the callback) keeps the built-in
+conversion dialog. Errors thrown by the hook are reported via `onFailed` and
+fall back to the built-in dialog.
+
 `MdzipRenderingService` uses `defaultSafeMarkdownRenderer` when no renderer is
 injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
 

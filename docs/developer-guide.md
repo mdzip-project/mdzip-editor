@@ -78,9 +78,28 @@ const controls = {
   save: false,
   zoom: true,
   colorScheme: true,
-  orphanActions: false
+  orphanActions: false,
+  fileActions: false
 } as const;
 ```
+
+`fileActions` (default `true` in the editor presets, `false` in `preview`/
+`viewer`) gates the navigation pane's file-management surface: the right-click
+context menu (new `.md` file, new folder, rename/move, duplicate, replace,
+download, copy markdown link/image embed, set entry point, set/remove cover
+image, delete) and drag-and-drop (move files between folders, drop OS files
+onto the pane). Copy and Download are non-mutating and stay available whenever
+the menu is shown, including read-only mode. Dragging a tree file onto the
+editor surface inserts a markdown link/embed at the pointer and only requires
+an editable workspace, not `fileActions`.
+
+The same operations are exposed programmatically on the view and the framework
+wrappers: `removeFile()`, `renameFile()` (also moves; rewrites markdown
+references), `setEntryPoint()`, and `setCoverImage()`.
+
+For plain-markdown sources, the `onConversionRequested(action)` option lets a
+host take over the markdown→MDZ conversion flow (nav button, Insert Image, or
+image paste/drop): return or resolve `true` to suppress the built-in dialog.
 
 Broad boolean forms remain supported:
 
