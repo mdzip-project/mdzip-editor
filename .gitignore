@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .angular/
+private/
 .vite/
 coverage/
 *.tgz
