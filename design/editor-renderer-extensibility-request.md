@@ -548,6 +548,8 @@ The selected-entry renderer API is additive.
 
 ## Open Design Questions
 
+> Resolved 2026-06-12 — see [Resolution](#resolution-2026-06-12) below.
+
 - Should matching use a predicate only, or also support convenient path/glob/MIME declarations?
 - Should the editor expose separate preview and source renderers for an entry?
 - Should custom entry renderers be allowed to replace the full pane stack or preview only?
@@ -563,3 +565,115 @@ Implement the generalized selected-entry renderer contract as the long-term exte
 This avoids creating a narrow Mermaid-only hook or a one-off manifest override. It gives hosts one consistent way to support richer Markdown, specialized files, and native application editors while keeping the base package lightweight and fully functional by default.
 
 The framework-independent contract should be the source of truth, and Angular, React, and Vue support should ship with capability and lifecycle parity. Framework-specific ergonomics may differ, but framework choice should not determine whether a host can customize Markdown rendering or replace the selected-entry view.
+
+## Resolution (2026-06-12)
+
+Status: **Accepted** with the amendments below. Reviewed against the current
+release (`@mdzip/editor@1.3.1` and wrappers at 1.3.1; the request predates
+1.3.0 `fileActions`, addressed in D6). The entry renderer contract is adopted
+as the canonical long-term extension boundary, with Markdown rendering as a
+specialized built-in path, per the recommendation above.
+
+### Decisions
+
+**D1. Extension boundary.** Entry renderers are the canonical boundary;
+Markdown renderer/extension hooks are the specialized path. Accepted as
+proposed.
+
+**D2. Entry renderers claim the full pane stack**, not just the preview pane.
+A matched renderer suppresses both the CodeMirror edit pane and the built-in
+preview. The headline use cases (manifest editor, draw.io, PDF) have no
+meaningful source pane, and `manifest.json` is already excluded from text
+editing by `canEditMdzipPath`.
+
+**D3. Sanitization ownership.** The view pipeline owns sanitization: HTML
+from custom renderers and `transformHtml` hooks is sanitized before DOM
+insertion. Amendment to the proposal: `defaultSafeMarkdownRenderer` keeps
+sanitizing internally (its standalone export contract is unchanged for any
+direct consumers of the published packages), and marks its output as already
+sanitized so the pipeline skips the duplicate pass. Exactly one DOMPurify
+pass runs per render regardless of path. Bypass remains an explicit,
+clearly named option as proposed.
+
+**D4. Placeholder survival.** The sanitizer policy is not extensible by
+extensions. Extensions that need to hydrate placeholders in `mount()` must
+use class/id markers that survive the existing policy and carry payloads
+(e.g. Mermaid source) out-of-band in a side map keyed by marker id — not in
+data attributes (`ALLOW_DATA_ATTR` is `false`) or other stripped attributes.
+This is also cheaper: large payloads are never attribute-escaped or pushed
+through DOMPurify. Revisit scoped sanitizer allowlist extensions only if
+real adapters prove this too restrictive.
+
+**D5. `update()` vs re-mount keying.** Renders are keyed by
+`(path, matched renderer id)`. Same key → `update()` (if implemented,
+else no-op); changed key → `destroy()` then `mount()`. The Markdown preview
+pipeline is memoized on `(currentPath, currentText, colorScheme, image map)`:
+unrelated snapshot changes (dialogs, nav menu, layout toggles) no longer
+reset preview DOM, fixing an existing inefficiency where every snapshot
+render re-ran marked + DOMPurify and reset `innerHTML`.
+
+**D6. `fileActions` interaction** (added in 1.3.0, after this request was
+drafted). Rename, move, or delete of the entry backing an active renderer is
+treated as a selection change: the handle is destroyed, then matching re-runs
+against the new state.
+
+**D7. Wrapper prop identity.** Wrappers must not recreate the workspace view
+when renderer props change identity. `entryRenderers` and
+`markdownExtensions` are diffed by stable renderer `id`/`name`; React's
+`renderEntry` callback is held in a ref so a new inline lambda per render is
+free. Without this, idiomatic inline props would rebuild the entire workspace
+(archive re-parse, nav tree, CodeMirror) on every parent render.
+
+**D8. Matching API.** Predicate-only in the core contract. Convenience
+helpers ship as pure functions (e.g. `byPath('manifest.json')`,
+`byExtension('.drawio')`), not as declarative fields.
+
+**D9. `updateManifest()` takes a full manifest only.** Matches the existing
+`MdzPackagerCore.updateManifest` semantics and keeps the operation atomic;
+hosts compose partial updates by spreading. It must route through the
+existing `'manifest'` edit event so the `onManifestChanged` host-delegated
+persistence contract continues to hold — Studio is precisely such a host.
+
+**D10. Asset resolution.** Markdown arrives at `transformMarkdown` hooks and
+the renderer with image sources already rewritten (current behavior). The
+resolver is additionally exposed on the render/entry context so `mount()`
+hooks can resolve assets the Markdown rewriter does not know about.
+
+**D11. Phasing amendment.** Phase 1 and Phase 2 land together: the
+async/cancellation/stale-result machinery is the same in both, and landing
+them separately would change the rendering service contract twice.
+Phases 3 and 4 as proposed, including the cross-framework parity requirement
+for Phase 4.
+
+**D12. Deferred.** Separate preview/source renderers per entry, representing
+built-in renderers through the public registry, and wrapper-level imperative
+`openPath()` are all deferred — none block the motivating use cases and all
+are additive later. `openPath()` is the most likely near-term follow-up.
+
+### Additional acceptance criteria
+
+- With no custom renderer or extension registered, the render path performs
+  no more work than the current release: a fully synchronous pipeline runs
+  synchronously (no forced microtask hop per keystroke), and the async
+  generation/abort machinery engages only when a hook actually returns a
+  promise.
+- A keystroke in split mode with a registered-but-non-matching entry renderer
+  and one markdown extension must not destroy any mounted handle, re-run
+  `mount()`, or reset unrelated preview DOM.
+- Exactly one sanitization pass runs per rendered document.
+- Wrapper renderer-prop identity changes (new array/lambda instances with
+  equivalent contents) must not recreate the workspace view.
+
+### Compatibility verification
+
+Checked 2026-06-12 against downstream consumers: neither MDZip Studio nor
+mdzip-vscode uses `MdzipRenderingService`, `defaultSafeMarkdownRenderer`, or
+`renderMdzipPreviewHtml` at runtime (Studio imports types only; the
+`MdzipRenderingService` mention in Studio's `MDZIP_LIBRARY_NOTES.md` is
+stale). D3's keep-self-sanitizing amendment therefore protects only unknown
+external consumers of the published npm packages, at no implementation cost.
+
+The `MdzipMarkdownRenderer` signature change (options record → documented
+context, `string` → `string | Promise<string>`) remains source-compatible
+for implementors; direct callers of `.render()` must become async-aware as
+noted in Compatibility Notes above.
