@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.3.1] - 2026-06-12
+
+### Fixed
+- React wrapper: the workspace view is no longer destroyed and recreated when
+  callback props (e.g. inline `onSaved` handlers) change identity between
+  renders — previously this blanked the editor on any re-render that did not
+  also change `bytes`/`mode`/`fileName`. When a config prop (`controls`,
+  layouts, navigation) does legitimately rebuild the view, the current
+  document is now reopened automatically.
+- Demo: the Vue tab now loads documents in production builds. The tab relied
+  on Vue's dev-only `app._instance` internal to force re-renders; it now uses
+  a `shallowRef` and normal reactivity.
+
+### Documentation
+- Replaced deprecated package names (`mdzip-core-js` → `@mdzip/core-js`,
+  `mdzip-editor` → `@mdzip/editor`) across the READMEs and guides, and fixed
+  broken GitHub doc links in the `@mdzip/editor` README.
+- Root README now lists the React and Vue wrapper packages.
+- Angular imperative-API examples now use template reference variables
+  instead of `@ViewChild`.
+
 ## [1.3.0] - 2026-06-11
 
 ### Added

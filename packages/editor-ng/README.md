@@ -97,18 +97,49 @@ exposed as component methods: `removeFile`, `renameFile`, `setEntryPoint`, and `
 
 ## Imperative API
 
+All imperative methods are public instance methods on `MdzipWorkspaceComponent`,
+so any reference to the component instance works. No view query is required: a
+template reference variable can hand the instance directly to an event handler.
+
 ```ts
-@ViewChild(MdzipWorkspaceComponent) workspace!: MdzipWorkspaceComponent;
+@Component({
+  imports: [MdzipWorkspaceComponent],
+  template: `
+    <mdzip-workspace #workspace [bytes]="bytes" mode="editable" controls="hosted-editor" />
+    <button (click)="save(workspace)">Save</button>
+  `,
+})
+export class AppComponent {
+  async save(workspace: MdzipWorkspaceComponent): Promise<void> {
+    // Flush pending edits and persist
+    const snapshot = await workspace.flush();
+    if (snapshot) {
+      await persist(snapshot.bytes);
+      workspace.markPersisted();
+    }
 
-// Flush pending edits and persist
-const snapshot = await this.workspace.flush();
-if (snapshot) {
-  await save(snapshot.bytes);
-  this.workspace.markPersisted();
+    // Execute editor commands
+    await workspace.executeCommand('bold');
+  }
 }
-
-// Execute editor commands
-await this.workspace.executeCommand('bold');
 ```
+
+To call methods outside an event handler, use a view query — the signal-based
+`viewChild` or the classic `@ViewChild` decorator:
+
+```ts
+private readonly workspace = viewChild.required(MdzipWorkspaceComponent);
+
+async save(): Promise<void> {
+  const snapshot = await this.workspace().flush();
+  if (snapshot) {
+    await persist(snapshot.bytes);
+    this.workspace().markPersisted();
+  }
+}
+```
+
+Methods called before the view initializes are safe: they no-op and resolve to
+`false`/`null`/empty rather than throwing.
 
 See the [`@mdzip/editor`](https://www.npmjs.com/package/@mdzip/editor) package for the full API reference, theming guide, and framework-agnostic usage.

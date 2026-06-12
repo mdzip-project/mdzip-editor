@@ -41,7 +41,7 @@ await view.open(markdownBytes, {
 The filename normally selects the source format. Pass `sourceFormat:
 'markdown'` or `sourceFormat: 'mdz'` to override detection.
 
-Normalized `mdzip-core-js` workspaces can be opened without an initial archive
+Normalized `@mdzip/core-js` workspaces can be opened without an initial archive
 rebuild:
 
 ```ts
@@ -143,11 +143,11 @@ injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
 
 ## Developer Guide
 
-See the [Developer Guide](https://github.com/mdzip-project/@mdzip/editor/blob/main/docs/developer-guide.md)
+See the [Developer Guide](https://github.com/mdzip-project/mdzip-editor/blob/main/docs/developer-guide.md)
 for granular host controls, height requirements, lifecycle events, persistence,
 theming, and Raw, Angular, React, and Vue examples.
 
-See the [Theming Guide](https://github.com/mdzip-project/@mdzip/editor/blob/main/docs/theming.md)
+See the [Theming Guide](https://github.com/mdzip-project/mdzip-editor/blob/main/docs/theming.md)
 for custom theme examples and the complete CSS variable reference.
 
 ## Archive Helpers
@@ -161,4 +161,4 @@ import {
 } from '@mdzip/editor';
 ```
 
-These helpers are built on `mdzip-core-js` and are suitable for framework wrappers, desktop hosts, browser apps, and extension integrations.
+These helpers are built on `@mdzip/core-js` and are suitable for framework wrappers, desktop hosts, browser apps, and extension integrations.

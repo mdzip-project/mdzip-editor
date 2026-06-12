@@ -172,7 +172,7 @@ import {
   MDZIP_VARIABLES_CSS,
   MDZIP_LIGHT_THEME_CSS,
   MDZIP_DARK_THEME_CSS
-} from 'mdzip-editor';
+} from '@mdzip/editor';
 ```
 
 - `MDZIP_VARIABLES_CSS` maps every `--mdzip-*` token to its `--theme-*`

@@ -98,6 +98,43 @@ function MdzipWorkspace({
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MdzipWorkspaceView | null>(null);
 
+  // Callbacks and content are read through refs at event/recreate time so
+  // that new prop identities (e.g. inline handlers) never force a view
+  // rebuild — only the view-config props below do.
+  const callbacksRef = useRef({
+    onChanged,
+    onSaved,
+    onWorkspaceChanged,
+    onDocumentChanged,
+    onAssetChanged,
+    onManifestChanged,
+    onSnapshotChanged,
+    onSelectionChanged,
+    onDirtyChanged,
+    onValidationChanged,
+    onColorSchemeChanged,
+    onFailed,
+    onConversionRequested,
+  });
+  callbacksRef.current = {
+    onChanged,
+    onSaved,
+    onWorkspaceChanged,
+    onDocumentChanged,
+    onAssetChanged,
+    onManifestChanged,
+    onSnapshotChanged,
+    onSelectionChanged,
+    onDirtyChanged,
+    onValidationChanged,
+    onColorSchemeChanged,
+    onFailed,
+    onConversionRequested,
+  };
+
+  const contentRef = useRef({ bytes, workspace, mode, sourceFormat, fileName });
+  contentRef.current = { bytes, workspace, mode, sourceFormat, fileName };
+
   useImperativeHandle(forwardedRef, () => ({
     canExecuteCommand: (command) => viewRef.current?.canExecuteCommand(command) ?? false,
     executeCommand: (command, file) =>
@@ -125,6 +162,8 @@ function MdzipWorkspace({
     focus: () => viewRef.current?.focus()
   }), []);
 
+  const firstCreateRef = useRef(true);
+
   useEffect(() => {
     if (!ref.current) return;
     const view = new MdzipWorkspaceView(ref.current, {
@@ -133,41 +172,46 @@ function MdzipWorkspace({
       initialColorScheme,
       navigationMode,
       navigationButtonActive,
-      onChanged: (bytes, snapshot) => onChanged?.({ bytes, snapshot }),
-      onSaved: (bytes, snapshot) => onSaved?.({ bytes, snapshot }),
-      onWorkspaceChanged,
-      onDocumentChanged,
-      onAssetChanged,
-      onManifestChanged,
-      onSnapshotChanged,
-      onSelectionChanged,
-      onDirtyChanged,
-      onValidationChanged,
-      onColorSchemeChanged,
-      onFailed: (e) => onFailed?.(e),
-      onConversionRequested,
+      onChanged: (bytes, snapshot) => callbacksRef.current.onChanged?.({ bytes, snapshot }),
+      onSaved: (bytes, snapshot) => callbacksRef.current.onSaved?.({ bytes, snapshot }),
+      onWorkspaceChanged: (event) => callbacksRef.current.onWorkspaceChanged?.(event),
+      onDocumentChanged: (event) => callbacksRef.current.onDocumentChanged?.(event),
+      onAssetChanged: (event) => callbacksRef.current.onAssetChanged?.(event),
+      onManifestChanged: (event) => callbacksRef.current.onManifestChanged?.(event),
+      onSnapshotChanged: (snapshot) => callbacksRef.current.onSnapshotChanged?.(snapshot),
+      onSelectionChanged: (snapshot) => callbacksRef.current.onSelectionChanged?.(snapshot),
+      onDirtyChanged: (snapshot) => callbacksRef.current.onDirtyChanged?.(snapshot),
+      onValidationChanged: (snapshot) => callbacksRef.current.onValidationChanged?.(snapshot),
+      onColorSchemeChanged: (colorScheme) => callbacksRef.current.onColorSchemeChanged?.(colorScheme),
+      onFailed: (e) => callbacksRef.current.onFailed?.(e),
+      // A hook returning false falls back to the built-in dialog, same as no
+      // hook at all, so the always-present delegate is behavior-preserving.
+      onConversionRequested: (action) => callbacksRef.current.onConversionRequested?.(action) ?? false,
     });
     viewRef.current = view;
+    if (firstCreateRef.current) {
+      // Initial open is handled by the content effect below.
+      firstCreateRef.current = false;
+    } else {
+      const content = contentRef.current;
+      const openOptions = {
+        mode: content.mode,
+        sourceFormat: content.sourceFormat,
+        fileName: content.fileName,
+      };
+      if (content.workspace) {
+        void view.openWorkspace(content.workspace, openOptions);
+      } else if (content.bytes) {
+        void view.open(content.bytes, openOptions);
+      }
+    }
     return () => { view.destroy(); viewRef.current = null; };
   }, [
     controls,
     initialLayout,
     initialColorScheme,
     navigationMode,
-    navigationButtonActive,
-    onChanged,
-    onSaved,
-    onWorkspaceChanged,
-    onDocumentChanged,
-    onAssetChanged,
-    onManifestChanged,
-    onSnapshotChanged,
-    onSelectionChanged,
-    onDirtyChanged,
-    onValidationChanged,
-    onColorSchemeChanged,
-    onFailed,
-    onConversionRequested
+    navigationButtonActive
   ]);
 
   useEffect(() => {

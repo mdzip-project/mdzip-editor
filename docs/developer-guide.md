@@ -1,6 +1,6 @@
 # MDZip Editor Developer Guide
 
-`mdzip-editor` can run as a complete standalone editor or as an embedded
+`@mdzip/editor` can run as a complete standalone editor or as an embedded
 workspace inside a larger web or desktop application. The same workspace view
 is available through the raw browser API and the Angular, React, and Vue
 wrappers.
@@ -8,7 +8,7 @@ wrappers.
 ## Packages
 
 ```sh
-npm install mdzip-editor
+npm install @mdzip/editor
 ```
 
 Install the wrapper for your framework when needed:
@@ -124,7 +124,7 @@ click-to-edit title behavior.
 ## Raw Browser API
 
 ```ts
-import { MdzipWorkspaceView } from 'mdzip-editor';
+import { MdzipWorkspaceView } from '@mdzip/editor';
 
 const container = document.querySelector<HTMLElement>('#editor')!;
 const view = new MdzipWorkspaceView(container, {
@@ -268,12 +268,12 @@ Supported commands are `bold`, `italic`, `strikethrough`, `paragraph`,
 ## Angular
 
 ```ts
-import { Component, ViewChild } from '@angular/core';
+import { Component } from '@angular/core';
 import { MdzipWorkspaceComponent } from '@mdzip/editor-ng';
 import type {
   MdzipControlPolicy,
   MdzipWorkspaceChange
-} from 'mdzip-editor';
+} from '@mdzip/editor';
 
 const editorControls: MdzipControlPolicy = {
   preset: 'hosted-editor',
@@ -285,6 +285,7 @@ const editorControls: MdzipControlPolicy = {
   standalone: true,
   imports: [MdzipWorkspaceComponent],
   template: `
+    <button (click)="bold(workspace)">Bold</button>
     <mdzip-workspace
       #workspace
       class="editor-host"
@@ -301,12 +302,11 @@ const editorControls: MdzipControlPolicy = {
   styles: [`.editor-host { display: block; height: 100vh; }`]
 })
 export class EditorPage {
-  @ViewChild('workspace') workspace?: MdzipWorkspaceComponent;
   bytes: Uint8Array | null = null;
   controls = editorControls;
 
-  bold(): void {
-    void this.workspace?.executeCommand('bold');
+  bold(workspace: MdzipWorkspaceComponent): void {
+    void workspace.executeCommand('bold');
   }
 
   onChanged(event: MdzipWorkspaceChange): void {
@@ -321,10 +321,12 @@ export class EditorPage {
 
 Angular accepts either `[bytes]` or `[workspace]`. Its public component methods
 include `flush()`, `serialize()`, `getCurrentSnapshot()`, `markPersisted()`,
-and the asset operations. Outputs include `changed`, `saved`,
-`workspaceChanged`, `documentChanged`, `assetChanged`, `manifestChanged`,
-`snapshotChanged`, `selectionChanged`, `dirtyChanged`, `validationChanged`,
-`colorSchemeChanged`, and `failed`.
+and the asset operations, all callable through a template reference variable as
+above or through a view query (`viewChild.required(MdzipWorkspaceComponent)` or
+the classic `@ViewChild` decorator) when no template event is involved. Outputs
+include `changed`, `saved`, `workspaceChanged`, `documentChanged`,
+`assetChanged`, `manifestChanged`, `snapshotChanged`, `selectionChanged`,
+`dirtyChanged`, `validationChanged`, `colorSchemeChanged`, and `failed`.
 
 ## React
 
@@ -334,7 +336,7 @@ import {
   MdzipWorkspace,
   type MdzipWorkspaceHandle
 } from '@mdzip/editor-react';
-import type { MdzipControlPolicy } from 'mdzip-editor';
+import type { MdzipControlPolicy } from '@mdzip/editor';
 
 const controls: MdzipControlPolicy = {
   preset: 'hosted-editor',
@@ -376,7 +378,7 @@ frequently rendering parents to avoid unnecessary wrapper recreation.
 import { ref } from 'vue';
 import { MdzipWorkspace } from '@mdzip/editor-vue';
 import type { MdzipWorkspaceExposed } from '@mdzip/editor-vue';
-import type { MdzipControlPolicy } from 'mdzip-editor';
+import type { MdzipControlPolicy } from '@mdzip/editor';
 
 defineProps<{ bytes: Uint8Array }>();
 const workspace = ref<MdzipWorkspaceExposed | null>(null);
@@ -440,7 +442,7 @@ keyboard shortcuts. The raw view exposes `flush()`, `serialize()`, and
 is supplied, it uses the exported `defaultSafeMarkdownRenderer`:
 
 ```ts
-import { MdzipRenderingService } from 'mdzip-editor';
+import { MdzipRenderingService } from '@mdzip/editor';
 
 const rendering = new MdzipRenderingService();
 const result = rendering.render({
@@ -459,7 +461,7 @@ preview surfaces when the source may not be trusted.
 The renderer is also exported for direct use:
 
 ```ts
-import { defaultSafeMarkdownRenderer } from 'mdzip-editor';
+import { defaultSafeMarkdownRenderer } from '@mdzip/editor';
 
 const html = defaultSafeMarkdownRenderer.render(markdown);
 ```
@@ -473,7 +475,7 @@ constructor:
 import {
   MdzipRenderingService,
   type MdzipMarkdownRenderer
-} from 'mdzip-editor';
+} from '@mdzip/editor';
 import { marked } from 'marked';
 import DOMPurify from 'isomorphic-dompurify';
 
@@ -503,7 +505,7 @@ The `options` parameter in the renderer interface is available for custom
 renderer implementations:
 
 ```ts
-import { defaultSafeMarkdownRenderer } from 'mdzip-editor';
+import { defaultSafeMarkdownRenderer } from '@mdzip/editor';
 
 const customRenderer: MdzipMarkdownRenderer = {
   render(markdown, options) {
