@@ -8,6 +8,9 @@ import type {
   MdzipDocumentChangeEvent,
   MdzipEditorCommand,
   MdzipEditorSnapshot,
+  MdzipEntryRenderer,
+  MdzipMarkdownRenderExtension,
+  MdzipMarkdownRenderer,
   MdzipNavigationMode,
   MdzipRemoveAssetOptions,
   MdzipSourceFormat,
@@ -19,6 +22,19 @@ import type {
   MdzWorkspace,
   MdzWorkspaceAsset,
 } from '@mdzip/editor';
+
+// Identity-insensitive key for the rendering props: extensions and entry
+// renderers are diffed by their stable name/id (and priority), so inline
+// array literals with equivalent contents never trigger an update.
+function renderingConfigKey(
+  extensions: readonly MdzipMarkdownRenderExtension[] | undefined,
+  entryRenderers: readonly MdzipEntryRenderer[] | undefined
+): string {
+  return JSON.stringify([
+    (extensions ?? []).map((extension) => extension.name),
+    (entryRenderers ?? []).map((renderer) => [renderer.id, renderer.priority ?? 0]),
+  ]);
+}
 
 export interface MdzipWorkspaceProps {
   bytes?: Uint8Array | null;
@@ -48,6 +64,16 @@ export interface MdzipWorkspaceProps {
    * to take over (the built-in conversion dialog is suppressed).
    */
   onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
+  /**
+   * Custom markdown renderer. Keep the reference stable (module scope or
+   * useMemo): identity changes apply via a cheap preview re-render, never a
+   * workspace rebuild.
+   */
+  markdownRenderer?: MdzipMarkdownRenderer;
+  /** Markdown pipeline extensions, diffed by `name` — inline arrays are safe. */
+  markdownExtensions?: readonly MdzipMarkdownRenderExtension[];
+  /** Entry renderers, diffed by `id`/`priority` — inline arrays are safe. */
+  entryRenderers?: readonly MdzipEntryRenderer[];
 }
 
 export interface MdzipWorkspaceHandle {
@@ -94,6 +120,9 @@ function MdzipWorkspace({
   onColorSchemeChanged,
   onFailed,
   onConversionRequested,
+  markdownRenderer,
+  markdownExtensions,
+  entryRenderers,
 }, forwardedRef) {
   const ref = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MdzipWorkspaceView | null>(null);
@@ -134,6 +163,12 @@ function MdzipWorkspace({
 
   const contentRef = useRef({ bytes, workspace, mode, sourceFormat, fileName });
   contentRef.current = { bytes, workspace, mode, sourceFormat, fileName };
+
+  // Latest rendering props, read at view-create and apply time so prop
+  // identity changes alone never rebuild the workspace view.
+  const renderingRef = useRef({ markdownRenderer, markdownExtensions, entryRenderers });
+  renderingRef.current = { markdownRenderer, markdownExtensions, entryRenderers };
+  const renderingKey = renderingConfigKey(markdownExtensions, entryRenderers);
 
   useImperativeHandle(forwardedRef, () => ({
     canExecuteCommand: (command) => viewRef.current?.canExecuteCommand(command) ?? false,
@@ -187,6 +222,9 @@ function MdzipWorkspace({
       // A hook returning false falls back to the built-in dialog, same as no
       // hook at all, so the always-present delegate is behavior-preserving.
       onConversionRequested: (action) => callbacksRef.current.onConversionRequested?.(action) ?? false,
+      markdownRenderer: renderingRef.current.markdownRenderer,
+      markdownExtensions: renderingRef.current.markdownExtensions,
+      entryRenderers: renderingRef.current.entryRenderers,
     });
     viewRef.current = view;
     if (firstCreateRef.current) {
@@ -221,6 +259,20 @@ function MdzipWorkspace({
       void viewRef.current.open(bytes, { mode, sourceFormat, fileName });
     }
   }, [bytes, workspace, mode, sourceFormat, fileName]);
+
+  // Rendering config updates apply in place — never a view rebuild. Arrays
+  // re-apply only when their name/id key changes; the renderer re-applies on
+  // identity change (a cheap preview re-render).
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.setRenderingOptions({
+      markdownRenderer: renderingRef.current.markdownRenderer ?? null,
+      markdownExtensions: renderingRef.current.markdownExtensions ?? [],
+      entryRenderers: renderingRef.current.entryRenderers ?? [],
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markdownRenderer, renderingKey]);
 
   return <div ref={ref} style={{ height: '100%', overflow: 'hidden' }} />;
 });

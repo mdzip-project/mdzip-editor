@@ -7,6 +7,9 @@ import type {
   MdzipConversionAction,
   MdzipEditorSnapshot,
   MdzipEditorCommand,
+  MdzipEntryRenderer,
+  MdzipMarkdownRenderExtension,
+  MdzipMarkdownRenderer,
   MdzipWorkspaceLayout,
   MdzipWorkspaceMode,
   MdzipNavigationMode,
@@ -16,6 +19,19 @@ import type {
   MdzWorkspaceAsset,
   MdzipWorkspaceSnapshot,
 } from '@mdzip/editor';
+
+// Identity-insensitive key for the rendering props: extensions and entry
+// renderers are diffed by their stable name/id (and priority), so inline
+// array bindings with equivalent contents never trigger an update.
+function renderingConfigKey(
+  extensions: readonly MdzipMarkdownRenderExtension[],
+  entryRenderers: readonly MdzipEntryRenderer[]
+): string {
+  return JSON.stringify([
+    extensions.map((extension) => extension.name),
+    entryRenderers.map((renderer) => [renderer.id, renderer.priority ?? 0]),
+  ]);
+}
 
 export interface MdzipWorkspaceExposed {
   canExecuteCommand(command: MdzipEditorCommand): boolean;
@@ -63,6 +79,24 @@ export const MdzipWorkspace = defineComponent({
     onConversionRequested: {
       type: Function as PropType<(action: MdzipConversionAction) => boolean | Promise<boolean>>,
       default: undefined
+    },
+    /**
+     * Custom markdown renderer. Keep the reference stable: identity changes
+     * apply via a cheap preview re-render, never a workspace rebuild.
+     */
+    markdownRenderer: {
+      type: Object as PropType<MdzipMarkdownRenderer | null>,
+      default: null
+    },
+    /** Markdown pipeline extensions, diffed by `name`. */
+    markdownExtensions: {
+      type: Array as PropType<readonly MdzipMarkdownRenderExtension[]>,
+      default: () => []
+    },
+    /** Entry renderers, diffed by `id`/`priority`. */
+    entryRenderers: {
+      type: Array as PropType<readonly MdzipEntryRenderer[]>,
+      default: () => []
     },
   },
   emits: [
@@ -133,6 +167,9 @@ export const MdzipWorkspace = defineComponent({
         onColorSchemeChanged: (colorScheme: MdzipColorScheme) => emit('colorSchemeChanged', colorScheme),
         onFailed: (e: unknown) => emit('failed', e),
         onConversionRequested: props.onConversionRequested,
+        markdownRenderer: props.markdownRenderer ?? undefined,
+        markdownExtensions: props.markdownExtensions,
+        entryRenderers: props.entryRenderers,
       });
       if (props.workspace) {
         void view.openWorkspace(props.workspace, {
@@ -181,6 +218,26 @@ export const MdzipWorkspace = defineComponent({
     ], () => {
       createView();
     }, { immediate: false });
+
+    // Rendering config updates apply in place — never a view rebuild. Arrays
+    // re-apply only when their name/id key changes; the renderer re-applies
+    // on identity change (a cheap preview re-render).
+    watch(
+      () => [
+        props.markdownRenderer,
+        renderingConfigKey(props.markdownExtensions, props.entryRenderers)
+      ] as const,
+      ([renderer, key], previous) => {
+        if (previous && renderer === previous[0] && key === previous[1]) {
+          return;
+        }
+        view?.setRenderingOptions({
+          markdownRenderer: renderer ?? null,
+          markdownExtensions: props.markdownExtensions,
+          entryRenderers: props.entryRenderers,
+        });
+      }
+    );
 
     onUnmounted(() => { view?.destroy(); view = null; });
 

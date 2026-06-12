@@ -68,6 +68,13 @@ The parent element must have an explicit height. The component expands to fill i
 | `initialColorScheme` | `MdzipColorScheme` | — | `'light'` or `'dark'` |
 | `navigationMode` | `MdzipNavigationMode` | `'editor'` | Package navigation mode |
 | `navigationButtonActive` | `boolean` | `true` | Whether the navigation button is shown |
+| `markdownRenderer` | `MdzipMarkdownRenderer \| null` | `null` | Custom markdown renderer (keep the reference stable) |
+| `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — inline arrays are safe |
+| `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — inline arrays are safe |
+
+Rendering prop changes apply in place — they never recreate the workspace
+view. See the `@mdzip/editor` Rendering Extensibility docs for the contracts
+and lifecycle rules.
 
 ## Events
 

@@ -40,6 +40,7 @@ import { MD_MARKDOWN_ICON, type LucideIconNode } from './icons/md-markdown.js';
 import type {
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
+  MdzipPathType,
   MdzipRemoveAssetOptions,
   MdzipWorkspaceOpenOptions
 } from './workspace.js';
@@ -58,8 +59,20 @@ import {
   isMdzipManifestPath,
   resolveMdzipArchiveLinkTarget,
   renderMdzipPreviewHtml,
+  rewriteMdzipImageSources,
   type MdzipNavNode
 } from './workspace-view.js';
+import {
+  MdzipRenderingService,
+  defaultSafeMarkdownRenderer,
+  type MdzipEntryRenderContext,
+  type MdzipEntryRenderHandle,
+  type MdzipEntryRenderer,
+  type MdzipMarkdownRenderContext,
+  type MdzipMarkdownRenderer,
+  type MdzipMarkdownRenderExtension,
+  type MdzipRenderHandle
+} from './rendering.js';
 import { WORKSPACE_CSS } from './view-css.js';
 import type { MdzipWorkspaceSnapshot } from './workspace.js';
 
@@ -67,6 +80,10 @@ const STYLE_ATTR = 'data-mdzip-ws-styles';
 
 const IMAGE_EXTENSIONS = /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|tiff?)$/i;
 const isImageFile = (path: string) => IMAGE_EXTENSIONS.test(path);
+
+function isThenable<T>(value: T | Promise<T> | void): value is Promise<T> {
+  return typeof (value as { then?: unknown } | null | undefined)?.then === 'function';
+}
 
 const NAV_ICON_CLASS = 'nav-lucide-icon';
 const TOOLBAR_ICON_CLASS = 'toggle-icon';
@@ -284,6 +301,31 @@ export interface MdzipWorkspaceViewOptions {
    * the error is reported via `onFailed` and the built-in dialog is shown.
    */
   onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
+  /**
+   * Replaces the default markdown renderer. Output is sanitized by the
+   * pipeline unless the renderer declares `sanitizesOutput`. May render
+   * asynchronously; stale results are dropped when the selection moves on.
+   */
+  markdownRenderer?: MdzipMarkdownRenderer;
+  /**
+   * Composable extensions over the markdown pipeline (transformMarkdown,
+   * transformHtml, mount). Sanitization stays in the pipeline.
+   */
+  markdownExtensions?: readonly MdzipMarkdownRenderExtension[];
+  /**
+   * Entry renderers that can claim the full pane stack for selected archive
+   * entries. First match by descending priority wins; built-in rendering is
+   * the fallback. Handles are destroyed on selection change and destroy().
+   */
+  entryRenderers?: readonly MdzipEntryRenderer[];
+}
+
+/** Options accepted by {@link MdzipWorkspaceView.setRenderingOptions}. */
+export interface MdzipRenderingOptions {
+  /** Pass `null` to restore the default renderer. */
+  markdownRenderer?: MdzipMarkdownRenderer | null;
+  markdownExtensions?: readonly MdzipMarkdownRenderExtension[];
+  entryRenderers?: readonly MdzipEntryRenderer[];
 }
 
 const ALL_HEADINGS: MdzipHeadingLevel[] = [1, 2, 3, 4, 5, 6];
@@ -725,6 +767,36 @@ export class MdzipWorkspaceView {
   private updatingCm = false;
   private syncing = false;
 
+  private markdownRenderer?: MdzipMarkdownRenderer;
+  private markdownExtensions: readonly MdzipMarkdownRenderExtension[] = [];
+  private entryRenderers: readonly MdzipEntryRenderer[] = [];
+  private renderingService = new MdzipRenderingService();
+  // Preview render memo: the preview pipeline only re-runs when one of these
+  // inputs actually changed, so unrelated snapshot renders (dialogs, nav,
+  // layout toggles) never reset preview DOM or re-run extension mounts.
+  private previewMemo: {
+    path: string;
+    pathType: MdzipPathType;
+    text: string;
+    colorScheme: MdzipColorScheme;
+    images: Map<string, string>;
+  } | null = null;
+  private previewGeneration = 0;
+  private previewAbort: AbortController | null = null;
+  private previewHandles: MdzipRenderHandle[] = [];
+  private entryState: {
+    key: string;
+    renderer: MdzipEntryRenderer;
+    handle: MdzipEntryRenderHandle | null;
+    abort: AbortController;
+    lastColorScheme: MdzipColorScheme;
+    lastManifest: unknown;
+  } | null = null;
+  // Negative match cache: with only non-matching renderers registered,
+  // matches() does not re-run on every snapshot render of the same entry.
+  private entryMatchMissKey: string | null = null;
+  private entryGeneration = 0;
+
   private readonly elRoot: HTMLElement;
   private readonly elDocumentStrip: HTMLElement;
   private readonly elToolbar: HTMLElement;
@@ -757,6 +829,7 @@ export class MdzipWorkspaceView {
   private readonly elSplitResizer: HTMLElement;
   private readonly elPreviewPane: HTMLElement;
   private readonly elPreviewContent: HTMLElement;
+  private readonly elEntryPane: HTMLElement;
   private readonly elTitleDialog: HTMLElement;
   private readonly elTitleInput: HTMLInputElement;
   private readonly elTitleValidation: HTMLElement;
@@ -789,6 +862,13 @@ export class MdzipWorkspaceView {
         ? 'dark'
         : 'light');
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
+    this.markdownRenderer = options.markdownRenderer;
+    this.markdownExtensions = options.markdownExtensions ?? [];
+    this.entryRenderers = options.entryRenderers ?? [];
+    this.renderingService = new MdzipRenderingService(
+      this.markdownRenderer ?? defaultSafeMarkdownRenderer,
+      this.markdownExtensions
+    );
     injectStyles(container.ownerDocument);
     container.replaceChildren();
     container.innerHTML = SHELL_HTML;
@@ -828,6 +908,7 @@ export class MdzipWorkspaceView {
     this.elSplitResizer = q('[data-ref="split-resizer"]');
     this.elPreviewPane = q('[data-ref="preview-pane"]');
     this.elPreviewContent = q('[data-ref="preview-content"]');
+    this.elEntryPane = q('[data-ref="entry-pane"]');
     this.elTitleDialog = q('[data-ref="title-dialog"]');
     this.elTitleInput = q('[data-ref="title-input"]');
     this.elTitleValidation = q('[data-ref="title-validation"]');
@@ -868,6 +949,7 @@ export class MdzipWorkspaceView {
 
   public async openArchive(bytes: Uint8Array, options: MdzipWorkspaceOpenOptions = {}): Promise<void> {
     this.unsub?.();
+    this.resetRenderingState();
     this.cmEditor?.destroy();
     this.cmEditor = null;
     this.workspace = null;
@@ -923,6 +1005,7 @@ export class MdzipWorkspaceView {
    */
   public async openWorkspace(workspace: MdzWorkspace, options: MdzipWorkspaceOpenOptions = {}): Promise<void> {
     this.unsub?.();
+    this.resetRenderingState();
     this.cmEditor?.destroy();
     this.cmEditor = null;
     this.workspace = null;
@@ -1053,6 +1136,8 @@ export class MdzipWorkspaceView {
     } catch {
       // Ignore subscription cleanup errors
     }
+    this.resetPreviewState();
+    this.teardownEntryRenderer();
     try {
       this.cmEditor?.destroy();
     } catch {
@@ -1063,6 +1148,363 @@ export class MdzipWorkspaceView {
     } catch {
       // Ignore DOM cleanup errors
     }
+  }
+
+  /**
+   * Replaces the rendering configuration without recreating the view (and
+   * therefore without re-opening the workspace). Wrappers call this when
+   * renderer props change; the cost is one preview re-render and entry
+   * renderer re-match.
+   */
+  public setRenderingOptions(options: MdzipRenderingOptions): void {
+    if ('markdownRenderer' in options) {
+      this.markdownRenderer = options.markdownRenderer ?? undefined;
+    }
+    if (options.markdownExtensions) {
+      this.markdownExtensions = options.markdownExtensions;
+    }
+    if (options.entryRenderers) {
+      this.entryRenderers = options.entryRenderers;
+    }
+    this.renderingService = new MdzipRenderingService(
+      this.markdownRenderer ?? defaultSafeMarkdownRenderer,
+      this.markdownExtensions
+    );
+    this.resetPreviewState();
+    this.teardownEntryRenderer();
+    this.entryMatchMissKey = null;
+    this.render();
+  }
+
+  /**
+   * Tears down all custom rendering state: aborts in-flight renders, destroys
+   * mounted extension and entry renderer handles, and clears memo caches.
+   * Used when the workspace is replaced or the view is destroyed.
+   */
+  private resetRenderingState(): void {
+    this.resetPreviewState();
+    this.teardownEntryRenderer();
+    this.entryMatchMissKey = null;
+  }
+
+  private resetPreviewState(): void {
+    this.previewAbort?.abort();
+    this.previewAbort = null;
+    this.previewGeneration += 1;
+    this.destroyPreviewHandles();
+    this.previewMemo = null;
+  }
+
+  private destroyPreviewHandles(): void {
+    const handles = this.previewHandles;
+    this.previewHandles = [];
+    for (const handle of handles) {
+      try {
+        handle.destroy();
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+    }
+  }
+
+  private updatePreview(snapshot: MdzipWorkspaceSnapshot, entryClaimed: boolean): void {
+    if (entryClaimed) {
+      // The entry renderer owns the pane stack; release preview resources so
+      // a later fallback re-renders from scratch.
+      if (this.previewMemo || this.previewHandles.length > 0 || this.previewAbort) {
+        this.resetPreviewState();
+        this.elPreviewContent.replaceChildren();
+      }
+      return;
+    }
+
+    const images = snapshot.content.images;
+    const memo = this.previewMemo;
+    if (memo
+      && memo.path === snapshot.currentPath
+      && memo.pathType === snapshot.currentPathType
+      && memo.text === snapshot.currentText
+      && memo.colorScheme === this.colorScheme
+      && (memo.images === images || (memo.images.size === 0 && images.size === 0))) {
+      // Nothing that feeds the preview changed; keep the existing DOM and any
+      // mounted extension handles.
+      return;
+    }
+
+    this.previewAbort?.abort();
+    this.previewAbort = null;
+    this.destroyPreviewHandles();
+    const generation = ++this.previewGeneration;
+    this.previewMemo = {
+      path: snapshot.currentPath,
+      pathType: snapshot.currentPathType,
+      text: snapshot.currentText,
+      colorScheme: this.colorScheme,
+      images
+    };
+
+    if (snapshot.currentPathType !== 'markdown') {
+      this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+      return;
+    }
+
+    const abort = new AbortController();
+    this.previewAbort = abort;
+    const context = this.createMarkdownContext(snapshot, abort.signal, images);
+    const rewritten = rewriteMdzipImageSources(snapshot.currentText, images);
+
+    let result: string | Promise<string>;
+    try {
+      result = this.renderingService.renderMarkdown(rewritten, context);
+    } catch (error) {
+      this.options.onFailed?.(error);
+      this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+      return;
+    }
+
+    if (typeof result === 'string') {
+      // Sync fast path: no microtask hop when every pipeline stage is sync.
+      this.applyPreviewHtml(result, context, generation);
+      return;
+    }
+
+    void result.then((html) => {
+      if (generation !== this.previewGeneration || abort.signal.aborted) {
+        return; // Stale: the selection or content moved on while rendering.
+      }
+      this.applyPreviewHtml(html, context, generation);
+    }).catch((error) => {
+      if (generation !== this.previewGeneration || abort.signal.aborted) {
+        return;
+      }
+      if ((error as { name?: string } | null)?.name !== 'AbortError') {
+        this.options.onFailed?.(error);
+      }
+    });
+  }
+
+  private applyPreviewHtml(
+    html: string,
+    context: MdzipMarkdownRenderContext,
+    generation: number
+  ): void {
+    this.elPreviewContent.innerHTML = html;
+    for (const extension of this.markdownExtensions) {
+      if (!extension.mount) {
+        continue;
+      }
+      try {
+        const mounted = extension.mount(this.elPreviewContent, context);
+        if (isThenable(mounted)) {
+          void Promise.resolve(mounted).then((handle) => {
+            if (!handle) {
+              return;
+            }
+            if (generation !== this.previewGeneration) {
+              try {
+                handle.destroy();
+              } catch {
+                // Stale handle cleanup failure is not actionable.
+              }
+              return;
+            }
+            this.previewHandles.push(handle);
+          }).catch((error) => {
+            if (generation === this.previewGeneration) {
+              this.options.onFailed?.(error);
+            }
+          });
+        } else if (mounted) {
+          this.previewHandles.push(mounted);
+        }
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+    }
+  }
+
+  private createMarkdownContext(
+    snapshot: MdzipWorkspaceSnapshot,
+    signal: AbortSignal,
+    images: Map<string, string>
+  ): MdzipMarkdownRenderContext {
+    return {
+      currentPath: snapshot.currentPath,
+      sourceFormat: snapshot.sourceFormat,
+      colorScheme: this.colorScheme,
+      mode: snapshot.mode,
+      manifest: snapshot.content.manifest,
+      assetResolver: {
+        resolveAssetUrl: (path: string) =>
+          images.get(path) ?? images.get(path.replace(/^\.\//, ''))
+      },
+      signal
+    };
+  }
+
+  /**
+   * Entry renderer lifecycle. Renders are keyed by
+   * (path, pathType, mode, sourceFormat): same key keeps the mounted handle
+   * (calling `update()` when colorScheme or manifest changed), a changed key
+   * destroys it and re-runs matching. Rename/move/delete of the backing entry
+   * changes the path and is therefore handled as a selection change.
+   */
+  private syncEntryRenderer(snapshot: MdzipWorkspaceSnapshot): boolean {
+    if (this.entryRenderers.length === 0) {
+      return false;
+    }
+    const matchKey = [
+      snapshot.currentPath,
+      snapshot.currentPathType,
+      snapshot.mode,
+      snapshot.sourceFormat
+    ].join(' ');
+
+    if (this.entryState?.key === matchKey) {
+      this.maybeUpdateEntryRenderer(snapshot);
+      return true;
+    }
+    if (this.entryState) {
+      this.teardownEntryRenderer();
+    }
+    if (this.entryMatchMissKey === matchKey) {
+      return false;
+    }
+
+    const abort = new AbortController();
+    const context = this.createEntryContext(snapshot, abort.signal);
+    const renderer = this.matchEntryRenderer(context);
+    if (!renderer) {
+      this.entryMatchMissKey = matchKey;
+      return false;
+    }
+    this.entryMatchMissKey = null;
+
+    const generation = ++this.entryGeneration;
+    const state = {
+      key: matchKey,
+      renderer,
+      handle: null as MdzipEntryRenderHandle | null,
+      abort,
+      lastColorScheme: this.colorScheme,
+      lastManifest: snapshot.content.manifest as unknown
+    };
+    this.entryState = state;
+    this.elEntryPane.replaceChildren();
+
+    try {
+      const mounted = renderer.mount(this.elEntryPane, context);
+      if (isThenable(mounted)) {
+        void Promise.resolve(mounted).then((handle) => {
+          if (this.entryGeneration !== generation || this.entryState !== state) {
+            // Stale mount: the selection moved on while mounting.
+            try {
+              handle?.destroy();
+            } catch {
+              // Stale handle cleanup failure is not actionable.
+            }
+            return;
+          }
+          state.handle = handle ?? null;
+        }).catch((error) => {
+          if (this.entryGeneration === generation) {
+            this.options.onFailed?.(error);
+          }
+        });
+      } else {
+        state.handle = mounted ?? null;
+      }
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+    return true;
+  }
+
+  private maybeUpdateEntryRenderer(snapshot: MdzipWorkspaceSnapshot): void {
+    const state = this.entryState;
+    if (!state) {
+      return;
+    }
+    const manifest = snapshot.content.manifest as unknown;
+    if (state.lastColorScheme === this.colorScheme && state.lastManifest === manifest) {
+      return;
+    }
+    state.lastColorScheme = this.colorScheme;
+    state.lastManifest = manifest;
+    if (!state.handle?.update) {
+      return;
+    }
+    const context = this.createEntryContext(snapshot, state.abort.signal);
+    try {
+      const result = state.handle.update(context);
+      if (isThenable(result)) {
+        void Promise.resolve(result).catch((error) => this.options.onFailed?.(error));
+      }
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private matchEntryRenderer(context: MdzipEntryRenderContext): MdzipEntryRenderer | null {
+    const byPriority = [...this.entryRenderers]
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+    for (const renderer of byPriority) {
+      try {
+        if (renderer.matches(context)) {
+          return renderer;
+        }
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+    }
+    return null;
+  }
+
+  private teardownEntryRenderer(): void {
+    const active = this.entryState;
+    if (!active) {
+      return;
+    }
+    this.entryState = null;
+    this.entryGeneration += 1;
+    active.abort.abort();
+    try {
+      active.handle?.destroy();
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+    this.elEntryPane.replaceChildren();
+  }
+
+  private createEntryContext(
+    snapshot: MdzipWorkspaceSnapshot,
+    signal: AbortSignal
+  ): MdzipEntryRenderContext {
+    const workspace = this.workspace;
+    const path = snapshot.currentPath;
+    return {
+      path,
+      pathType: snapshot.currentPathType,
+      mode: snapshot.mode,
+      sourceFormat: snapshot.sourceFormat,
+      colorScheme: this.colorScheme,
+      manifest: snapshot.content.manifest,
+      snapshot,
+      signal,
+      readBytes: async () => {
+        const bytes = await workspace?.readPathBytes(path);
+        if (!bytes) {
+          throw new Error(`Cannot read bytes for "${path}".`);
+        }
+        return bytes;
+      },
+      updateManifest: async (manifest) => {
+        if (!workspace) {
+          throw new Error('Workspace is not open.');
+        }
+        await workspace.updateManifest(manifest);
+      }
+    };
   }
 
   private createCmEditor(
@@ -1161,7 +1603,9 @@ export class MdzipWorkspaceView {
     }
 
     this.layout = this.validLayoutForSnapshot(this.layout, snapshot);
-    const canEdit = canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, snapshot.mode);
+    const entryClaimed = this.syncEntryRenderer(snapshot);
+    const canEdit = !entryClaimed
+      && canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, snapshot.mode);
     const canShowSource = canShowSourceLayout(snapshot);
     const showNavigationControl = this.controlPolicy.navigation;
     const showTitleControl = this.controlPolicy.title.visible;
@@ -1285,15 +1729,17 @@ export class MdzipWorkspaceView {
       });
     }
 
-    this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+    this.updatePreview(snapshot, entryClaimed);
 
     const pt = snapshot.currentPathType;
-    const showEdit = (pt === 'markdown' || pt === 'text') && this.layout !== 'preview';
-    const showPreview = pt === 'image' || pt === 'binary' || pt === 'text'
-      || (pt === 'markdown' && this.layout !== 'source');
+    const showEdit = !entryClaimed && (pt === 'markdown' || pt === 'text') && this.layout !== 'preview';
+    const showPreview = !entryClaimed && (pt === 'image' || pt === 'binary' || pt === 'text'
+      || (pt === 'markdown' && this.layout !== 'source'));
     this.elEditPane.classList.toggle('active', showEdit);
     this.elPreviewPane.classList.toggle('active', showPreview);
-    this.elPaneStack.classList.toggle('split-mode', this.layout === 'split');
+    this.elEntryPane.classList.toggle('active', entryClaimed);
+    this.elPaneStack.classList.toggle('split-mode', this.layout === 'split' && !entryClaimed);
+    this.elPaneStack.classList.toggle('entry-claimed', entryClaimed);
 
     if (!showTitleControl) {
       this.titleDialogOpen = false;
@@ -3145,6 +3591,7 @@ const SHELL_HTML = `
       <section class="pane preview-pane" data-ref="preview-pane">
         <article class="preview-content" data-ref="preview-content"></article>
       </section>
+      <section class="pane entry-pane" data-ref="entry-pane"></section>
     </div>
   </div>
 

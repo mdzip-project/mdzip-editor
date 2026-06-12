@@ -732,6 +732,16 @@ export const WORKSPACE_CSS = `
   overflow: auto;
 }
 
+.mdzip-root .entry-pane {
+  overflow: auto;
+}
+
+.mdzip-root .pane-stack.entry-claimed .edit-pane,
+.mdzip-root .pane-stack.entry-claimed .preview-pane,
+.mdzip-root .pane-stack.entry-claimed .split-resizer {
+  display: none !important;
+}
+
 .mdzip-root .edit-pane {
   overflow: hidden;
   flex-direction: column;

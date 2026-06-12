@@ -574,6 +574,13 @@ release (`@mdzip/editor@1.3.1` and wrappers at 1.3.1; the request predates
 as the canonical long-term extension boundary, with Markdown rendering as a
 specialized built-in path, per the recommendation above.
 
+Implementation status (2026-06-12): Phases 1–3 are implemented —
+`markdownRenderer`, `markdownExtensions`, and `entryRenderers` in
+`MdzipWorkspaceViewOptions` and as inputs/props on all three wrappers, with
+the async/cancellation/memoization machinery, `updateManifest()`, and
+contract tests. Phase 4 (native Angular template / React render-function /
+Vue slot ergonomics) remains the next cross-framework deliverable.
+
 ### Decisions
 
 **D1. Extension boundary.** Entry renderers are the canonical boundary;

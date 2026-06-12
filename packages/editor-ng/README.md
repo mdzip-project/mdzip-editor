@@ -69,6 +69,13 @@ The host element must have an explicit height. The component expands to fill it.
 | `initialColorScheme` | `MdzipColorScheme` | — | `'light'` or `'dark'` |
 | `navigationMode` | `MdzipNavigationMode` | `'editor'` | Package navigation mode |
 | `navigationButtonActive` | `boolean` | `true` | Whether the navigation button is shown |
+| `markdownRenderer` | `MdzipMarkdownRenderer` | — | Custom markdown renderer (keep the reference stable) |
+| `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — new array identities with the same names are safe |
+| `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — new array identities with the same ids are safe |
+
+Rendering input changes apply in place — they never recreate the workspace
+view. See the `@mdzip/editor` Rendering Extensibility docs for the contracts
+and lifecycle rules.
 
 ## Outputs
 

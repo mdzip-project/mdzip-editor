@@ -146,6 +146,41 @@ fall back to the built-in dialog.
 `MdzipRenderingService` uses `defaultSafeMarkdownRenderer` when no renderer is
 injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
 
+## Rendering Extensibility
+
+The view accepts a custom markdown renderer, composable markdown pipeline
+extensions, and entry renderers that replace the content area for selected
+archive entries — all optional, with built-in behavior as the fallback:
+
+```ts
+import { mdzipPathMatcher, type MdzipEntryRenderer } from '@mdzip/editor';
+
+const manifestRenderer: MdzipEntryRenderer = {
+  id: 'host-manifest-editor',
+  priority: 100,
+  matches: mdzipPathMatcher('manifest.json'),
+  mount: (container, context) => mountManifestEditor(container, {
+    manifest: context.manifest,
+    editable: context.mode === 'editable',
+    onChange: (manifest) => context.updateManifest(manifest)
+  })
+};
+
+const view = new MdzipWorkspaceView(container, {
+  markdownRenderer,                  // optional full renderer replacement
+  markdownExtensions: [mermaidExt],  // transformMarkdown/transformHtml/mount
+  entryRenderers: [manifestRenderer]
+});
+```
+
+Renderers may be asynchronous; stale results are dropped when the selection
+moves on. Sanitization stays in the pipeline: string output from custom
+renderers and transform hooks passes through DOMPurify before insertion. Entry
+renderer handles are destroyed on selection change and `destroy()`. The same
+options are available as inputs/props on the Angular, React, and Vue wrappers.
+See the Developer Guide's Rendering Extensibility section for the contracts
+and lifecycle rules.
+
 ## Developer Guide
 
 See the [Developer Guide](https://github.com/mdzip-project/mdzip-editor/blob/main/docs/developer-guide.md)

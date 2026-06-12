@@ -690,6 +690,34 @@ export class MdzipWorkspaceService {
     this.emit('edit', ['manifest'], 'manifest.json');
   }
 
+  /**
+   * Replaces the manifest wholesale. The provided manifest is canonicalized
+   * (`modified` refreshed, legacy fields normalized) before it is applied.
+   *
+   * Persistence mirrors {@link setManifestTitle}: with archive bytes the
+   * manifest entry is patched incrementally; without them the change stays in
+   * memory until the next serialization, and hosts holding real bytes can
+   * apply it from the `['manifest']` change event (`onManifestChanged`).
+   */
+  public async updateManifest(manifest: MdzManifest): Promise<void> {
+    this.assertEditable('update manifest');
+    if (this.sourceFormatValue !== 'mdz') {
+      throw new Error('Cannot update manifest: workspace is not an MDZ archive.');
+    }
+    this.commitPendingTextToWorkspace();
+    this.workspaceValue.manifest = MdzPackagerCore.updateManifest(manifest);
+    this.workspaceValue.title = this.workspaceValue.manifest.title ?? null;
+    if (this.archiveBytes.length > 0) {
+      await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes());
+    } else {
+      // No bytes to patch — keep the change in memory, mirroring
+      // setManifestTitle, so lazy documents are not all resolved.
+      this.contentValue = { ...this.contentValue, manifest: this.workspaceValue.manifest };
+    }
+    this.dirtyValue = true;
+    this.emit('edit', ['manifest'], 'manifest.json');
+  }
+
   public async saveToBytes(): Promise<Uint8Array> {
     this.assertEditable('save');
     const nextArchiveBytes = await this.archiveBytesWithPendingText();

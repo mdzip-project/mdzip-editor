@@ -20,6 +20,9 @@ import type {
   MdzipEditorCommand,
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
+  MdzipEntryRenderer,
+  MdzipMarkdownRenderExtension,
+  MdzipMarkdownRenderer,
   MdzipNavigationMode,
   MdzipRemoveAssetOptions,
   MdzipSourceFormat,
@@ -31,6 +34,20 @@ import type {
   MdzipWorkspaceSave,
   MdzipWorkspaceSnapshot,
 } from '@mdzip/editor';
+
+// Identity-insensitive key for the rendering inputs: extensions and entry
+// renderers are diffed by their stable name/id (and priority), so template
+// expressions that build new arrays each change-detection cycle never
+// trigger an update.
+function renderingConfigKey(
+  extensions: readonly MdzipMarkdownRenderExtension[],
+  entryRenderers: readonly MdzipEntryRenderer[]
+): string {
+  return JSON.stringify([
+    extensions.map((extension) => extension.name),
+    entryRenderers.map((renderer) => [renderer.id, renderer.priority ?? 0]),
+  ]);
+}
 
 @Component({
   selector: 'mdzip-workspace',
@@ -56,6 +73,15 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
    * conversion dialog.
    */
   @Input() onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
+  /**
+   * Custom markdown renderer. Keep the reference stable: identity changes
+   * apply via a cheap preview re-render, never a workspace rebuild.
+   */
+  @Input() markdownRenderer?: MdzipMarkdownRenderer;
+  /** Markdown pipeline extensions, diffed by `name`. */
+  @Input() markdownExtensions: readonly MdzipMarkdownRenderExtension[] = [];
+  /** Entry renderers, diffed by `id`/`priority`. */
+  @Input() entryRenderers: readonly MdzipEntryRenderer[] = [];
   @Output() readonly changed = new EventEmitter<MdzipWorkspaceChange>();
   @Output() readonly saved = new EventEmitter<MdzipWorkspaceSave>();
   @Output() readonly workspaceChanged = new EventEmitter<MdzipDocumentChangeEvent>();
@@ -71,6 +97,7 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
 
   @ViewChild('host') private readonly hostRef!: ElementRef<HTMLDivElement>;
   private view: MdzipWorkspaceView | null = null;
+  private renderingKey = '';
 
   ngAfterViewInit(): void {
     this.createView();
@@ -88,6 +115,10 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
     if (this.view && (changes['bytes'] || changes['workspace'] || changes['mode']
       || changes['sourceFormat'] || changes['fileName'])) {
       this.syncView();
+    }
+    if (this.view && (changes['markdownRenderer'] || changes['markdownExtensions']
+      || changes['entryRenderers'])) {
+      this.applyRenderingOptions(Boolean(changes['markdownRenderer']));
     }
   }
 
@@ -198,6 +229,26 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
       onConversionRequested: this.onConversionRequested
         ? (action) => this.onConversionRequested!(action)
         : undefined,
+      markdownRenderer: this.markdownRenderer,
+      markdownExtensions: this.markdownExtensions,
+      entryRenderers: this.entryRenderers,
+    });
+    this.renderingKey = renderingConfigKey(this.markdownExtensions, this.entryRenderers);
+  }
+
+  // Applies rendering input changes in place — never a view rebuild. Arrays
+  // re-apply only when their name/id key changes, so template expressions
+  // that produce new array identities each cycle are safe.
+  private applyRenderingOptions(rendererChanged: boolean): void {
+    const key = renderingConfigKey(this.markdownExtensions, this.entryRenderers);
+    if (!rendererChanged && key === this.renderingKey) {
+      return;
+    }
+    this.renderingKey = key;
+    this.view?.setRenderingOptions({
+      markdownRenderer: this.markdownRenderer ?? null,
+      markdownExtensions: this.markdownExtensions,
+      entryRenderers: this.entryRenderers,
     });
   }
 }

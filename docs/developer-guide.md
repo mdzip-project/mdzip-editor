@@ -495,32 +495,38 @@ const rendering = new MdzipRenderingService(customRenderer);
 const { html } = rendering.render({ markdown: '# Custom preview' });
 ```
 
-A custom renderer replaces the default renderer completely. The editor does not
-sanitize its return value afterward, so the custom renderer is responsible for
-escaping or sanitizing HTML before returning it. Returning unsanitized output
-from `marked`, another Markdown parser, or user-authored HTML can create an XSS
-vulnerability when the result is assigned to `innerHTML`.
+A custom renderer replaces the default renderer completely. Renderers may
+return a `Promise<string>`; the pipeline keeps a fully synchronous fast path
+when they do not.
 
-The `options` parameter in the renderer interface is available for custom
-renderer implementations:
+Sanitization depends on the entry point:
+
+- The workspace view pipeline (`markdownRenderer` in
+  `MdzipWorkspaceViewOptions`, or `MdzipRenderingService.renderMarkdown()`)
+  sanitizes the renderer's string output with the default DOMPurify policy
+  before insertion. A renderer that sanitizes internally can declare
+  `sanitizesOutput: true` to skip the duplicate pass — this is the explicit
+  bypass and should only be set when the renderer really does sanitize.
+- The legacy `MdzipRenderingService.render()` method keeps its original
+  contract: the renderer's return value is trusted as-is, so renderers used
+  that way must sanitize before returning.
+
+The renderer receives an `MdzipMarkdownRenderContext` with the current path,
+source format, color scheme, mode, manifest, an optional asset resolver, and
+an `AbortSignal` that fires when the render becomes stale:
 
 ```ts
 import { defaultSafeMarkdownRenderer } from '@mdzip/editor';
 
 const customRenderer: MdzipMarkdownRenderer = {
-  render(markdown, options) {
-    const allowHeadings = options?.['allowHeadings'] !== false;
-    const source = allowHeadings
+  render(markdown, context) {
+    const source = context?.colorScheme === 'dark'
       ? markdown
       : markdown.replace(/^\s{0,3}#{1,6}\s+/gm, '');
     return defaultSafeMarkdownRenderer.render(source);
   }
 };
 ```
-
-`MdzipRenderingService.render()` currently invokes the renderer with Markdown
-only. Applications that need per-render options can call their renderer
-directly or wrap the service with their own typed configuration.
 
 ### Archive Asset URLs
 
@@ -542,9 +548,106 @@ When the resolver returns `undefined`, the original Markdown image path is left
 unchanged. Hosts should only return URL schemes permitted by their rendering
 policy.
 
-`MdzipWorkspaceView` currently uses the default safe renderer internally and
-does not expose renderer injection through `MdzipWorkspaceViewOptions`.
-Renderer injection applies when using `MdzipRenderingService` directly.
+## Rendering Extensibility
+
+`MdzipWorkspaceView` (and every framework wrapper) accepts three rendering
+options. All are additive — with none supplied, behavior is identical to
+previous releases, and the no-extensions render path performs no extra work.
+
+```ts
+const view = new MdzipWorkspaceView(host, {
+  markdownRenderer,     // replace the markdown renderer
+  markdownExtensions,   // compose over the default pipeline
+  entryRenderers        // replace the content area for selected entries
+});
+```
+
+The view memoizes preview rendering on `(path, content, colorScheme, images)`:
+unrelated state changes (dialogs, navigation, layout toggles) never re-run the
+pipeline or reset preview DOM. Each render generation carries an
+`AbortSignal`; stale asynchronous results are dropped when the user switches
+entries or keeps typing.
+
+### Markdown Extensions
+
+Extensions compose over the default pipeline instead of replacing it:
+
+```text
+markdown -> transformMarkdown* -> renderer -> transformHtml*
+         -> sanitize -> DOM insertion -> mount*
+```
+
+```ts
+const mermaidExtension: MdzipMarkdownRenderExtension = {
+  name: 'mermaid',
+  transformHtml: (html) =>
+    html.replace(/<pre><code class="hljs language-mermaid">/g,
+      '<div class="mermaid-placeholder"><code hidden>'),
+  mount(container, context) {
+    hydrateMermaid(container.querySelectorAll('.mermaid-placeholder'), context);
+    return { destroy: () => disposeMermaid(container) };
+  }
+};
+```
+
+`transformMarkdown` and `transformHtml` output always passes through
+sanitization, so extensions cannot inject unsafe markup. The sanitizer strips
+data attributes and inline styles — use class or id markers to find
+placeholders again in `mount()`, and carry payloads out-of-band (for example
+a module-level map keyed by marker id). `mount()` runs against the live
+preview DOM and is privileged host code; handles returned from it are
+destroyed before the preview re-renders and when the view is destroyed.
+
+### Entry Renderers
+
+Entry renderers claim the full pane stack (edit and preview panes included)
+for selected archive entries. The first match by descending `priority` wins;
+without a match, built-in rendering is unchanged.
+
+```ts
+import { mdzipPathMatcher, type MdzipEntryRenderer } from '@mdzip/editor';
+
+const manifestRenderer: MdzipEntryRenderer = {
+  id: 'studio-manifest',
+  priority: 100,
+  matches: mdzipPathMatcher('manifest.json'),
+  mount(container, context) {
+    const editor = mountManifestEditor(container, {
+      manifest: context.manifest,
+      editable: context.mode === 'editable',
+      onChange: (manifest) => context.updateManifest(manifest)
+    });
+    return {
+      update: (next) => editor.setManifest(next.manifest),
+      destroy: () => editor.dispose()
+    };
+  }
+};
+```
+
+The context exposes supported operations instead of view internals:
+`readBytes()` reads the selected entry's raw bytes, and `updateManifest()`
+replaces the manifest wholesale (canonicalized) and routes through the
+workspace `'manifest'` edit event — `onManifestChanged` host-delegated
+persistence keeps working. `mdzipPathMatcher(...paths)` and
+`mdzipExtensionMatcher(...exts)` build common predicates.
+
+Lifecycle: renders are keyed by `(path, pathType, mode, sourceFormat)`. While
+the key is stable the handle stays mounted, receiving `update()` when the
+color scheme or manifest changes. A changed key — including rename, move, or
+delete of the backing entry — destroys the handle and re-runs matching.
+Asynchronous `mount()` results that arrive after the selection moved on are
+destroyed immediately instead of applied.
+
+### Framework Wrappers
+
+All three wrappers accept `markdownRenderer`, `markdownExtensions`, and
+`entryRenderers` as inputs/props with identical behavior. Renderer prop
+changes apply in place via `setRenderingOptions()` — never by recreating the
+workspace view. Extension and entry renderer arrays are diffed by their
+stable `name`/`id` (and priority), so inline array literals with equivalent
+contents are safe. Keep the `markdownRenderer` reference stable (module scope
+or `useMemo`); its identity changes apply via a cheap preview re-render.
 
 ## Theme Integration
 
