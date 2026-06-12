@@ -1,0 +1,121 @@
+import { mount } from '@vue/test-utils';
+import { h, nextTick } from 'vue';
+import { afterEach, expect, test, vi } from 'vitest';
+import type { MdzipEntryRenderContext, MdzipEntryRenderer } from '@mdzip/editor';
+
+const { MockView, viewInstances } = vi.hoisted(() => {
+  const viewInstances: MockView[] = [];
+  class MockView {
+    public readonly container: HTMLElement;
+    public readonly options: Record<string, unknown>;
+    public readonly setRenderingOptions = vi.fn();
+    public readonly open = vi.fn(async () => {});
+    public readonly openWorkspace = vi.fn(async () => {});
+    public readonly destroy = vi.fn();
+    public constructor(container: HTMLElement, options: Record<string, unknown>) {
+      this.container = container;
+      this.options = options;
+      viewInstances.push(this);
+    }
+  }
+  return { MockView, viewInstances };
+});
+
+vi.mock('@mdzip/editor', () => ({ MdzipWorkspaceView: MockView }));
+
+import { MdzipWorkspace } from '../src/index';
+
+afterEach(() => {
+  viewInstances.length = 0;
+});
+
+function entryContext(path: string, overrides: Partial<MdzipEntryRenderContext> = {}): MdzipEntryRenderContext {
+  return {
+    path,
+    pathType: 'text',
+    mode: 'editable',
+    sourceFormat: 'mdz',
+    colorScheme: 'light',
+    manifest: null,
+    snapshot: {} as MdzipEntryRenderContext['snapshot'],
+    signal: new AbortController().signal,
+    readBytes: async () => new Uint8Array(),
+    updateManifest: async () => {},
+    ...overrides
+  };
+}
+
+const explicitRenderer: MdzipEntryRenderer = {
+  id: 'explicit',
+  matches: () => false,
+  mount: () => {}
+};
+
+function latestView(): InstanceType<typeof MockView> {
+  const view = viewInstances.at(-1);
+  if (!view) throw new Error('no view created');
+  return view;
+}
+
+const manifestSlot = (params: { context: MdzipEntryRenderContext }) =>
+  params.context.path === 'manifest.json'
+    ? h('div', { class: 'entry' }, `slot:${params.context.path}:${params.context.colorScheme}`)
+    : null;
+
+test('composes explicit entry renderers with the #entry slot catch-all', () => {
+  mount(MdzipWorkspace, {
+    props: { entryRenderers: [explicitRenderer] },
+    slots: { entry: manifestSlot }
+  });
+
+  const composed = latestView().options['entryRenderers'] as MdzipEntryRenderer[];
+  expect(composed.map((renderer) => renderer.id)).toEqual(['explicit', 'mdzip-vue-entry-slot']);
+});
+
+test('slot content decides matching: empty render delegates to built-ins', () => {
+  mount(MdzipWorkspace, { slots: { entry: manifestSlot } });
+  const adapter = (latestView().options['entryRenderers'] as MdzipEntryRenderer[])[0];
+
+  expect(adapter.matches(entryContext('index.md'))).toBe(false);
+  expect(adapter.matches(entryContext('manifest.json'))).toBe(true);
+});
+
+test('slot adapter mounts, updates reactively, and unmounts', async () => {
+  mount(MdzipWorkspace, { slots: { entry: manifestSlot } });
+  const adapter = (latestView().options['entryRenderers'] as MdzipEntryRenderer[])[0];
+
+  const container = document.createElement('div');
+  const handle = adapter.mount(container, entryContext('manifest.json')) as {
+    update?: (context: MdzipEntryRenderContext) => void;
+    destroy: () => void;
+  };
+  await nextTick();
+  expect(container.textContent).toBe('slot:manifest.json:light');
+
+  handle.update?.(entryContext('manifest.json', { colorScheme: 'dark' }));
+  await nextTick();
+  expect(container.textContent).toBe('slot:manifest.json:dark');
+
+  handle.destroy();
+  await nextTick();
+  expect(container.textContent).toBe('');
+});
+
+test('inline prop identities with stable ids never recreate or re-apply', async () => {
+  const wrapper = mount(MdzipWorkspace, {
+    props: { entryRenderers: [{ ...explicitRenderer }] }
+  });
+  const view = latestView();
+
+  await wrapper.setProps({ entryRenderers: [{ ...explicitRenderer }] });
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setRenderingOptions).not.toHaveBeenCalled();
+
+  await wrapper.setProps({ entryRenderers: [{ ...explicitRenderer, id: 'changed' }] });
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
+  const applied = view.setRenderingOptions.mock.calls[0][0] as {
+    entryRenderers: MdzipEntryRenderer[];
+  };
+  expect(applied.entryRenderers.map((renderer) => renderer.id)).toEqual(['changed']);
+});

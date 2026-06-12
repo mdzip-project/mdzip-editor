@@ -649,6 +649,83 @@ stable `name`/`id` (and priority), so inline array literals with equivalent
 contents are safe. Keep the `markdownRenderer` reference stable (module scope
 or `useMemo`); its identity changes apply via a cheap preview re-render.
 
+Each wrapper additionally offers an idiomatic way to mount native framework
+content without bootstrapping the framework into an `HTMLElement` manually.
+All three adapt onto the same `MdzipEntryRenderer` contract, so matching,
+priority, fallback, lifecycle, and stale-result behavior are identical to
+collection-registered renderers. At equal priority, explicit `entryRenderers`
+win over the native catch-all.
+
+#### Angular: template directives
+
+```html
+<mdzip-workspace [bytes]="bytes" mode="editable">
+  <ng-template mdzipEntryRenderer="manifest.json" let-context>
+    <app-internals
+      [manifest]="context.manifest"
+      [editable]="context.mode === 'editable'"
+      (manifestChange)="context.updateManifest($event)"
+    />
+  </ng-template>
+
+  <ng-template [mdzipEntryRendererMatch]="isDrawioEntry" let-context>
+    <app-drawio-viewer [entry]="context" />
+  </ng-template>
+</mdzip-workspace>
+```
+
+`mdzipEntryRenderer` matches exact archive paths (string or array,
+case-insensitive); `[mdzipEntryRendererMatch]` takes a predicate. Optional
+`mdzipEntryRendererId` and `mdzipEntryRendererPriority` inputs control
+diffing and ordering. The embedded view is created in the component's view
+container — change detection and dependency injection work normally — its
+DOM is moved into the entry pane, the template context is updated in place
+on `update()`, and the view is destroyed on selection change.
+
+#### React: `renderEntry`
+
+```tsx
+<MdzipWorkspace
+  bytes={bytes}
+  renderEntry={(context) =>
+    context.path.toLowerCase() === 'manifest.json'
+      ? <Internals
+          manifest={context.manifest}
+          editable={context.mode === 'editable'}
+          onManifestChange={context.updateManifest}
+        />
+      : undefined}
+/>
+```
+
+Returning `undefined` delegates to `entryRenderers` and the built-in
+rendering. The wrapper owns the React root: it mounts on claim, re-renders
+on context updates **and on every parent commit** (entry content stays live
+with parent state — inline closures are safe and never re-mount), and
+unmounts on selection change. `renderEntryPriority` orders it against
+`entryRenderers`.
+
+#### Vue: `#entry` scoped slot
+
+```vue
+<MdzipWorkspace :bytes="bytes">
+  <template #entry="{ context }">
+    <Internals
+      v-if="context.path.toLowerCase() === 'manifest.json'"
+      :manifest="context.manifest"
+      :editable="context.mode === 'editable'"
+      @manifest-change="context.updateManifest"
+    />
+  </template>
+</MdzipWorkspace>
+```
+
+A slot render that produces no content (its `v-if` is false) delegates to
+the next renderer or the built-in rendering. The slot mounts in a detached
+tree that shares the host app context (plugins, provide/inject), the context
+is reactive (updates flow through on `update()`), and the tree unmounts on
+selection change. `entrySlotPriority` orders it against `entryRenderers`.
+
 ## Theme Integration
 
 The built-in light and dark controls apply complete editor token sets. A host

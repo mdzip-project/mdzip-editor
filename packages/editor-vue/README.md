@@ -71,10 +71,31 @@ The parent element must have an explicit height. The component expands to fill i
 | `markdownRenderer` | `MdzipMarkdownRenderer \| null` | `null` | Custom markdown renderer (keep the reference stable) |
 | `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — inline arrays are safe |
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — inline arrays are safe |
+| `entrySlotPriority` | `number` | `0` | Matching priority of the `#entry` slot relative to `entryRenderers` |
 
 Rendering prop changes apply in place — they never recreate the workspace
 view. See the `@mdzip/editor` Rendering Extensibility docs for the contracts
 and lifecycle rules.
+
+### Native entry rendering (`#entry` slot)
+
+```vue
+<MdzipWorkspace :bytes="bytes">
+  <template #entry="{ context }">
+    <ManifestEditor
+      v-if="context.path.toLowerCase() === 'manifest.json'"
+      :manifest="context.manifest"
+      :editable="context.mode === 'editable'"
+      @manifest-change="context.updateManifest"
+    />
+  </template>
+</MdzipWorkspace>
+```
+
+A slot render that produces no content (its `v-if` is false) delegates to
+`entryRenderers` and the built-in rendering. The slot mounts in a detached
+tree sharing the host app context (plugins, provide/inject); the context is
+reactive, and the tree unmounts on selection change.
 
 ## Events
 

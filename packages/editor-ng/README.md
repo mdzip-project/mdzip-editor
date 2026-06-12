@@ -77,6 +77,32 @@ Rendering input changes apply in place — they never recreate the workspace
 view. See the `@mdzip/editor` Rendering Extensibility docs for the contracts
 and lifecycle rules.
 
+### Native entry rendering (template directives)
+
+```html
+<mdzip-workspace [bytes]="bytes" mode="editable">
+  <ng-template mdzipEntryRenderer="manifest.json" let-context>
+    <app-internals
+      [manifest]="context.manifest"
+      [editable]="context.mode === 'editable'"
+      (manifestChange)="context.updateManifest($event)"
+    />
+  </ng-template>
+
+  <ng-template [mdzipEntryRendererMatch]="isDrawioEntry" let-context>
+    <app-drawio-viewer [entry]="context" />
+  </ng-template>
+</mdzip-workspace>
+```
+
+Import `MdzipEntryRendererDirective` alongside the component.
+`mdzipEntryRenderer` matches exact archive paths (string or array,
+case-insensitive); `[mdzipEntryRendererMatch]` takes a predicate. Optional
+`mdzipEntryRendererId` / `mdzipEntryRendererPriority` inputs control diffing
+and ordering. Embedded views are created in the component's view container —
+change detection and DI work normally — and are destroyed on selection
+change.
+
 ## Outputs
 
 | Output | Payload | Description |

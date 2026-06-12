@@ -1,4 +1,21 @@
-import { defineComponent, h, onMounted, onUnmounted, ref, watch, type PropType } from 'vue';
+import {
+  Comment,
+  Fragment,
+  Text,
+  defineComponent,
+  getCurrentInstance,
+  h,
+  onMounted,
+  onUnmounted,
+  ref,
+  render,
+  shallowRef,
+  watch,
+  type PropType,
+  type Slot,
+  type VNode,
+  type VNodeArrayChildren,
+} from 'vue';
 import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
   MdzipControlPolicy,
@@ -7,6 +24,7 @@ import type {
   MdzipConversionAction,
   MdzipEditorSnapshot,
   MdzipEditorCommand,
+  MdzipEntryRenderContext,
   MdzipEntryRenderer,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
@@ -31,6 +49,34 @@ function renderingConfigKey(
     extensions.map((extension) => extension.name),
     entryRenderers.map((renderer) => [renderer.id, renderer.priority ?? 0]),
   ]);
+}
+
+// A slot whose `v-if` evaluated false renders only comments/empty text; that
+// counts as "no content" and delegates to the next renderer or the built-in.
+function hasRenderableContent(nodes: unknown): boolean {
+  if (nodes === null || nodes === undefined || typeof nodes === 'boolean') {
+    return false;
+  }
+  if (Array.isArray(nodes)) {
+    return (nodes as VNodeArrayChildren).some((node) => hasRenderableContent(node));
+  }
+  if (typeof nodes === 'string') {
+    return nodes.trim().length > 0;
+  }
+  if (typeof nodes === 'number') {
+    return true;
+  }
+  const vnode = nodes as VNode;
+  if (vnode.type === Comment) {
+    return false;
+  }
+  if (vnode.type === Text) {
+    return typeof vnode.children === 'string' ? vnode.children.trim().length > 0 : true;
+  }
+  if (vnode.type === Fragment) {
+    return hasRenderableContent(vnode.children);
+  }
+  return true;
 }
 
 export interface MdzipWorkspaceExposed {
@@ -98,6 +144,8 @@ export const MdzipWorkspace = defineComponent({
       type: Array as PropType<readonly MdzipEntryRenderer[]>,
       default: () => []
     },
+    /** Matching priority of the `#entry` slot relative to `entryRenderers`. */
+    entrySlotPriority: { type: Number, default: 0 },
   },
   emits: [
     'changed',
@@ -113,9 +161,58 @@ export const MdzipWorkspace = defineComponent({
     'colorSchemeChanged',
     'failed'
   ],
-  setup(props, { emit, expose }) {
+  setup(props, { emit, expose, slots }) {
     const hostRef = ref<HTMLElement | null>(null);
     let view: MdzipWorkspaceView | null = null;
+    const appContext = getCurrentInstance()?.appContext ?? null;
+
+    // Adapts the #entry scoped slot onto the framework-independent
+    // MdzipEntryRenderer contract. The slot renders inside a detached inner
+    // component whose render effect tracks the slot's reactive dependencies,
+    // so reactive parent state stays live; the context itself is a
+    // shallowRef updated by the core's update() calls. A slot that renders
+    // no content (e.g. its v-if is false) delegates to the next renderer.
+    const slotContext = shallowRef<MdzipEntryRenderContext | null>(null);
+    const EntrySlotHost = defineComponent({
+      name: 'MdzipEntrySlotHost',
+      setup: () => () => {
+        const slot = slots['entry'] as Slot | undefined;
+        const context = slotContext.value;
+        return slot && context ? slot({ context }) : null;
+      }
+    });
+    const entrySlotAdapter: MdzipEntryRenderer = {
+      id: 'mdzip-vue-entry-slot',
+      get priority() {
+        return props.entrySlotPriority;
+      },
+      matches: (context) => {
+        const slot = slots['entry'] as Slot | undefined;
+        return slot ? hasRenderableContent(slot({ context })) : false;
+      },
+      mount: (container, context) => {
+        slotContext.value = context;
+        const vnode = h(EntrySlotHost);
+        if (appContext) {
+          vnode.appContext = appContext;
+        }
+        render(vnode, container);
+        return {
+          update: (next) => {
+            slotContext.value = next;
+          },
+          destroy: () => {
+            render(null, container);
+            slotContext.value = null;
+          }
+        };
+      }
+    };
+
+    // Stable sort in the core keeps explicit renderers ahead of the slot
+    // catch-all at equal priority.
+    const composedEntryRenderers = (): readonly MdzipEntryRenderer[] =>
+      slots['entry'] ? [...props.entryRenderers, entrySlotAdapter] : props.entryRenderers;
 
     expose({
       canExecuteCommand: (command: MdzipEditorCommand) =>
@@ -169,7 +266,7 @@ export const MdzipWorkspace = defineComponent({
         onConversionRequested: props.onConversionRequested,
         markdownRenderer: props.markdownRenderer ?? undefined,
         markdownExtensions: props.markdownExtensions,
-        entryRenderers: props.entryRenderers,
+        entryRenderers: composedEntryRenderers(),
       });
       if (props.workspace) {
         void view.openWorkspace(props.workspace, {
@@ -225,7 +322,7 @@ export const MdzipWorkspace = defineComponent({
     watch(
       () => [
         props.markdownRenderer,
-        renderingConfigKey(props.markdownExtensions, props.entryRenderers)
+        renderingConfigKey(props.markdownExtensions, composedEntryRenderers())
       ] as const,
       ([renderer, key], previous) => {
         if (previous && renderer === previous[0] && key === previous[1]) {
@@ -234,7 +331,7 @@ export const MdzipWorkspace = defineComponent({
         view?.setRenderingOptions({
           markdownRenderer: renderer ?? null,
           markdownExtensions: props.markdownExtensions,
-          entryRenderers: props.entryRenderers,
+          entryRenderers: composedEntryRenderers(),
         });
       }
     );

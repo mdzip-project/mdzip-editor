@@ -574,12 +574,24 @@ release (`@mdzip/editor@1.3.1` and wrappers at 1.3.1; the request predates
 as the canonical long-term extension boundary, with Markdown rendering as a
 specialized built-in path, per the recommendation above.
 
-Implementation status (2026-06-12): Phases 1–3 are implemented —
-`markdownRenderer`, `markdownExtensions`, and `entryRenderers` in
-`MdzipWorkspaceViewOptions` and as inputs/props on all three wrappers, with
-the async/cancellation/memoization machinery, `updateManifest()`, and
-contract tests. Phase 4 (native Angular template / React render-function /
-Vue slot ergonomics) remains the next cross-framework deliverable.
+Implementation status (2026-06-12): Phases 1–4 are implemented.
+Phases 1–3: `markdownRenderer`, `markdownExtensions`, and `entryRenderers`
+in `MdzipWorkspaceViewOptions` and as inputs/props on all three wrappers,
+with the async/cancellation/memoization machinery, `updateManifest()`, and
+contract tests. Phase 4 shipped as one cross-framework deliverable: Angular
+`<ng-template mdzipEntryRenderer>` / `[mdzipEntryRendererMatch]` directives,
+React `renderEntry`, and Vue `#entry` scoped slot, each adapted onto the
+framework-independent `MdzipEntryRenderer` contract with per-framework
+lifecycle tests (vitest) and ESLint coverage across all packages.
+
+**D13 (resolves the last open question).** Native framework APIs support
+*both* styles: the renderer collection inputs/props and one idiomatic
+catch-all per framework (template directives / render function / scoped
+slot). Catch-alls are adapted onto the entry renderer contract and appended
+after the explicit collection, so at equal priority explicit renderers win,
+and matching/fallback/lifecycle semantics are identical everywhere. A
+catch-all declines by producing no content (`undefined` in React, empty
+slot render in Vue) or by its path/predicate not matching (Angular).
 
 ### Decisions
 

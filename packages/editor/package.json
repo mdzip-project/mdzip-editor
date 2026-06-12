@@ -29,7 +29,7 @@
     "generate:icons": "node scripts/generate-icons.mjs",
     "prebuild": "npm run generate:icons",
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "test": "npm run build && node --test tests/*.test.mjs && vitest run"
   },
   "dependencies": {
     "@codemirror/commands": "^6.8.0",

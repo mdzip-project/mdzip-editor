@@ -1,16 +1,20 @@
 import {
+  AfterContentInit,
   AfterViewInit,
   ChangeDetectionStrategy,
   Component,
+  ContentChildren,
   ElementRef,
   EventEmitter,
   Input,
   OnChanges,
   OnDestroy,
   Output,
+  QueryList,
   SimpleChanges,
   ViewChild,
 } from '@angular/core';
+import { MdzipEntryRendererDirective } from './entry-renderer.directive';
 import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
   MdzipControlPolicy,
@@ -56,7 +60,7 @@ function renderingConfigKey(
   styles: [':host { display: block; height: 100%; } div { height: 100%; }'],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
-export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDestroy {
+export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit, OnChanges, OnDestroy {
   @Input() bytes: Uint8Array | null = null;
   @Input() workspace: MdzWorkspace | null = null;
   @Input() fileName = 'document.mdz';
@@ -96,8 +100,23 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
   @Output() readonly failed = new EventEmitter<unknown>();
 
   @ViewChild('host') private readonly hostRef!: ElementRef<HTMLDivElement>;
+  /**
+   * `<ng-template mdzipEntryRenderer>` declarations projected into the
+   * component. Each becomes an entry renderer appended after the
+   * `entryRenderers` input (stable sort keeps the input ahead at equal
+   * priority).
+   */
+  @ContentChildren(MdzipEntryRendererDirective)
+  private readonly entryTemplates!: QueryList<MdzipEntryRendererDirective>;
   private view: MdzipWorkspaceView | null = null;
   private renderingKey = '';
+  private entryTemplatesSub: { unsubscribe(): void } | null = null;
+
+  ngAfterContentInit(): void {
+    this.entryTemplatesSub = this.entryTemplates.changes.subscribe(() => {
+      this.applyRenderingOptions(false);
+    });
+  }
 
   ngAfterViewInit(): void {
     this.createView();
@@ -123,6 +142,7 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
   }
 
   ngOnDestroy(): void {
+    this.entryTemplatesSub?.unsubscribe();
     this.view?.destroy();
   }
 
@@ -231,16 +251,24 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
         : undefined,
       markdownRenderer: this.markdownRenderer,
       markdownExtensions: this.markdownExtensions,
-      entryRenderers: this.entryRenderers,
+      entryRenderers: this.composedEntryRenderers(),
     });
-    this.renderingKey = renderingConfigKey(this.markdownExtensions, this.entryRenderers);
+    this.renderingKey = renderingConfigKey(this.markdownExtensions, this.composedEntryRenderers());
+  }
+
+  private composedEntryRenderers(): readonly MdzipEntryRenderer[] {
+    const templates = this.entryTemplates
+      ? this.entryTemplates.map((directive, index) => directive.toEntryRenderer(index))
+      : [];
+    return [...this.entryRenderers, ...templates];
   }
 
   // Applies rendering input changes in place — never a view rebuild. Arrays
   // re-apply only when their name/id key changes, so template expressions
   // that produce new array identities each cycle are safe.
   private applyRenderingOptions(rendererChanged: boolean): void {
-    const key = renderingConfigKey(this.markdownExtensions, this.entryRenderers);
+    const composed = this.composedEntryRenderers();
+    const key = renderingConfigKey(this.markdownExtensions, composed);
     if (!rendererChanged && key === this.renderingKey) {
       return;
     }
@@ -248,7 +276,7 @@ export class MdzipWorkspaceComponent implements AfterViewInit, OnChanges, OnDest
     this.view?.setRenderingOptions({
       markdownRenderer: this.markdownRenderer ?? null,
       markdownExtensions: this.markdownExtensions,
-      entryRenderers: this.entryRenderers,
+      entryRenderers: composed,
     });
   }
 }

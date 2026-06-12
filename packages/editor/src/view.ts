@@ -13,7 +13,6 @@ import {
   File,
   FileBraces,
   FileImage,
-  FileText,
   Folder,
   FolderOpen,
   Hash,
@@ -1082,6 +1081,9 @@ export class MdzipWorkspaceView {
   }
 
   public canExecuteCommand(command: MdzipEditorCommand): boolean {
+    // Availability is currently uniform across commands; the parameter is
+    // kept so per-command policies stay a non-breaking change.
+    void command;
     const snapshot = this.workspace?.snapshot();
     if (!snapshot || !this.cmEditor || snapshot.mode === 'read-only'
       || snapshot.currentPathType !== 'markdown') {
@@ -1358,7 +1360,7 @@ export class MdzipWorkspaceView {
       snapshot.currentPathType,
       snapshot.mode,
       snapshot.sourceFormat
-    ].join(' ');
+    ].join('\u0000');
 
     if (this.entryState?.key === matchKey) {
       this.maybeUpdateEntryRenderer(snapshot);
@@ -2457,7 +2459,7 @@ export class MdzipWorkspaceView {
       if (this.workspace?.sourceFormat === 'markdown') {
         const extension = extensionForMime(image.mimeType);
         const pastedFile = new window.File(
-          [new Blob([image.bytes as any], { type: image.mimeType })],
+          [new Blob([image.bytes as unknown as BlobPart], { type: image.mimeType })],
           `pasted.${extension}`,
           { type: image.mimeType }
         );

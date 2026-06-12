@@ -1,0 +1,149 @@
+import '@angular/compiler';
+import 'zone.js';
+import { Component } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
+import { BrowserTestingModule, platformBrowserTesting } from '@angular/platform-browser/testing';
+import { afterEach, beforeAll, expect, test, vi } from 'vitest';
+import type { MdzipEntryRenderContext, MdzipEntryRenderer } from '@mdzip/editor';
+
+const { MockView, viewInstances } = vi.hoisted(() => {
+  const viewInstances: MockView[] = [];
+  class MockView {
+    public readonly container: HTMLElement;
+    public readonly options: Record<string, unknown>;
+    public readonly setRenderingOptions = vi.fn();
+    public readonly open = vi.fn(async () => {});
+    public readonly openWorkspace = vi.fn(async () => {});
+    public readonly destroy = vi.fn();
+    public constructor(container: HTMLElement, options: Record<string, unknown>) {
+      this.container = container;
+      this.options = options;
+      viewInstances.push(this);
+    }
+  }
+  return { MockView, viewInstances };
+});
+
+vi.mock('@mdzip/editor', () => ({ MdzipWorkspaceView: MockView }));
+
+import { MdzipWorkspaceComponent } from '../src/workspace.component';
+import { MdzipEntryRendererDirective } from '../src/entry-renderer.directive';
+
+beforeAll(() => {
+  TestBed.initTestEnvironment(BrowserTestingModule, platformBrowserTesting());
+});
+
+afterEach(() => {
+  viewInstances.length = 0;
+  TestBed.resetTestingModule();
+});
+
+function entryContext(path: string, overrides: Partial<MdzipEntryRenderContext> = {}): MdzipEntryRenderContext {
+  return {
+    path,
+    pathType: 'text',
+    mode: 'editable',
+    sourceFormat: 'mdz',
+    colorScheme: 'light',
+    manifest: null,
+    snapshot: {} as MdzipEntryRenderContext['snapshot'],
+    signal: new AbortController().signal,
+    readBytes: async () => new Uint8Array(),
+    updateManifest: async () => {},
+    ...overrides
+  };
+}
+
+const explicitRenderer: MdzipEntryRenderer = {
+  id: 'explicit',
+  matches: () => false,
+  mount: () => {}
+};
+
+function latestView(): InstanceType<typeof MockView> {
+  const view = viewInstances.at(-1);
+  if (!view) throw new Error('no view created');
+  return view;
+}
+
+@Component({
+  standalone: true,
+  imports: [MdzipWorkspaceComponent, MdzipEntryRendererDirective],
+  template: `
+    <mdzip-workspace [entryRenderers]="renderers">
+      <ng-template mdzipEntryRenderer="manifest.json" let-context>
+        <div class="entry">tpl:{{ context.path }}:{{ context.colorScheme }}</div>
+      </ng-template>
+      <ng-template [mdzipEntryRendererMatch]="isDrawio" let-context>
+        <div class="drawio">drawio:{{ context.path }}</div>
+      </ng-template>
+    </mdzip-workspace>
+  `
+})
+class HostComponent {
+  renderers: readonly MdzipEntryRenderer[] = [explicitRenderer];
+  isDrawio = (context: MdzipEntryRenderContext): boolean => context.path.endsWith('.drawio');
+}
+
+function createHost() {
+  TestBed.configureTestingModule({ imports: [HostComponent] });
+  const fixture = TestBed.createComponent(HostComponent);
+  fixture.detectChanges();
+  return fixture;
+}
+
+test('composes explicit entry renderers with template directives', () => {
+  createHost();
+
+  const composed = latestView().options['entryRenderers'] as MdzipEntryRenderer[];
+  expect(composed.map((renderer) => renderer.id)).toEqual([
+    'explicit',
+    'mdzip-ng-template:manifest.json',
+    'mdzip-ng-template#1'
+  ]);
+});
+
+test('path and predicate templates match the right entries', () => {
+  createHost();
+  const [, byPath, byPredicate] = latestView().options['entryRenderers'] as MdzipEntryRenderer[];
+
+  expect(byPath.matches(entryContext('manifest.json'))).toBe(true);
+  expect(byPath.matches(entryContext('Manifest.JSON'))).toBe(true);
+  expect(byPath.matches(entryContext('index.md'))).toBe(false);
+
+  expect(byPredicate.matches(entryContext('diagrams/flow.drawio'))).toBe(true);
+  expect(byPredicate.matches(entryContext('manifest.json'))).toBe(false);
+});
+
+test('template adapter mounts an embedded view, updates context, and destroys it', () => {
+  createHost();
+  const byPath = (latestView().options['entryRenderers'] as MdzipEntryRenderer[])[1];
+
+  const container = document.createElement('div');
+  const handle = byPath.mount(container, entryContext('manifest.json')) as {
+    update?: (context: MdzipEntryRenderContext) => void;
+    destroy: () => void;
+  };
+  expect(container.textContent?.trim()).toBe('tpl:manifest.json:light');
+
+  handle.update?.(entryContext('manifest.json', { colorScheme: 'dark' }));
+  expect(container.textContent?.trim()).toBe('tpl:manifest.json:dark');
+
+  handle.destroy();
+  expect(container.querySelector('.entry')).toBeNull();
+});
+
+test('identity changes with stable ids never recreate or re-apply', () => {
+  const fixture = createHost();
+  const view = latestView();
+
+  fixture.componentInstance.renderers = [{ ...explicitRenderer }];
+  fixture.detectChanges();
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setRenderingOptions).not.toHaveBeenCalled();
+
+  fixture.componentInstance.renderers = [{ ...explicitRenderer, id: 'changed' }];
+  fixture.detectChanges();
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
+});

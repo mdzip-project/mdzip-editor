@@ -69,10 +69,33 @@ The parent element must have an explicit height. The component expands to fill i
 | `markdownRenderer` | `MdzipMarkdownRenderer` | — | Custom markdown renderer (keep the reference stable, e.g. `useMemo`) |
 | `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — inline arrays are safe |
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — inline arrays are safe |
+| `renderEntry` | `(context) => ReactNode \| undefined` | — | Catch-all entry renderer: return a node to claim the selected entry, `undefined` to delegate |
+| `renderEntryPriority` | `number` | `0` | Matching priority of `renderEntry` relative to `entryRenderers` |
 
 Rendering prop changes apply in place — they never recreate the workspace
 view. See the `@mdzip/editor` Rendering Extensibility docs for the contracts
 and lifecycle rules.
+
+### Native entry rendering
+
+```tsx
+<MdzipWorkspace
+  bytes={bytes}
+  renderEntry={(context) =>
+    context.path.toLowerCase() === 'manifest.json'
+      ? <ManifestEditor
+          manifest={context.manifest}
+          editable={context.mode === 'editable'}
+          onManifestChange={context.updateManifest}
+        />
+      : undefined}
+/>
+```
+
+The wrapper owns the React root: it mounts when the entry is claimed,
+re-renders on context updates and on every parent commit (entry content
+stays live with parent state — inline closures are safe and never
+re-mount), and unmounts on selection change.
 
 ## Callbacks
 

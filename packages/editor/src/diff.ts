@@ -45,7 +45,6 @@ export async function createArchiveInventory(
 
   for (const entry of archiveEntries) {
     const entryBytes = await archive.readBytes(entry.path);
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
     const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', entryBytes as BufferSource);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
