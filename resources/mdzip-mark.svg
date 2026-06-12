@@ -1,0 +1,18 @@
+<svg fill="none" height="158" viewBox="0 10 208 158" width="208" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(0 18)">
+  <path d="M15 -2.8H65.5A10 10 0 0 1 73 0.6L102.4 34H5V7.2A10 10 0 0 1 15 -2.8Z" fill="#fff" />
+
+  <g stroke="#000" stroke-linecap="butt" stroke-linejoin="round" stroke-width="10">
+    <path d="M5 34V7.2A10 10 0 0 1 15 -2.8H65.5A10 10 0 0 1 73 0.6L102.4 34" />
+    <path d="M5 42V34" />
+  </g>
+
+  <g transform="translate(0 22)">
+    <rect fill="#fff" height="108" rx="5" width="188" x="10" y="10"/>
+    <g fill="#000">
+      <path clip-rule="evenodd" d="m15 10c-2.7614 0-5 2.2386-5 5v98c0 2.761 2.2386 5 5 5h178c2.761 0 5-2.239 5-5v-98c0-2.7614-2.239-5-5-5zm-15 5c0-8.28427 6.71573-15 15-15h178c8.284 0 15 6.71573 15 15v98c0 8.284-6.716 15-15 15h-178c-8.28427 0-15-6.716-15-15z" fill-rule="evenodd"/>
+      <path d="m30 98v-68h20l20 25 20-25h20v68h-20v-39l-20 25-20-25v39zm125 0-30-33h20v-35h20v35h20z"/>
+    </g>
+  </g>
+  </g>
+</svg>

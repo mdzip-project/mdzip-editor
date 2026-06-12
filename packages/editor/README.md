@@ -1,3 +1,8 @@
+[![MDZip logo][mdzip-logo]][mdzip-url]
+
+[mdzip-logo]: https://raw.githubusercontent.com/mdzip-project/mdzip-editor/main/resources/mdzip-mark.svg
+[mdzip-url]: https://mdzip.org
+
 # @mdzip/editor
 
 Framework-independent MDZip workspace engine and browser view.
