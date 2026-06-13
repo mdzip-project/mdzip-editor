@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.3.2] - 2026-06-12
+
+### Added
+- Rendering extensibility (full implementation of the accepted design in
+  `design/editor-renderer-extensibility-request.md`):
+  - `markdownRenderer` view option (and wrapper input/prop) replaces the
+    markdown renderer. Renderers receive a documented
+    `MdzipMarkdownRenderContext` (path, source format, color scheme, mode,
+    manifest, asset resolver, `AbortSignal`) and may render asynchronously;
+    stale results are dropped when the selection or content moves on.
+  - `markdownExtensions`: composable pipeline hooks
+    (`transformMarkdown` → renderer → `transformHtml` → sanitize → `mount`).
+    Transform output always passes through DOMPurify; `mount()` handles are
+    destroyed before the preview re-renders and on view destruction.
+  - `entryRenderers`: claim the full pane stack for selected archive
+    entries (first match by descending priority; built-in rendering is the
+    fallback). The entry context exposes `readBytes()` and
+    `updateManifest()` instead of view internals. Includes
+    `mdzipPathMatcher`/`mdzipExtensionMatcher` predicate helpers and
+    `setRenderingOptions()` for in-place reconfiguration.
+  - Native framework entry rendering with identical matching, priority,
+    fallback, and lifecycle semantics: Angular
+    `<ng-template mdzipEntryRenderer="…">` / `[mdzipEntryRendererMatch]`
+    directives, React `renderEntry` render prop (content stays live with
+    parent state), and the Vue `#entry` scoped slot (empty render
+    delegates). Explicit `entryRenderers` win over the native catch-all at
+    equal priority.
+- `MdzipWorkspaceService.updateManifest()`: replaces the manifest wholesale
+  (canonicalized), routes through the `'manifest'` edit event so
+  `onManifestChanged` host-delegated persistence keeps working.
+
+### Changed
+- Preview rendering is memoized on (path, content, color scheme, images):
+  unrelated snapshot renders (dialogs, navigation, layout toggles) no longer
+  re-run marked/DOMPurify or reset preview DOM. With no extensions
+  registered the render path is fully synchronous, as before.
+- Wrapper rendering props apply in place via `setRenderingOptions()` —
+  never by recreating the workspace view. Extension/renderer arrays are
+  diffed by stable `name`/`id`, so inline array literals are safe.
+
+### Internal
+- New vitest + jsdom test suites for the React, Vue, and Angular wrappers
+  (adapter lifecycle, identity-safe updates, delegation), plus core
+  contract tests for the rendering pipeline and entry renderer lifecycle.
+- ESLint flat config across all packages; `npm run verify` now runs
+  build + lint + test.
+
 ## [1.3.1] - 2026-06-12
 
 ### Fixed
