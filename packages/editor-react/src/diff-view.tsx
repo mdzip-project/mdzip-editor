@@ -2,7 +2,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import {
   MdzipDiffView,
   type MdzipDiffSelectionEvent,
-  type MdzipDiffSideInput
+  type MdzipDiffSideInput,
+  type MdzipDiffToolbarAction
 } from '@mdzip/editor/diff-view';
 
 export interface MdzipDiffProps {
@@ -11,6 +12,7 @@ export interface MdzipDiffProps {
   initialPath?: string;
   showUnchanged?: boolean;
   navigationVisible?: boolean;
+  toolbarActions?: readonly MdzipDiffToolbarAction[];
   onSelectionChanged?: (event: MdzipDiffSelectionEvent) => void;
   onFailed?: (error: Error) => void;
 }
@@ -19,6 +21,7 @@ export interface MdzipDiffHandle {
   openPath(path: string): Promise<boolean>;
   setShowUnchanged(show: boolean): void;
   setNavigationVisible(visible: boolean): void;
+  setToolbarActions(actions: readonly MdzipDiffToolbarAction[]): void;
 }
 
 export const MdzipDiff = forwardRef<MdzipDiffHandle, MdzipDiffProps>(
@@ -39,13 +42,15 @@ function MdzipDiff(props, forwardedRef) {
     after: props.after,
     initialPath: props.initialPath,
     showUnchanged: props.showUnchanged,
-    navigationVisible: props.navigationVisible
+    navigationVisible: props.navigationVisible,
+    toolbarActions: props.toolbarActions
   });
 
   useImperativeHandle(forwardedRef, () => ({
     openPath: (path) => viewRef.current?.openPath(path) ?? Promise.resolve(false),
     setShowUnchanged: (show) => viewRef.current?.setShowUnchanged(show),
-    setNavigationVisible: (visible) => viewRef.current?.setNavigationVisible(visible)
+    setNavigationVisible: (visible) => viewRef.current?.setNavigationVisible(visible),
+    setToolbarActions: (actions) => viewRef.current?.setToolbarActions(actions)
   }), []);
 
   useEffect(() => {
@@ -57,6 +62,7 @@ function MdzipDiff(props, forwardedRef) {
       initialPath: initial.initialPath,
       showUnchanged: initial.showUnchanged,
       navigationVisible: initial.navigationVisible,
+      toolbarActions: initial.toolbarActions,
       onSelectionChanged: (event) => callbacksRef.current.onSelectionChanged?.(event),
       onFailed: (error) => callbacksRef.current.onFailed?.(error)
     });
@@ -76,18 +82,26 @@ function MdzipDiff(props, forwardedRef) {
       before: props.before,
       after: props.after,
       initialPath: props.initialPath,
-      showUnchanged: props.showUnchanged,
-      navigationVisible: props.navigationVisible,
       onSelectionChanged: (event) => callbacksRef.current.onSelectionChanged?.(event),
       onFailed: (error) => callbacksRef.current.onFailed?.(error)
     });
   }, [
     props.before,
     props.after,
-    props.initialPath,
-    props.showUnchanged,
-    props.navigationVisible
+    props.initialPath
   ]);
+
+  useEffect(() => {
+    viewRef.current?.setShowUnchanged(props.showUnchanged ?? true);
+  }, [props.showUnchanged]);
+
+  useEffect(() => {
+    viewRef.current?.setNavigationVisible(props.navigationVisible ?? true);
+  }, [props.navigationVisible]);
+
+  useEffect(() => {
+    viewRef.current?.setToolbarActions(props.toolbarActions ?? []);
+  }, [props.toolbarActions]);
 
   return <div ref={hostRef} style={{ height: '100%', overflow: 'hidden' }} />;
 });

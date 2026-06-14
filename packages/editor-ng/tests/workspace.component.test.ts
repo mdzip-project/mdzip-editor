@@ -27,6 +27,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly openPath = vi.fn(async () => true);
     public readonly setShowUnchanged = vi.fn();
     public readonly setNavigationVisible = vi.fn();
+    public readonly setToolbarActions = vi.fn();
     public readonly destroy = vi.fn();
     public constructor(
       public readonly container: HTMLElement,
@@ -122,7 +123,7 @@ test('composes explicit entry renderers with template directives', () => {
   expect(latestView().options['libraries']).toEqual([
     expect.objectContaining({
       name: '@mdzip/editor-ng',
-      version: '1.3.4',
+      version: '1.3.5',
       repositoryUrl: expect.stringContaining('/packages/editor-ng'),
       description: expect.stringContaining('Angular')
     })
@@ -187,7 +188,8 @@ test('diff component updates one view and exposes navigation methods', async () 
   fixture.componentRef.setInput('showUnchanged', false);
   fixture.detectChanges();
   expect(diffViewInstances).toHaveLength(1);
-  expect(view.open).toHaveBeenCalledTimes(2);
+  expect(view.open).toHaveBeenCalledTimes(1);
+  expect(view.setShowUnchanged).toHaveBeenLastCalledWith(false);
 
   await fixture.componentInstance.openPath('index.md');
   expect(view.openPath).toHaveBeenCalledWith('index.md');

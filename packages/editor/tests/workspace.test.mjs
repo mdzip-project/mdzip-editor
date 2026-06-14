@@ -48,7 +48,7 @@ test('opens archives for view-only inspection', async () => {
   assert.equal(snapshot.fileName, 'hello.mdz');
   assert.equal(snapshot.content.entryPoint, 'index.md');
   assert.equal(snapshot.displayTitle, 'Demo');
-  assert.equal(snapshot.content.images.get('images/logo.png').startsWith('data:image/png;base64,'), true);
+  assert.equal(snapshot.content.images.size, 0);
   assert.throws(() => workspace.editText('# Blocked\n'), MdzipReadOnlyError);
   await assert.rejects(() => workspace.saveToBytes(), MdzipReadOnlyError);
 });

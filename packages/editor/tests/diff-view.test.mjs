@@ -267,6 +267,46 @@ test('keyboard navigation moves focus through visible entries', async () => {
   }
 });
 
+test('diff toolbar toggles navigation and runs typed host actions', async () => {
+  const { before, after } = await comparisonBytes();
+  const container = document.createElement('div');
+  let finishRefresh;
+  let refreshes = 0;
+  const options = {
+    before: { bytes: before },
+    after: { bytes: after },
+    toolbarActions: [{
+      id: 'refresh',
+      label: 'Refresh comparison',
+      icon: 'refresh',
+      run: () => {
+        refreshes += 1;
+        return new Promise((resolve) => { finishRefresh = resolve; });
+      }
+    }]
+  };
+  const view = new MdzipDiffView(container, options);
+  try {
+    await view.open(options);
+    const navButton = container.querySelector('[data-ref="navigation"]');
+    assert.equal(navButton.getAttribute('aria-pressed'), 'true');
+    navButton.click();
+    assert.equal(navButton.getAttribute('aria-pressed'), 'false');
+    assert.equal(container.querySelector('.mdzip-diff-nav').hidden, true);
+
+    const refreshButton = container.querySelector('[aria-label="Refresh comparison"]');
+    refreshButton.click();
+    await Promise.resolve();
+    assert.equal(refreshes, 1);
+    assert.equal(container.querySelector('[aria-label="Refresh comparison"]').disabled, true);
+    finishRefresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(container.querySelector('[aria-label="Refresh comparison"]').disabled, false);
+  } finally {
+    view.destroy();
+  }
+});
+
 test('many entries open and filter without decoding selected content eagerly', async () => {
   const entries = Array.from({ length: 150 }, (_, index) => [
     `docs/file-${String(index).padStart(3, '0')}.txt`,

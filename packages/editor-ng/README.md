@@ -53,6 +53,7 @@ import { MdzipDiffComponent } from '@mdzip/editor-ng';
     <mdzip-diff
       [before]="{ bytes: baseBytes, label: 'Git base' }"
       [after]="{ bytes: workingBytes, label: 'Working tree' }"
+      [toolbarActions]="diffActions"
       initialPath="index.md"
     />
   `,
@@ -63,6 +64,7 @@ export class DiffComponent {}
 
 `MdzipDiffComponent` is read-only. It emits `selectionChanged` and `failed`,
 and exposes `openPath`, `setShowUnchanged`, and `setNavigationVisible`.
+It also exposes `setToolbarActions`.
 
 ## Editor Mode
 

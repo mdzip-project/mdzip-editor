@@ -35,6 +35,11 @@ import {
 } from 'lucide';
 import type { MdzWorkspace, MdzWorkspaceAsset } from '@mdzip/core-js';
 import { browserClipboardHasImage, readBrowserClipboardImage } from './browser.js';
+import {
+  MdzipAssetSession,
+  mdzipArchiveSourceId,
+  type MdzipAssetCache
+} from './asset-cache.js';
 import { MD_MARKDOWN_ICON, type LucideIconNode } from './icons/md-markdown.js';
 import { MDZIP_RUNTIME_LIBRARIES } from './library-info.js';
 import type {
@@ -59,7 +64,6 @@ import {
   isMdzipManifestPath,
   resolveMdzipArchiveLinkTarget,
   renderMdzipPreviewHtml,
-  rewriteMdzipImageSources,
   type MdzipNavNode
 } from './workspace-view.js';
 import {
@@ -278,6 +282,8 @@ export interface MdzipWorkspaceViewOptions {
    * Framework wrappers populate this automatically.
    */
   libraries?: readonly MdzipLibraryInfo[];
+  /** Optional persistent cache for lazily resolved archive assets. */
+  assetCache?: MdzipAssetCache;
   controls?: MdzipControlPreset | MdzipControlPolicy;
   initialLayout?: MdzipWorkspaceLayout;
   initialColorScheme?: MdzipColorScheme;
@@ -747,6 +753,7 @@ function navNodeOrder(a: MdzipNavNode, b: MdzipNavNode): number {
 
 export class MdzipWorkspaceView {
   private workspace: MdzipWorkspaceService | null = null;
+  private assetSession: MdzipAssetSession | null = null;
   private unsub: (() => void) | null = null;
   private readonly options: MdzipWorkspaceViewOptions;
   private readonly controlPolicy: MdzipResolvedControlPolicy;
@@ -800,7 +807,6 @@ export class MdzipWorkspaceView {
     pathType: MdzipPathType;
     text: string;
     colorScheme: MdzipColorScheme;
-    images: Map<string, string>;
   } | null = null;
   private previewGeneration = 0;
   private previewAbort: AbortController | null = null;
@@ -976,11 +982,22 @@ export class MdzipWorkspaceView {
     this.cmEditor?.destroy();
     this.cmEditor = null;
     this.workspace = null;
+    this.replaceAssetSession(null);
     this.conversionDocumentGeneration += 1;
 
     try {
       const ws = await MdzipWorkspaceService.open(bytes, options);
       this.workspace = ws;
+      this.replaceAssetSession(new MdzipAssetSession(
+        ws,
+        ws.snapshot().workspace.assets,
+        this.elRoot.ownerDocument,
+        {
+          cache: this.options.assetCache,
+          sourceId: () => mdzipArchiveSourceId(bytes),
+          onFailed: this.options.onFailed
+        }
+      ));
       const snap = ws.snapshot();
       if (snap.sourceFormat === 'markdown') {
         this.navVisible = false;
@@ -991,6 +1008,18 @@ export class MdzipWorkspaceView {
       );
       await this.ensureCmEditor();
       this.unsub = ws.subscribe((event) => {
+        if (event.changes.includes('asset')) {
+          this.replaceAssetSession(new MdzipAssetSession(
+            ws,
+            event.snapshot.workspace.assets,
+            this.elRoot.ownerDocument,
+            {
+              cache: this.options.assetCache,
+              sourceId: () => mdzipArchiveSourceId(event.snapshot.archiveBytes),
+              onFailed: this.options.onFailed
+            }
+          ));
+        }
         if (event.changes.includes('workspace') || event.changes.includes('document')) {
           this.conversionDocumentGeneration += 1;
         }
@@ -1036,11 +1065,23 @@ export class MdzipWorkspaceView {
     this.cmEditor?.destroy();
     this.cmEditor = null;
     this.workspace = null;
+    this.replaceAssetSession(null);
     this.conversionDocumentGeneration += 1;
 
     try {
       const ws = await MdzipWorkspaceService.openWorkspace(workspace, options);
       this.workspace = ws;
+      this.replaceAssetSession(new MdzipAssetSession(
+        ws,
+        ws.snapshot().workspace.assets,
+        this.elRoot.ownerDocument,
+        {
+          cache: this.options.assetCache,
+          sourceId: options.assetSourceId
+            ?? (options.archiveBytes ? () => mdzipArchiveSourceId(options.archiveBytes as Uint8Array) : undefined),
+          onFailed: this.options.onFailed
+        }
+      ));
       const snap = ws.snapshot();
       this.layout = this.validLayoutForSnapshot(
         this.options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy),
@@ -1048,6 +1089,20 @@ export class MdzipWorkspaceView {
       );
       await this.ensureCmEditor();
       this.unsub = ws.subscribe((event) => {
+        if (event.changes.includes('asset')) {
+          this.replaceAssetSession(new MdzipAssetSession(
+            ws,
+            event.snapshot.workspace.assets,
+            this.elRoot.ownerDocument,
+            {
+              cache: this.options.assetCache,
+              sourceId: event.snapshot.archiveBytes.length
+                ? () => mdzipArchiveSourceId(event.snapshot.archiveBytes)
+                : undefined,
+              onFailed: this.options.onFailed
+            }
+          ));
+        }
         if (event.changes.includes('workspace') || event.changes.includes('document')) {
           this.conversionDocumentGeneration += 1;
         }
@@ -1173,6 +1228,7 @@ export class MdzipWorkspaceView {
       // Ignore subscription cleanup errors
     }
     this.resetPreviewState();
+    this.replaceAssetSession(null);
     this.teardownEntryRenderer();
     try {
       this.cmEditor?.destroy();
@@ -1223,6 +1279,12 @@ export class MdzipWorkspaceView {
     this.entryMatchMissKey = null;
   }
 
+  private replaceAssetSession(session: MdzipAssetSession | null): void {
+    this.assetSession?.destroy();
+    this.assetSession = session;
+    this.resetPreviewState();
+  }
+
   private resetPreviewState(): void {
     this.previewAbort?.abort();
     this.previewAbort = null;
@@ -1254,14 +1316,12 @@ export class MdzipWorkspaceView {
       return;
     }
 
-    const images = snapshot.content.images;
     const memo = this.previewMemo;
     if (memo
       && memo.path === snapshot.currentPath
       && memo.pathType === snapshot.currentPathType
       && memo.text === snapshot.currentText
-      && memo.colorScheme === this.colorScheme
-      && (memo.images === images || (memo.images.size === 0 && images.size === 0))) {
+      && memo.colorScheme === this.colorScheme) {
       // Nothing that feeds the preview changed; keep the existing DOM and any
       // mounted extension handles.
       return;
@@ -1275,23 +1335,32 @@ export class MdzipWorkspaceView {
       path: snapshot.currentPath,
       pathType: snapshot.currentPathType,
       text: snapshot.currentText,
-      colorScheme: this.colorScheme,
-      images
+      colorScheme: this.colorScheme
     };
 
     if (snapshot.currentPathType !== 'markdown') {
-      this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+      if (snapshot.currentPathType === 'image' && this.assetSession) {
+        const abort = new AbortController();
+        this.previewAbort = abort;
+        void this.assetSession.resolve(snapshot.currentPath, snapshot.currentPath).then((src) => {
+          if (generation !== this.previewGeneration || abort.signal.aborted) return;
+          this.elPreviewContent.innerHTML = src
+            ? `<div class="asset-preview-wrap"><img class="asset-preview-image" src="${escapeHtml(src)}" alt="${escapeHtml(snapshot.currentPath)}"></div>`
+            : renderMdzipPreviewHtml(snapshot);
+        }).catch((error) => this.options.onFailed?.(error));
+      } else {
+        this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+      }
       return;
     }
 
     const abort = new AbortController();
     this.previewAbort = abort;
-    const context = this.createMarkdownContext(snapshot, abort.signal, images);
-    const rewritten = rewriteMdzipImageSources(snapshot.currentText, images);
+    const context = this.createMarkdownContext(snapshot, abort.signal);
 
     let result: string | Promise<string>;
     try {
-      result = this.renderingService.renderMarkdown(rewritten, context);
+      result = this.renderingService.renderMarkdown(snapshot.currentText, context);
     } catch (error) {
       this.options.onFailed?.(error);
       this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
@@ -1320,6 +1389,23 @@ export class MdzipWorkspaceView {
   }
 
   private applyPreviewHtml(
+    html: string,
+    context: MdzipMarkdownRenderContext,
+    generation: number
+  ): void {
+    if (html.includes('<img') && this.assetSession) {
+      void this.assetSession.rewriteHtml(html, context.currentPath, context.signal).then((rewritten) => {
+        if (generation !== this.previewGeneration || context.signal.aborted) return;
+        this.mountPreviewHtml(rewritten, context, generation);
+      }).catch((error) => {
+        if ((error as { name?: string })?.name !== 'AbortError') this.options.onFailed?.(error);
+      });
+      return;
+    }
+    this.mountPreviewHtml(html, context, generation);
+  }
+
+  private mountPreviewHtml(
     html: string,
     context: MdzipMarkdownRenderContext,
     generation: number
@@ -1361,8 +1447,7 @@ export class MdzipWorkspaceView {
 
   private createMarkdownContext(
     snapshot: MdzipWorkspaceSnapshot,
-    signal: AbortSignal,
-    images: Map<string, string>
+    signal: AbortSignal
   ): MdzipMarkdownRenderContext {
     return {
       currentPath: snapshot.currentPath,
@@ -1372,7 +1457,7 @@ export class MdzipWorkspaceView {
       manifest: snapshot.content.manifest,
       assetResolver: {
         resolveAssetUrl: (path: string) =>
-          images.get(path) ?? images.get(path.replace(/^\.\//, ''))
+          this.assetSession?.resolveKnown(path, snapshot.currentPath)
       },
       signal
     };

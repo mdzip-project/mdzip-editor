@@ -8,11 +8,13 @@ import {
   OnChanges,
   OnDestroy,
   Output,
+  SimpleChanges,
   ViewChild
 } from '@angular/core';
 import type {
   MdzipDiffSelectionEvent,
   MdzipDiffSideInput,
+  MdzipDiffToolbarAction,
   MdzipDiffView,
   MdzipDiffViewOptions
 } from '@mdzip/editor/diff-view';
@@ -30,6 +32,7 @@ export class MdzipDiffComponent implements AfterViewInit, OnChanges, OnDestroy {
   @Input() initialPath?: string;
   @Input() showUnchanged = true;
   @Input() navigationVisible = true;
+  @Input() toolbarActions: readonly MdzipDiffToolbarAction[] = [];
   @Output() readonly selectionChanged = new EventEmitter<MdzipDiffSelectionEvent>();
   @Output() readonly failed = new EventEmitter<Error>();
 
@@ -41,8 +44,14 @@ export class MdzipDiffComponent implements AfterViewInit, OnChanges, OnDestroy {
     void this.createView();
   }
 
-  ngOnChanges(): void {
-    if (this.view) void this.view.open(this.options());
+  ngOnChanges(changes: SimpleChanges): void {
+    if (!this.view) return;
+    if (changes['before'] || changes['after'] || changes['initialPath']) {
+      void this.view.open(this.options());
+    }
+    if (changes['showUnchanged']) this.view.setShowUnchanged(this.showUnchanged);
+    if (changes['navigationVisible']) this.view.setNavigationVisible(this.navigationVisible);
+    if (changes['toolbarActions']) this.view.setToolbarActions(this.toolbarActions);
   }
 
   ngOnDestroy(): void {
@@ -63,6 +72,10 @@ export class MdzipDiffComponent implements AfterViewInit, OnChanges, OnDestroy {
     this.view?.setNavigationVisible(visible);
   }
 
+  setToolbarActions(actions: readonly MdzipDiffToolbarAction[]): void {
+    this.view?.setToolbarActions(actions);
+  }
+
   private async createView(): Promise<void> {
     const { MdzipDiffView } = await import('@mdzip/editor/diff-view');
     if (this.destroyed) return;
@@ -76,6 +89,7 @@ export class MdzipDiffComponent implements AfterViewInit, OnChanges, OnDestroy {
       initialPath: this.initialPath,
       showUnchanged: this.showUnchanged,
       navigationVisible: this.navigationVisible,
+      toolbarActions: this.toolbarActions,
       onSelectionChanged: (event) => this.selectionChanged.emit(event),
       onFailed: (error) => this.failed.emit(error)
     };

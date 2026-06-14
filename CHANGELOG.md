@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.5] - 2026-06-14
+
+### Added
+- Lazy, session-scoped image resolution that reads only images referenced by
+  the active document or explicitly selected by the user.
+- Optional content-addressed asset caching through `MdzipAssetCache`, including
+  the bounded `MdzipIndexedDbAssetCache` browser adapter and stable
+  `assetSourceId` support for pre-parsed workspaces.
+- A built-in diff toolbar with navigation visibility control and typed,
+  asynchronous host actions. Angular, React, and Vue wrappers expose the same
+  action API without reopening the compared archives.
+
+### Performance
+- Opening a workspace no longer decodes every image. Resolved URLs are reused
+  within the session and released when the workspace is replaced or destroyed.
+- Persistent cache failures fall back to lazy archive reads without breaking
+  rendering.
+
 ## [1.3.4] - 2026-06-13
 
 ### Added

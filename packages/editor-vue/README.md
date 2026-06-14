@@ -54,6 +54,7 @@ import { MdzipDiff } from '@mdzip/editor-vue/diff-view';
       :before="{ bytes: baseBytes, label: 'Git base' }"
       :after="{ bytes: workingBytes, label: 'Working tree' }"
       initial-path="index.md"
+      :toolbar-actions="[{ id: 'refresh', label: 'Refresh', icon: 'refresh', run: refresh }]"
     />
   </div>
 </template>
@@ -61,6 +62,7 @@ import { MdzipDiff } from '@mdzip/editor-vue/diff-view';
 
 The component emits `selectionChanged` and `failed`. Its exposed handle
 provides `openPath`, `setShowUnchanged`, and `setNavigationVisible`.
+It also provides `setToolbarActions`.
 
 ## Editor Mode
 

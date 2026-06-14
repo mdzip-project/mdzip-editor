@@ -49,13 +49,14 @@ import { MdzipDiff } from '@mdzip/editor-react/diff-view';
     before={{ bytes: baseBytes, label: 'Git base' }}
     after={{ bytes: workingBytes, label: 'Working tree' }}
     initialPath="index.md"
+    toolbarActions={[{ id: 'refresh', label: 'Refresh', icon: 'refresh', run: refresh }]}
   />
 </div>
 ```
 
 `MdzipDiff` is read-only and updates the existing comparison view when its
 props change. A ref exposes `openPath`, `setShowUnchanged`, and
-`setNavigationVisible`.
+`setNavigationVisible`, and `setToolbarActions`.
 
 ## Editor Mode
 

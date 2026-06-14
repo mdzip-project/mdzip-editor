@@ -3,6 +3,7 @@ import { MergeView } from '@codemirror/merge';
 import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { MdzArchiveCore } from '@mdzip/core-js';
+import { PanelLeft, RefreshCw, type IconNode } from 'lucide';
 import {
   createArchiveInventoryFromArchive,
   diffArchiveInventories,
@@ -24,12 +25,24 @@ export interface MdzipDiffSelectionEvent {
   entry: ArchiveInventoryDiffEntry;
 }
 
+export type MdzipDiffToolbarIcon = 'refresh';
+
+export interface MdzipDiffToolbarAction {
+  id: string;
+  label: string;
+  icon?: MdzipDiffToolbarIcon;
+  disabled?: boolean;
+  pressed?: boolean;
+  run: () => void | Promise<void>;
+}
+
 export interface MdzipDiffViewOptions {
   before: MdzipDiffSideInput;
   after: MdzipDiffSideInput;
   initialPath?: string;
   showUnchanged?: boolean;
   navigationVisible?: boolean;
+  toolbarActions?: readonly MdzipDiffToolbarAction[];
   onSelectionChanged?: (event: MdzipDiffSelectionEvent) => void;
   onFailed?: (error: Error) => void;
 }
@@ -59,8 +72,14 @@ export class MdzipDiffView {
   private objectUrls: string[] = [];
   private openingOptions: MdzipDiffViewOptions | null = null;
   private openingPromise: Promise<void> | null = null;
+  private toolbarActions: readonly MdzipDiffToolbarAction[];
+  private pendingToolbarAction: string | null = null;
 
   private readonly root: HTMLElement;
+  private readonly workspace: HTMLElement;
+  private readonly toolbar: HTMLElement;
+  private readonly navButton: HTMLButtonElement;
+  private readonly actionHost: HTMLElement;
   private readonly nav: HTMLElement;
   private readonly summary: HTMLElement;
   private readonly list: HTMLElement;
@@ -71,25 +90,39 @@ export class MdzipDiffView {
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? true;
     this.navigationVisible = options.navigationVisible ?? true;
+    this.toolbarActions = options.toolbarActions ?? [];
     injectDiffViewStyles(container.ownerDocument);
     container.replaceChildren();
     this.root = container.ownerDocument.createElement('div');
     this.root.className = 'mdzip-diff-root';
     this.root.innerHTML = `
-      <aside class="mdzip-diff-nav">
-        <div class="mdzip-diff-summary"></div>
-        <div class="mdzip-diff-list" role="tree" aria-label="Archive comparison files"></div>
-      </aside>
-      <main class="mdzip-diff-content">
-        <div class="mdzip-diff-heading"></div>
-        <div class="mdzip-diff-body"><div class="mdzip-diff-message">Loading comparison...</div></div>
-      </main>`;
+      <div class="mdzip-diff-toolbar" role="toolbar" aria-label="Comparison controls">
+        <button class="mdzip-diff-toolbar-button" type="button" data-ref="navigation" title="Toggle navigation" aria-label="Toggle navigation"></button>
+        <div class="mdzip-diff-toolbar-actions" data-ref="actions"></div>
+      </div>
+      <div class="mdzip-diff-workspace">
+        <aside class="mdzip-diff-nav">
+          <div class="mdzip-diff-summary"></div>
+          <div class="mdzip-diff-list" role="tree" aria-label="Archive comparison files"></div>
+        </aside>
+        <main class="mdzip-diff-content">
+          <div class="mdzip-diff-heading"></div>
+          <div class="mdzip-diff-body"><div class="mdzip-diff-message">Loading comparison...</div></div>
+        </main>
+      </div>`;
     container.appendChild(this.root);
+    this.workspace = this.root.querySelector('.mdzip-diff-workspace') as HTMLElement;
+    this.toolbar = this.root.querySelector('.mdzip-diff-toolbar') as HTMLElement;
+    this.navButton = this.root.querySelector('[data-ref="navigation"]') as HTMLButtonElement;
+    this.actionHost = this.root.querySelector('[data-ref="actions"]') as HTMLElement;
     this.nav = this.root.querySelector('.mdzip-diff-nav') as HTMLElement;
     this.summary = this.root.querySelector('.mdzip-diff-summary') as HTMLElement;
     this.list = this.root.querySelector('.mdzip-diff-list') as HTMLElement;
     this.heading = this.root.querySelector('.mdzip-diff-heading') as HTMLElement;
     this.body = this.root.querySelector('.mdzip-diff-body') as HTMLElement;
+    this.navButton.innerHTML = iconHtml(PanelLeft);
+    this.navButton.addEventListener('click', () => this.setNavigationVisible(!this.navigationVisible));
+    this.renderToolbar();
     void this.open(options);
   }
 
@@ -115,6 +148,8 @@ export class MdzipDiffView {
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? this.showUnchanged;
     this.navigationVisible = options.navigationVisible ?? this.navigationVisible;
+    this.toolbarActions = options.toolbarActions ?? this.toolbarActions;
+    this.renderToolbar();
     this.selectedPath = null;
     this.selectionGeneration += 1;
     this.disposeSelection();
@@ -155,7 +190,14 @@ export class MdzipDiffView {
   public setNavigationVisible(visible: boolean): void {
     this.navigationVisible = visible;
     this.nav.hidden = !visible;
-    this.root.style.gridTemplateColumns = visible ? '' : '1fr';
+    this.workspace.style.gridTemplateColumns = visible ? '' : '1fr';
+    this.navButton.setAttribute('aria-pressed', String(visible));
+    this.navButton.classList.toggle('active', visible);
+  }
+
+  public setToolbarActions(actions: readonly MdzipDiffToolbarAction[]): void {
+    this.toolbarActions = actions;
+    this.renderToolbar();
   }
 
   public destroy(): void {
@@ -163,6 +205,42 @@ export class MdzipDiffView {
     this.selectionGeneration += 1;
     this.disposeSelection();
     this.root.remove();
+  }
+
+  private renderToolbar(): void {
+    this.setNavigationVisible(this.navigationVisible);
+    this.actionHost.replaceChildren();
+    for (const action of this.toolbarActions) {
+      const button = this.root.ownerDocument.createElement('button');
+      button.type = 'button';
+      button.className = 'mdzip-diff-toolbar-button';
+      button.title = action.label;
+      button.setAttribute('aria-label', action.label);
+      if (action.pressed !== undefined) {
+        button.setAttribute('aria-pressed', String(action.pressed));
+        button.classList.toggle('active', action.pressed);
+      }
+      button.disabled = action.disabled === true || this.pendingToolbarAction === action.id;
+      if (action.icon === 'refresh') button.innerHTML = iconHtml(RefreshCw);
+      else button.textContent = action.label;
+      button.addEventListener('click', () => void this.runToolbarAction(action));
+      this.actionHost.append(button);
+    }
+    this.toolbar.hidden = false;
+  }
+
+  private async runToolbarAction(action: MdzipDiffToolbarAction): Promise<void> {
+    if (action.disabled || this.pendingToolbarAction) return;
+    this.pendingToolbarAction = action.id;
+    this.renderToolbar();
+    try {
+      await action.run();
+    } catch (cause) {
+      this.options.onFailed?.(cause instanceof Error ? cause : new Error(String(cause)));
+    } finally {
+      this.pendingToolbarAction = null;
+      this.renderToolbar();
+    }
   }
 
   private async openSide(input: MdzipDiffSideInput): Promise<DiffSide> {
@@ -502,6 +580,13 @@ function mimeFromPath(path: string): string {
 
 function isUnsupportedVersionError(error: Error): boolean {
   return /unsupported.*version|version.*unsupported/i.test(error.message);
+}
+
+function iconHtml(icon: IconNode): string {
+  return `<svg class="mdzip-diff-toolbar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon.map(([tag, attributes]) => {
+    const attrs = Object.entries(attributes).map(([name, value]) => `${name}="${String(value)}"`).join(' ');
+    return `<${tag} ${attrs}></${tag}>`;
+  }).join('')}</svg>`;
 }
 
 function escapeHtml(value: string): string {

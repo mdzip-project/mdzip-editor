@@ -48,9 +48,14 @@ export interface MdzipWorkspaceOpenOptions {
    * document. Ignored by `open`, which already has the bytes.
    */
   archiveBytes?: Uint8Array;
+  /**
+   * Stable identity for a pre-parsed workspace's backing archive. Asset caches
+   * use it to find content without invoking lazy ZIP readers on a later open.
+   */
+  assetSourceId?: string;
 }
 
-type ResolvedMdzipWorkspaceOpenOptions = Required<Omit<MdzipWorkspaceOpenOptions, 'archiveBytes'>>;
+type ResolvedMdzipWorkspaceOpenOptions = Required<Omit<MdzipWorkspaceOpenOptions, 'archiveBytes' | 'assetSourceId'>>;
 
 export interface MdzipWorkspaceSnapshot {
   mode: MdzipWorkspaceMode;

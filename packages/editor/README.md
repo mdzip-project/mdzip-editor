@@ -57,9 +57,26 @@ rebuild:
 ```ts
 await view.openWorkspace(workspace, {
   mode: 'editable',
-  fileName: 'document.mdz'
+  fileName: 'document.mdz',
+  assetSourceId: 'document-etag-or-content-id'
 });
 ```
+
+Images are resolved only when referenced by the active document or selected in
+the navigator. To reuse resolved bytes across sessions, inject the optional
+bounded IndexedDB cache:
+
+```ts
+import { MdzipIndexedDbAssetCache, MdzipWorkspaceView } from '@mdzip/editor';
+
+const view = new MdzipWorkspaceView(container, {
+  assetCache: new MdzipIndexedDbAssetCache({ maxBytes: 64 * 1024 * 1024 })
+});
+```
+
+For `openWorkspace()`, provide a stable `assetSourceId` (or `archiveBytes`) so
+cache hits can bypass lazy ZIP readers. Cache and storage failures automatically
+fall back to archive reads.
 
 ## Editor Mode
 
@@ -225,13 +242,20 @@ import { MdzipDiffView } from '@mdzip/editor/diff-view';
 const diff = new MdzipDiffView(container, {
   before: { bytes: baseBytes, label: 'Git base' },
   after: { bytes: workingBytes, label: 'Working tree' },
-  initialPath: 'index.md'
+  initialPath: 'index.md',
+  toolbarActions: [{
+    id: 'refresh',
+    label: 'Refresh comparison',
+    icon: 'refresh',
+    run: refreshComparison
+  }]
 });
 ```
 
 Construction opens the initial comparison. Use `await diff.open(options)` to
 replace both sides, `openPath(path)` to select an entry, and
-`setShowUnchanged(false)` to focus the tree on changes.
+`setShowUnchanged(false)` to focus the tree on changes. Toolbar actions may be
+updated with `setToolbarActions()` without reopening either archive.
 
 The read-only view shows the union of archive paths in a directory tree,
 added/removed/changed status, side-by-side text diffs, explicit missing-side

@@ -23,6 +23,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly openPath = vi.fn(async () => true);
     public readonly setShowUnchanged = vi.fn();
     public readonly setNavigationVisible = vi.fn();
+    public readonly setToolbarActions = vi.fn();
     public readonly destroy = vi.fn();
     public constructor(
       public readonly container: HTMLElement,
@@ -89,7 +90,7 @@ test('composes explicit entry renderers with the renderEntry catch-all', () => {
   expect(latestView().options['libraries']).toEqual([
     expect.objectContaining({
       name: '@mdzip/editor-react',
-      version: '1.3.4',
+      version: '1.3.5',
       repositoryUrl: expect.stringContaining('/packages/editor-react'),
       description: expect.stringContaining('React wrapper')
     })
@@ -185,7 +186,8 @@ test('diff wrapper opens in place and exposes the imperative API', async () => {
   rerender(<MdzipDiff ref={ref} before={before} after={after} showUnchanged={false} />);
   await act(async () => {});
   expect(diffViewInstances).toHaveLength(1);
-  expect(view.open).toHaveBeenCalledTimes(2);
+  expect(view.open).toHaveBeenCalledTimes(1);
+  expect(view.setShowUnchanged).toHaveBeenLastCalledWith(false);
 
   await ref.current?.openPath('index.md');
   expect(view.openPath).toHaveBeenCalledWith('index.md');
