@@ -41,6 +41,27 @@ const props = defineProps<{ bytes: Uint8Array }>();
 
 The parent element must have an explicit height. The component expands to fill it.
 
+## Archive Diff
+
+```vue
+<script setup lang="ts">
+import { MdzipDiff } from '@mdzip/editor-vue/diff-view';
+</script>
+
+<template>
+  <div style="height: 600px">
+    <MdzipDiff
+      :before="{ bytes: baseBytes, label: 'Git base' }"
+      :after="{ bytes: workingBytes, label: 'Working tree' }"
+      initial-path="index.md"
+    />
+  </div>
+</template>
+```
+
+The component emits `selectionChanged` and `failed`. Its exposed handle
+provides `openPath`, `setShowUnchanged`, and `setNavigationVisible`.
+
 ## Editor Mode
 
 ```vue

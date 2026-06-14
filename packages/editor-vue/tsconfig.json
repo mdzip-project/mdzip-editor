@@ -8,7 +8,8 @@
     "declaration": true,
     "declarationMap": true,
     "paths": {
-      "@mdzip/editor": ["../editor/dist/index.d.ts"]
+      "@mdzip/editor": ["../editor/dist/index.d.ts"],
+      "@mdzip/editor/diff-view": ["../editor/dist/diff-view.d.ts"]
     }
   },
   "include": ["src/**/*.ts"]

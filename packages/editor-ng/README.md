@@ -42,6 +42,28 @@ export class AppComponent {
 
 The host element must have an explicit height. The component expands to fill it.
 
+## Archive Diff
+
+```ts
+import { MdzipDiffComponent } from '@mdzip/editor-ng';
+
+@Component({
+  imports: [MdzipDiffComponent],
+  template: `
+    <mdzip-diff
+      [before]="{ bytes: baseBytes, label: 'Git base' }"
+      [after]="{ bytes: workingBytes, label: 'Working tree' }"
+      initialPath="index.md"
+    />
+  `,
+  styles: [':host { display:block; height:600px; }']
+})
+export class DiffComponent {}
+```
+
+`MdzipDiffComponent` is read-only. It emits `selectionChanged` and `failed`,
+and exposes `openPath`, `setShowUnchanged`, and `setNavigationVisible`.
+
 ## Editor Mode
 
 ```ts

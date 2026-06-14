@@ -3,7 +3,7 @@ import { PRESETS } from './tab-controls.js';
 import type { MdzipControlPreset } from 'mdzip-editor';
 import type { TabController } from './tab-controller.js';
 
-type TabId = 'raw' | 'angular' | 'react' | 'vue';
+type TabId = 'raw' | 'diff' | 'angular' | 'react' | 'vue';
 
 let activeTab: TabId = 'raw';
 let currentBytes: Uint8Array | null = null;
@@ -45,6 +45,10 @@ async function getOrInitTab(tabId: TabId): Promise<TabController> {
     switch (tabId) {
       case 'raw':
         return initRaw(container, onSaved, onFailed);
+      case 'diff': {
+        const { initDiff } = await import('./tabs/diff.js');
+        return initDiff(container, onFailed);
+      }
       case 'react': {
         const { initReact } = await import('./tabs/react.js');
         return initReact(container, onSaved, onFailed);

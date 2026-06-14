@@ -3,8 +3,9 @@ import { h, nextTick } from 'vue';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { MdzipEntryRenderContext, MdzipEntryRenderer } from '@mdzip/editor';
 
-const { MockView, viewInstances } = vi.hoisted(() => {
+const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(() => {
   const viewInstances: MockView[] = [];
+  const diffViewInstances: MockDiffView[] = [];
   class MockView {
     public readonly container: HTMLElement;
     public readonly options: Record<string, unknown>;
@@ -18,15 +19,32 @@ const { MockView, viewInstances } = vi.hoisted(() => {
       viewInstances.push(this);
     }
   }
-  return { MockView, viewInstances };
+  class MockDiffView {
+    public readonly open = vi.fn(async () => {});
+    public readonly openPath = vi.fn(async () => true);
+    public readonly setShowUnchanged = vi.fn();
+    public readonly setNavigationVisible = vi.fn();
+    public readonly destroy = vi.fn();
+    public constructor(
+      public readonly container: HTMLElement,
+      public readonly options: Record<string, unknown>
+    ) {
+      diffViewInstances.push(this);
+      void this.open(options);
+    }
+  }
+  return { MockView, MockDiffView, viewInstances, diffViewInstances };
 });
 
 vi.mock('@mdzip/editor', () => ({ MdzipWorkspaceView: MockView }));
+vi.mock('@mdzip/editor/diff-view', () => ({ MdzipDiffView: MockDiffView }));
 
 import { MdzipWorkspace } from '../src/index';
+import { MdzipDiff } from '../src/diff-view';
 
 afterEach(() => {
   viewInstances.length = 0;
+  diffViewInstances.length = 0;
 });
 
 function entryContext(path: string, overrides: Partial<MdzipEntryRenderContext> = {}): MdzipEntryRenderContext {
@@ -73,7 +91,7 @@ test('composes explicit entry renderers with the #entry slot catch-all', () => {
   expect(latestView().options['libraries']).toEqual([
     expect.objectContaining({
       name: '@mdzip/editor-vue',
-      version: '1.3.3',
+      version: '1.3.4',
       repositoryUrl: expect.stringContaining('/packages/editor-vue'),
       description: expect.stringContaining('Vue wrapper')
     })
@@ -126,4 +144,19 @@ test('inline prop identities with stable ids never recreate or re-apply', async 
     entryRenderers: MdzipEntryRenderer[];
   };
   expect(applied.entryRenderers.map((renderer) => renderer.id)).toEqual(['changed']);
+});
+
+test('diff wrapper updates one view and exposes navigation methods', async () => {
+  const before = { bytes: Uint8Array.from([1]), label: 'Base' };
+  const after = { bytes: Uint8Array.from([2]), label: 'Working' };
+  const wrapper = mount(MdzipDiff, { props: { before, after } });
+  await nextTick();
+  const view = diffViewInstances[0];
+  expect(view.open).toHaveBeenCalledTimes(1);
+
+  await wrapper.setProps({ showUnchanged: false });
+  expect(diffViewInstances).toHaveLength(1);
+  expect(view.open).toHaveBeenCalledTimes(2);
+  await wrapper.vm.openPath('index.md');
+  expect(view.openPath).toHaveBeenCalledWith('index.md');
 });

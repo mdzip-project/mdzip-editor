@@ -38,7 +38,7 @@ interface DiffSide {
   input: MdzipDiffSideInput;
   archive: MdzArchiveCore | null;
   inventory: ArchiveInventory;
-  state: 'ready' | 'missing' | 'empty' | 'invalid';
+  state: 'ready' | 'missing' | 'empty' | 'invalid' | 'unsupported-version';
   error?: Error;
 }
 
@@ -55,7 +55,10 @@ export class MdzipDiffView {
   private showUnchanged: boolean;
   private navigationVisible: boolean;
   private mergeView: MergeView | null = null;
+  private editorViews: EditorView[] = [];
   private objectUrls: string[] = [];
+  private openingOptions: MdzipDiffViewOptions | null = null;
+  private openingPromise: Promise<void> | null = null;
 
   private readonly root: HTMLElement;
   private readonly nav: HTMLElement;
@@ -90,7 +93,24 @@ export class MdzipDiffView {
     void this.open(options);
   }
 
-  public async open(options: MdzipDiffViewOptions): Promise<void> {
+  public open(options: MdzipDiffViewOptions): Promise<void> {
+    if (this.openingPromise && this.openingOptions === options) {
+      return this.openingPromise;
+    }
+    const promise = this.openComparison(options);
+    this.openingOptions = options;
+    this.openingPromise = promise;
+    const clear = (): void => {
+      if (this.openingPromise === promise) {
+        this.openingOptions = null;
+        this.openingPromise = null;
+      }
+    };
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  private async openComparison(options: MdzipDiffViewOptions): Promise<void> {
     const generation = ++this.generation;
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? this.showUnchanged;
@@ -155,7 +175,13 @@ export class MdzipDiffView {
     } catch (cause) {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       this.options.onFailed?.(error);
-      return { input, archive: null, inventory: EMPTY_INVENTORY, state: 'invalid', error };
+      return {
+        input,
+        archive: null,
+        inventory: EMPTY_INVENTORY,
+        state: isUnsupportedVersionError(error) ? 'unsupported-version' : 'invalid',
+        error
+      };
     }
   }
 
@@ -182,13 +208,34 @@ export class MdzipDiffView {
     this.summary.append(labels, counts, filter);
 
     this.list.replaceChildren();
-    for (const entry of diff.entries) {
-      if (!this.showUnchanged && entry.status === 'unchanged') continue;
+    const visibleEntries = diff.entries.filter(
+      (entry) => this.showUnchanged || entry.status !== 'unchanged'
+    );
+    let previousDirectories: string[] = [];
+    for (const entry of visibleEntries) {
+      const directories = entry.path.split('/').slice(0, -1);
+      let shared = 0;
+      while (shared < directories.length
+        && directories[shared] === previousDirectories[shared]) {
+        shared += 1;
+      }
+      for (let index = shared; index < directories.length; index += 1) {
+        const directory = this.root.ownerDocument.createElement('div');
+        directory.className = 'mdzip-diff-directory';
+        directory.setAttribute('role', 'presentation');
+        directory.style.setProperty('--mdzip-diff-depth', String(index));
+        directory.textContent = directories[index];
+        this.list.append(directory);
+      }
+      previousDirectories = directories;
+
       const button = this.root.ownerDocument.createElement('button');
       button.type = 'button';
       button.className = `mdzip-diff-entry ${entry.status}${entry.path === this.selectedPath ? ' active' : ''}`;
       button.setAttribute('role', 'treeitem');
+      button.setAttribute('aria-level', String(directories.length + 1));
       button.setAttribute('aria-label', `${entry.path}, ${entry.status}`);
+      button.style.setProperty('--mdzip-diff-depth', String(directories.length));
       const status = this.root.ownerDocument.createElement('span');
       status.className = 'mdzip-diff-status';
       status.textContent = statusSymbol(entry.status);
@@ -197,6 +244,7 @@ export class MdzipDiffView {
       path.textContent = entry.path;
       button.append(status, path);
       button.addEventListener('click', () => { void this.openPath(entry.path); });
+      button.addEventListener('keydown', (event) => this.handleNavigationKey(event));
       this.list.append(button);
     }
   }
@@ -244,15 +292,39 @@ export class MdzipDiffView {
       EditorView.lineWrapping
     ];
     if (entry.kind === 'markdown') extensions.push(markdown());
+    if (before === null || after === null) {
+      this.body.append(this.createPair(
+        this.textSide(before, extensions),
+        this.textSide(after, extensions)
+      ));
+      return;
+    }
     this.mergeView = new MergeView({
-      a: { doc: before ?? '', extensions },
-      b: { doc: after ?? '', extensions },
+      a: { doc: before, extensions },
+      b: { doc: after, extensions },
       parent: this.body,
       root: this.root.ownerDocument,
       highlightChanges: true,
       gutter: true,
       diffConfig: { scanLimit: 2000, timeout: 100 }
     });
+  }
+
+  private textSide(text: string | null, extensions: readonly Extension[]): HTMLElement {
+    const side = this.root.ownerDocument.createElement('div');
+    side.className = 'mdzip-diff-side mdzip-diff-text-side';
+    if (text === null) {
+      side.classList.add('mdzip-diff-missing');
+      side.textContent = 'File does not exist';
+      return side;
+    }
+    const editor = new EditorView({
+      state: EditorState.create({ doc: text, extensions }),
+      parent: side,
+      root: this.root.ownerDocument
+    });
+    this.editorViews.push(editor);
+    return side;
   }
 
   private renderImages(
@@ -282,7 +354,14 @@ export class MdzipDiffView {
     image.alt = '';
     const meta = this.root.ownerDocument.createElement('div');
     meta.className = 'mdzip-diff-meta';
-    meta.textContent = `${mime}\n${bytes.length} bytes\nSHA-256 ${hash ?? 'unknown'}`;
+    const updateMetadata = (): void => {
+      const dimensions = image.naturalWidth && image.naturalHeight
+        ? `${image.naturalWidth} x ${image.naturalHeight}\n`
+        : '';
+      meta.textContent = `${mime}\n${dimensions}${bytes.length} bytes\nSHA-256 ${hash ?? 'unknown'}`;
+    };
+    image.addEventListener('load', updateMetadata, { once: true });
+    updateMetadata();
     side.append(image, meta);
     return side;
   }
@@ -293,16 +372,21 @@ export class MdzipDiffView {
     entry: ArchiveInventoryDiffEntry
   ): void {
     this.body.replaceChildren(this.createPair(
-      this.binarySide(before, entry.before?.hash),
-      this.binarySide(after, entry.after?.hash)
+      this.binarySide(before, entry.path, entry.kind, entry.before?.hash),
+      this.binarySide(after, entry.path, entry.kind, entry.after?.hash)
     ));
   }
 
-  private binarySide(bytes: Uint8Array | null, hash?: string): HTMLElement {
+  private binarySide(
+    bytes: Uint8Array | null,
+    path: string,
+    kind: ArchiveInventoryDiffEntry['kind'],
+    hash?: string
+  ): HTMLElement {
     const side = this.root.ownerDocument.createElement('div');
     side.className = 'mdzip-diff-side mdzip-diff-meta';
     side.textContent = bytes
-      ? `Binary file\n${bytes.length} bytes\nSHA-256 ${hash ?? 'unknown'}`
+      ? `${kind}\n${mimeFromPath(path)}\n${bytes.length} bytes\nSHA-256 ${hash ?? 'unknown'}`
       : 'File does not exist';
     return side;
   }
@@ -328,8 +412,27 @@ export class MdzipDiffView {
   private disposeSelection(): void {
     this.mergeView?.destroy();
     this.mergeView = null;
+    for (const editor of this.editorViews) editor.destroy();
+    this.editorViews = [];
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.objectUrls = [];
+  }
+
+  private handleNavigationKey(event: KeyboardEvent): void {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const entries = Array.from(
+      this.list.querySelectorAll<HTMLButtonElement>('.mdzip-diff-entry')
+    );
+    const current = entries.indexOf(event.currentTarget as HTMLButtonElement);
+    if (current < 0) return;
+    const target = event.key === 'Home'
+      ? entries[0]
+      : event.key === 'End'
+        ? entries.at(-1)
+        : entries[current + (event.key === 'ArrowDown' ? 1 : -1)];
+    if (!target) return;
+    event.preventDefault();
+    target.focus();
   }
 }
 
@@ -367,6 +470,7 @@ function sideLabel(side: DiffSide, fallback: string): string {
   if (side.state === 'missing') return side.input.missingMessage ?? `${fallback} missing`;
   if (side.state === 'empty') return `${fallback} empty`;
   if (side.state === 'invalid') return `${fallback} invalid`;
+  if (side.state === 'unsupported-version') return `${fallback} unsupported version`;
   return fallback;
 }
 
@@ -384,6 +488,20 @@ function imageMime(path: string): string {
   if (extension === 'webp') return 'image/webp';
   if (extension === 'svg') return 'image/svg+xml';
   return 'image/png';
+}
+
+function mimeFromPath(path: string): string {
+  const extension = path.split('.').pop()?.toLowerCase();
+  if (extension === 'json') return 'application/json';
+  if (extension === 'pdf') return 'application/pdf';
+  if (extension === 'zip' || extension === 'mdz') return 'application/zip';
+  if (extension === 'svg') return 'image/svg+xml';
+  if (extension === 'txt' || extension === 'log') return 'text/plain';
+  return 'application/octet-stream';
+}
+
+function isUnsupportedVersionError(error: Error): boolean {
+  return /unsupported.*version|version.*unsupported/i.test(error.message);
 }
 
 function escapeHtml(value: string): string {

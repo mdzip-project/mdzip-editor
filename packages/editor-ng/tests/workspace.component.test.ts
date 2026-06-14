@@ -6,8 +6,9 @@ import { BrowserTestingModule, platformBrowserTesting } from '@angular/platform-
 import { afterEach, beforeAll, expect, test, vi } from 'vitest';
 import type { MdzipEntryRenderContext, MdzipEntryRenderer } from '@mdzip/editor';
 
-const { MockView, viewInstances } = vi.hoisted(() => {
+const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(() => {
   const viewInstances: MockView[] = [];
+  const diffViewInstances: MockDiffView[] = [];
   class MockView {
     public readonly container: HTMLElement;
     public readonly options: Record<string, unknown>;
@@ -21,13 +22,29 @@ const { MockView, viewInstances } = vi.hoisted(() => {
       viewInstances.push(this);
     }
   }
-  return { MockView, viewInstances };
+  class MockDiffView {
+    public readonly open = vi.fn(async () => {});
+    public readonly openPath = vi.fn(async () => true);
+    public readonly setShowUnchanged = vi.fn();
+    public readonly setNavigationVisible = vi.fn();
+    public readonly destroy = vi.fn();
+    public constructor(
+      public readonly container: HTMLElement,
+      public readonly options: Record<string, unknown>
+    ) {
+      diffViewInstances.push(this);
+      void this.open(options);
+    }
+  }
+  return { MockView, MockDiffView, viewInstances, diffViewInstances };
 });
 
 vi.mock('@mdzip/editor', () => ({ MdzipWorkspaceView: MockView }));
+vi.mock('@mdzip/editor/diff-view', () => ({ MdzipDiffView: MockDiffView }));
 
 import { MdzipWorkspaceComponent } from '../src/workspace.component';
 import { MdzipEntryRendererDirective } from '../src/entry-renderer.directive';
+import { MdzipDiffComponent } from '../src/diff.component';
 
 beforeAll(() => {
   TestBed.initTestEnvironment(BrowserTestingModule, platformBrowserTesting());
@@ -35,6 +52,7 @@ beforeAll(() => {
 
 afterEach(() => {
   viewInstances.length = 0;
+  diffViewInstances.length = 0;
   TestBed.resetTestingModule();
 });
 
@@ -104,7 +122,7 @@ test('composes explicit entry renderers with template directives', () => {
   expect(latestView().options['libraries']).toEqual([
     expect.objectContaining({
       name: '@mdzip/editor-ng',
-      version: '1.3.3',
+      version: '1.3.4',
       repositoryUrl: expect.stringContaining('/packages/editor-ng'),
       description: expect.stringContaining('Angular')
     })
@@ -154,4 +172,23 @@ test('identity changes with stable ids never recreate or re-apply', () => {
   fixture.detectChanges();
   expect(viewInstances).toHaveLength(1);
   expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
+});
+
+test('diff component updates one view and exposes navigation methods', async () => {
+  TestBed.configureTestingModule({ imports: [MdzipDiffComponent] });
+  const fixture = TestBed.createComponent(MdzipDiffComponent);
+  fixture.componentRef.setInput('before', { bytes: Uint8Array.from([1]), label: 'Base' });
+  fixture.componentRef.setInput('after', { bytes: Uint8Array.from([2]), label: 'Working' });
+  fixture.detectChanges();
+  await vi.waitFor(() => expect(diffViewInstances).toHaveLength(1));
+
+  const view = diffViewInstances[0];
+  expect(view.open).toHaveBeenCalledTimes(1);
+  fixture.componentRef.setInput('showUnchanged', false);
+  fixture.detectChanges();
+  expect(diffViewInstances).toHaveLength(1);
+  expect(view.open).toHaveBeenCalledTimes(2);
+
+  await fixture.componentInstance.openPath('index.md');
+  expect(view.openPath).toHaveBeenCalledWith('index.md');
 });

@@ -129,7 +129,7 @@ test('preview-only views do not initialize CodeMirror', async () => {
     initialColorScheme: 'light',
     libraries: [{
       name: '@mdzip/editor-react',
-      version: '1.3.3',
+      version: '1.3.4',
       repositoryUrl: 'https://github.com/mdzip-project/mdzip-editor/tree/main/packages/editor-react',
       description: 'React wrapper for the MDZip workspace editor.'
     }]
@@ -143,8 +143,8 @@ test('preview-only views do not initialize CodeMirror', async () => {
     assert.equal(container.querySelector('[data-ref="editor-host"]').childNodes.length, 0);
     assert.match(container.querySelector('[data-ref="preview-content"]').textContent, /Preview only/);
     const libraryText = container.querySelector('[data-ref="library-list"]').textContent;
-    assert.match(libraryText, /@mdzip\/editor-react\s*1\.3\.3/);
-    assert.match(libraryText, /@mdzip\/editor\s*1\.3\.3/);
+    assert.match(libraryText, /@mdzip\/editor-react\s*1\.3\.4/);
+    assert.match(libraryText, /@mdzip\/editor\s*1\.3\.4/);
     assert.match(libraryText, /@mdzip\/core-js\s*\d+\.\d+\.\d+/);
     assert.match(libraryText, /CodeMirror\s*\d+\.\d+\.\d+/);
     assert.match(libraryText, /Marked\s*\d+\.\d+\.\d+/);

@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.4] - 2026-06-13
+
+### Added
+- Completed `MdzipDiffView` with hierarchical union navigation, keyboard
+  support, explicit missing-side states, image dimensions and metadata,
+  binary MIME metadata, and corrupt-side isolation.
+- Added React and Vue diff-view entry points, an Angular diff component, and
+  a browser demo comparison tab.
+- Expanded diff coverage for one-sided text, images, binaries, object URL
+  cleanup, stale async selection, invalid archives, keyboard navigation, and
+  large entry sets.
+
+### Performance
+- Immediate duplicate `open()` calls are deduplicated.
+- Diff dependencies remain outside normal editor wrapper bundles. React and
+  Vue use dedicated `/diff-view` exports; Angular loads the core diff view
+  dynamically when its diff component mounts.
+
 ## [1.3.3] - 2026-06-13
 
 ### Added
@@ -7,8 +25,11 @@
   Hosts can insert Markdown at the captured selection or continue with the
   built-in MDZ conversion without depending on CodeMirror internals.
 - `@mdzip/editor/diff-view`, an optional read-only archive comparison view
-  with union navigation, entry status filtering, side-by-side text diffs,
-  image comparison, binary metadata, stale-load protection, and cleanup.
+  with hierarchical union navigation, entry status filtering, side-by-side
+  text diffs, explicit missing-side states, image comparison, binary metadata,
+  corrupt-side isolation, stale-load protection, and cleanup.
+- Native `MdzipDiff` wrappers for React and Vue, an Angular
+  `MdzipDiffComponent`, and a browser demo comparison tab.
 - `@mdzip/editor/preview`, a preview-focused entry point that excludes the
   CodeMirror-backed workspace view from its module graph.
 - The Document Information dialog now includes the editor and major runtime

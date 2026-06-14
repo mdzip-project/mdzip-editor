@@ -2,8 +2,9 @@ import { act, cleanup, render } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { MdzipEntryRenderContext, MdzipEntryRenderer } from '@mdzip/editor';
 
-const { MockView, viewInstances } = vi.hoisted(() => {
+const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(() => {
   const viewInstances: MockView[] = [];
+  const diffViewInstances: MockDiffView[] = [];
   class MockView {
     public readonly container: HTMLElement;
     public readonly options: Record<string, unknown>;
@@ -17,16 +18,33 @@ const { MockView, viewInstances } = vi.hoisted(() => {
       viewInstances.push(this);
     }
   }
-  return { MockView, viewInstances };
+  class MockDiffView {
+    public readonly open = vi.fn(async () => {});
+    public readonly openPath = vi.fn(async () => true);
+    public readonly setShowUnchanged = vi.fn();
+    public readonly setNavigationVisible = vi.fn();
+    public readonly destroy = vi.fn();
+    public constructor(
+      public readonly container: HTMLElement,
+      public readonly options: Record<string, unknown>
+    ) {
+      diffViewInstances.push(this);
+      void this.open(options);
+    }
+  }
+  return { MockView, MockDiffView, viewInstances, diffViewInstances };
 });
 
 vi.mock('@mdzip/editor', () => ({ MdzipWorkspaceView: MockView }));
+vi.mock('@mdzip/editor/diff-view', () => ({ MdzipDiffView: MockDiffView }));
 
 import { MdzipWorkspace } from '../src/index';
+import { MdzipDiff } from '../src/diff-view';
 
 afterEach(() => {
   cleanup();
   viewInstances.length = 0;
+  diffViewInstances.length = 0;
 });
 
 function entryContext(path: string, overrides: Partial<MdzipEntryRenderContext> = {}): MdzipEntryRenderContext {
@@ -71,7 +89,7 @@ test('composes explicit entry renderers with the renderEntry catch-all', () => {
   expect(latestView().options['libraries']).toEqual([
     expect.objectContaining({
       name: '@mdzip/editor-react',
-      version: '1.3.3',
+      version: '1.3.4',
       repositoryUrl: expect.stringContaining('/packages/editor-react'),
       description: expect.stringContaining('React wrapper')
     })
@@ -151,4 +169,24 @@ test('renderEntry adapter matches, mounts, updates, stays live with parent state
   act(() => handle.destroy());
   await act(async () => {}); // unmount is deferred to a microtask
   expect(container.childNodes).toHaveLength(0);
+});
+
+test('diff wrapper opens in place and exposes the imperative API', async () => {
+  const before = { bytes: Uint8Array.from([1]), label: 'Base' };
+  const after = { bytes: Uint8Array.from([2]), label: 'Working' };
+  const ref = { current: null as import('../src/diff-view').MdzipDiffHandle | null };
+  const { rerender } = render(
+    <MdzipDiff ref={ref} before={before} after={after} showUnchanged />
+  );
+  await act(async () => {});
+
+  const view = diffViewInstances[0];
+  expect(view.open).toHaveBeenCalledTimes(1);
+  rerender(<MdzipDiff ref={ref} before={before} after={after} showUnchanged={false} />);
+  await act(async () => {});
+  expect(diffViewInstances).toHaveLength(1);
+  expect(view.open).toHaveBeenCalledTimes(2);
+
+  await ref.current?.openPath('index.md');
+  expect(view.openPath).toHaveBeenCalledWith('index.md');
 });

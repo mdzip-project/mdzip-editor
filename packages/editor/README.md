@@ -229,7 +229,12 @@ const diff = new MdzipDiffView(container, {
 });
 ```
 
-The read-only view shows the union of archive paths, added/removed/changed
-status, side-by-side text diffs, image previews, and binary metadata. Entry
-content is loaded only when selected. Call `destroy()` to release merge editors
-and image object URLs.
+Construction opens the initial comparison. Use `await diff.open(options)` to
+replace both sides, `openPath(path)` to select an entry, and
+`setShowUnchanged(false)` to focus the tree on changes.
+
+The read-only view shows the union of archive paths in a directory tree,
+added/removed/changed status, side-by-side text diffs, explicit missing-side
+states, image previews with metadata, and binary metadata. Entry content is
+loaded only when selected. Call `destroy()` to release editors, listeners, and
+image object URLs.

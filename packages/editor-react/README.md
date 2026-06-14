@@ -39,6 +39,24 @@ export function Viewer({ bytes }: { bytes: Uint8Array }) {
 
 The parent element must have an explicit height. The component expands to fill it.
 
+## Archive Diff
+
+```tsx
+import { MdzipDiff } from '@mdzip/editor-react/diff-view';
+
+<div style={{ height: 600 }}>
+  <MdzipDiff
+    before={{ bytes: baseBytes, label: 'Git base' }}
+    after={{ bytes: workingBytes, label: 'Working tree' }}
+    initialPath="index.md"
+  />
+</div>
+```
+
+`MdzipDiff` is read-only and updates the existing comparison view when its
+props change. A ref exposes `openPath`, `setShowUnchanged`, and
+`setNavigationVisible`.
+
 ## Editor Mode
 
 ```tsx

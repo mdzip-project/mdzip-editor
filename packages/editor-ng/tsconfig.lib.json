@@ -6,7 +6,8 @@
     "declarationMap": true,
     "inlineSources": true,
     "paths": {
-      "@mdzip/editor": ["../editor/dist/index.d.ts"]
+      "@mdzip/editor": ["../editor/dist/index.d.ts"],
+      "@mdzip/editor/diff-view": ["../editor/dist/diff-view.d.ts"]
     },
     "types": []
   },
