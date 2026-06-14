@@ -508,20 +508,25 @@ test('progressively hydrates archive images: text first, then sized swap-in', as
     await view.open(bytes, { mode: 'read-only', fileName: 'demo.mdz' });
 
     // Text mounts immediately: rendered has fired, but the image is still a
-    // placeholder (no src yet) so hydration has not completed.
+    // placeholder (no src yet) inside a collapsed slot, so hydration has not
+    // completed and following content stays compact.
     assert.deepEqual(events, ['rendered']);
     const image = container.querySelector('[data-ref="preview-content"] img');
     assert.ok(image, 'image element is in the mounted preview');
     assert.equal(image.getAttribute('src'), null, 'archive src is withheld until resolved');
     assert.equal(image.classList.contains('mdzip-image-loading'), true);
+    const slot = image.parentElement;
+    assert.equal(slot.classList.contains('mdzip-image-slot'), true, 'image is wrapped in a slot');
+    assert.equal(slot.classList.contains('mdzip-image-open'), false, 'slot starts collapsed');
 
-    // Once the image resolves it is sized from its sniffed dimensions and the
-    // resolved URL is swapped in; hydration then completes.
+    // Once the image resolves it is sized from its sniffed dimensions, the
+    // resolved URL is swapped in, and the slot eases open; hydration completes.
     await view.whenRendered();
     assert.deepEqual(events, ['rendered', 'hydrated']);
     assert.match(image.getAttribute('src') ?? '', /^(data:image|blob:)/);
     assert.equal(image.getAttribute('width'), '1');
     assert.equal(image.getAttribute('height'), '1');
+    assert.equal(slot.classList.contains('mdzip-image-open'), true, 'slot opens after resolve');
   } finally {
     view.destroy();
     container.remove();

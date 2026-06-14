@@ -1463,7 +1463,8 @@ export class MdzipWorkspaceView {
   ): void {
     this.elPreviewContent.innerHTML = html;
     const session = this.assetSession;
-    const pending: { image: HTMLImageElement; source: string }[] = [];
+    const document = this.elPreviewContent.ownerDocument;
+    const pending: { image: HTMLImageElement; slot: HTMLElement; source: string }[] = [];
     for (const image of Array.from(this.elPreviewContent.querySelectorAll('img'))) {
       const source = image.getAttribute('src');
       // Leave external, protocol-relative, data, and fragment URLs untouched.
@@ -1471,10 +1472,16 @@ export class MdzipWorkspaceView {
         continue;
       }
       // Drop the archive-relative src so the browser does not fetch the bad
-      // path; reserve the slot until the resolved bytes arrive.
+      // path. Wrap the image in a collapsed slot so the text stays compact and
+      // immediately readable; the slot eases open to the reserved height once
+      // the image resolves.
       image.removeAttribute('src');
       image.classList.add('mdzip-image-loading');
-      pending.push({ image, source });
+      const slot = document.createElement('span');
+      slot.className = 'mdzip-image-slot';
+      image.parentNode?.insertBefore(slot, image);
+      slot.appendChild(image);
+      pending.push({ image, slot, source });
     }
 
     this.mountPreviewExtensions(context, generation);
@@ -1492,7 +1499,7 @@ export class MdzipWorkspaceView {
         this.fireAssetsHydrated(snapshot, generation);
       }
     };
-    for (const { image, source } of pending) {
+    for (const { image, slot, source } of pending) {
       void session.resolveImage(source, context.currentPath).then((resolved) => {
         if (generation !== this.previewGeneration || context.signal.aborted) {
           settle();
@@ -1500,11 +1507,13 @@ export class MdzipWorkspaceView {
         }
         if (!resolved) {
           image.classList.remove('mdzip-image-loading');
+          this.openImageSlot(slot);
           settle();
           return;
         }
-        // Reserve correctly-proportioned space before the pixels decode so the
-        // surrounding text does not reflow when the image appears.
+        // Size the reserved box from the sniffed dimensions so the slot eases
+        // open to the image's exact height in a single slide — and the pixels
+        // drop into an already-correct box with no further reflow.
         if (resolved.width && resolved.height) {
           image.setAttribute('width', String(resolved.width));
           image.setAttribute('height', String(resolved.height));
@@ -1513,15 +1522,28 @@ export class MdzipWorkspaceView {
         image.addEventListener('load', clear, { once: true });
         image.addEventListener('error', clear, { once: true });
         image.setAttribute('src', resolved.url);
+        this.openImageSlot(slot);
         settle();
       }).catch((error) => {
         if ((error as { name?: string } | null)?.name !== 'AbortError') {
           this.options.onFailed?.(error);
         }
         image.classList.remove('mdzip-image-loading');
+        this.openImageSlot(slot);
         settle();
       });
     }
+  }
+
+  /**
+   * Reveals a collapsed image slot. Flushing layout before toggling the class
+   * lets the `0fr -> 1fr` grid transition run from the collapsed state instead
+   * of being coalesced into the initial mount; CSS snaps it open instantly
+   * under `prefers-reduced-motion`.
+   */
+  private openImageSlot(slot: HTMLElement): void {
+    void slot.offsetHeight;
+    slot.classList.add('mdzip-image-open');
   }
 
   private mountPreviewExtensions(context: MdzipMarkdownRenderContext, generation: number): void {

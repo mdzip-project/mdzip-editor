@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.8] - 2026-06-14
+
+### Changed
+- Progressive preview images now **animate** their slot open instead of
+  snapping to the reserved height (issue #9 follow-up, Option B). Each archive
+  image mounts inside a collapsed slot so the text stays compact and
+  immediately readable; when the image resolves, the slot eases open
+  (`0fr -> 1fr`) to the height reserved from its sniffed dimensions in a
+  single deterministic slide, and the pixels drop into the exact box with no
+  further reflow. Honors `prefers-reduced-motion` (snaps open instead).
+
 ## [1.3.7] - 2026-06-14
 
 ### Added

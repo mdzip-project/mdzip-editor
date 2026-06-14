@@ -1039,9 +1039,27 @@ export const WORKSPACE_CSS = `
   border-radius: 4px;
 }
 
-/* Progressive image hydration: a placeholder occupies the reserved space
-   (sized from the image's sniffed width/height attributes) until its bytes
-   resolve and the real src is assigned. */
+/* Progressive image hydration. Each archive image mounts inside a collapsed
+   slot so the text stays compact and immediately readable; when the image
+   resolves, the slot eases open (0fr -> 1fr) to the height reserved from its
+   sniffed dimensions, in a single slide, and the pixels drop into the exact
+   box with no further reflow. */
+.mdzip-root .preview-content .mdzip-image-slot {
+  display: inline-grid;
+  grid-template-rows: 0fr;
+  overflow: hidden;
+  vertical-align: bottom;
+  transition: grid-template-rows 0.28s ease;
+}
+
+.mdzip-root .preview-content .mdzip-image-slot.mdzip-image-open {
+  grid-template-rows: 1fr;
+}
+
+.mdzip-root .preview-content .mdzip-image-slot > img {
+  min-height: 0;
+}
+
 .mdzip-root .preview-content img.mdzip-image-loading {
   background: var(--mdzip-control-background-color, rgba(127, 127, 127, 0.12));
   animation: mdzip-image-pulse 1.2s ease-in-out infinite;
@@ -1053,6 +1071,9 @@ export const WORKSPACE_CSS = `
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .mdzip-root .preview-content .mdzip-image-slot {
+    transition: none;
+  }
   .mdzip-root .preview-content img.mdzip-image-loading {
     animation: none;
   }
