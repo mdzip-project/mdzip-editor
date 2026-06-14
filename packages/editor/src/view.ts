@@ -314,6 +314,21 @@ export interface MdzipWorkspaceViewOptions {
   onDirtyChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
+  /**
+   * Fires when the preview HTML for the current selection has been mounted
+   * into the DOM (image `src`s already resolved to their session URLs).
+   * Lets hosts reveal or animate preview content without observing private
+   * editor DOM or guessing at timing. Not fired when an entry renderer
+   * claims the pane or when the active path has no preview.
+   */
+  onPreviewRendered?: (snapshot: MdzipWorkspaceSnapshot) => void;
+  /**
+   * Fires after {@link onPreviewRendered} once every `<img>` in the mounted
+   * preview has finished loading (or errored) — i.e. the preview and its
+   * images are visually ready. Fires immediately after render when the
+   * preview contains no images. See also {@link MdzipWorkspaceView.whenRendered}.
+   */
+  onAssetsHydrated?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onFailed?: (error: unknown) => void;
   /**
    * Lets the host take over the markdown→MDZ conversion flow (triggered by the
@@ -811,6 +826,10 @@ export class MdzipWorkspaceView {
   private previewGeneration = 0;
   private previewAbort: AbortController | null = null;
   private previewHandles: MdzipRenderHandle[] = [];
+  // Whether the latest preview generation has finished mounting and hydrating
+  // its images; drives `whenRendered()` and gates the hydration callback.
+  private previewHydrated = false;
+  private renderedWaiters: Array<() => void> = [];
   private entryState: {
     key: string;
     renderer: MdzipEntryRenderer;
@@ -1230,6 +1249,8 @@ export class MdzipWorkspaceView {
     this.resetPreviewState();
     this.replaceAssetSession(null);
     this.teardownEntryRenderer();
+    // Release any whenRendered() waiters so their promises do not hang.
+    this.flushRenderedWaiters();
     try {
       this.cmEditor?.destroy();
     } catch {
@@ -1313,6 +1334,9 @@ export class MdzipWorkspaceView {
         this.resetPreviewState();
         this.elPreviewContent.replaceChildren();
       }
+      // There is no built-in preview to wait for; release any waiters.
+      this.previewHydrated = true;
+      this.flushRenderedWaiters();
       return;
     }
 
@@ -1331,6 +1355,7 @@ export class MdzipWorkspaceView {
     this.previewAbort = null;
     this.destroyPreviewHandles();
     const generation = ++this.previewGeneration;
+    this.previewHydrated = false;
     this.previewMemo = {
       path: snapshot.currentPath,
       pathType: snapshot.currentPathType,
@@ -1347,9 +1372,11 @@ export class MdzipWorkspaceView {
           this.elPreviewContent.innerHTML = src
             ? `<div class="asset-preview-wrap"><img class="asset-preview-image" src="${escapeHtml(src)}" alt="${escapeHtml(snapshot.currentPath)}"></div>`
             : renderMdzipPreviewHtml(snapshot);
+          this.notifyPreviewMounted(snapshot, generation);
         }).catch((error) => this.options.onFailed?.(error));
       } else {
         this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+        this.notifyPreviewMounted(snapshot, generation);
       }
       return;
     }
@@ -1364,12 +1391,13 @@ export class MdzipWorkspaceView {
     } catch (error) {
       this.options.onFailed?.(error);
       this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+      this.notifyPreviewMounted(snapshot, generation);
       return;
     }
 
     if (typeof result === 'string') {
       // Sync fast path: no microtask hop when every pipeline stage is sync.
-      this.applyPreviewHtml(result, context, generation);
+      this.applyPreviewHtml(result, snapshot, context, generation);
       return;
     }
 
@@ -1377,7 +1405,7 @@ export class MdzipWorkspaceView {
       if (generation !== this.previewGeneration || abort.signal.aborted) {
         return; // Stale: the selection or content moved on while rendering.
       }
-      this.applyPreviewHtml(html, context, generation);
+      this.applyPreviewHtml(html, snapshot, context, generation);
     }).catch((error) => {
       if (generation !== this.previewGeneration || abort.signal.aborted) {
         return;
@@ -1390,23 +1418,25 @@ export class MdzipWorkspaceView {
 
   private applyPreviewHtml(
     html: string,
+    snapshot: MdzipWorkspaceSnapshot,
     context: MdzipMarkdownRenderContext,
     generation: number
   ): void {
     if (html.includes('<img') && this.assetSession) {
       void this.assetSession.rewriteHtml(html, context.currentPath, context.signal).then((rewritten) => {
         if (generation !== this.previewGeneration || context.signal.aborted) return;
-        this.mountPreviewHtml(rewritten, context, generation);
+        this.mountPreviewHtml(rewritten, snapshot, context, generation);
       }).catch((error) => {
         if ((error as { name?: string })?.name !== 'AbortError') this.options.onFailed?.(error);
       });
       return;
     }
-    this.mountPreviewHtml(html, context, generation);
+    this.mountPreviewHtml(html, snapshot, context, generation);
   }
 
   private mountPreviewHtml(
     html: string,
+    snapshot: MdzipWorkspaceSnapshot,
     context: MdzipMarkdownRenderContext,
     generation: number
   ): void {
@@ -1443,6 +1473,72 @@ export class MdzipWorkspaceView {
         this.options.onFailed?.(error);
       }
     }
+    this.notifyPreviewMounted(snapshot, generation);
+  }
+
+  /**
+   * Signals that the preview for `generation` is mounted, then waits for its
+   * images to finish loading before signalling hydration. Stale generations
+   * are ignored.
+   */
+  private notifyPreviewMounted(snapshot: MdzipWorkspaceSnapshot, generation: number): void {
+    if (generation !== this.previewGeneration) {
+      return;
+    }
+    try {
+      this.options.onPreviewRendered?.(snapshot);
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+    const images = Array.from(this.elPreviewContent.querySelectorAll('img'));
+    const pending = images.filter((image) => !image.complete);
+    const finish = (): void => {
+      if (generation !== this.previewGeneration) {
+        return;
+      }
+      this.previewHydrated = true;
+      try {
+        this.options.onAssetsHydrated?.(snapshot);
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+      this.flushRenderedWaiters();
+    };
+    if (pending.length === 0) {
+      finish();
+      return;
+    }
+    let remaining = pending.length;
+    const settle = (): void => {
+      remaining -= 1;
+      if (remaining === 0) {
+        finish();
+      }
+    };
+    for (const image of pending) {
+      image.addEventListener('load', settle, { once: true });
+      image.addEventListener('error', settle, { once: true });
+    }
+  }
+
+  private flushRenderedWaiters(): void {
+    const waiters = this.renderedWaiters;
+    this.renderedWaiters = [];
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  /**
+   * Resolves once the current preview (including any images) is mounted and
+   * hydrated. Resolves immediately when the latest preview is already ready.
+   * Useful for revealing or animating content without observing private DOM.
+   */
+  public whenRendered(): Promise<void> {
+    if (this.previewHydrated) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => this.renderedWaiters.push(resolve));
   }
 
   private createMarkdownContext(

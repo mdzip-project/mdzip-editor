@@ -132,6 +132,10 @@ export interface MdzipWorkspaceProps {
   onDirtyChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
+  /** Fires when the preview HTML for the current selection is mounted. */
+  onPreviewRendered?: (snapshot: MdzipWorkspaceSnapshot) => void;
+  /** Fires once the mounted preview's images have finished loading. */
+  onAssetsHydrated?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onFailed?: (error: unknown) => void;
   /**
    * Host hook for the markdown→MDZ conversion flow. Return/resolve `true`
@@ -170,6 +174,7 @@ export interface MdzipWorkspaceHandle {
   flush(): Promise<MdzipEditorSnapshot | null>;
   serialize(): Promise<Blob | null>;
   getCurrentSnapshot(): Promise<MdzipEditorSnapshot | null>;
+  whenRendered(): Promise<void>;
   markPersisted(): void;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
@@ -205,6 +210,8 @@ function MdzipWorkspace({
   onDirtyChanged,
   onValidationChanged,
   onColorSchemeChanged,
+  onPreviewRendered,
+  onAssetsHydrated,
   onFailed,
   onConversionRequested,
   markdownRenderer,
@@ -236,6 +243,8 @@ function MdzipWorkspace({
     onDirtyChanged,
     onValidationChanged,
     onColorSchemeChanged,
+    onPreviewRendered,
+    onAssetsHydrated,
     onFailed,
     onConversionRequested,
   });
@@ -251,6 +260,8 @@ function MdzipWorkspace({
     onDirtyChanged,
     onValidationChanged,
     onColorSchemeChanged,
+    onPreviewRendered,
+    onAssetsHydrated,
     onFailed,
     onConversionRequested,
   };
@@ -281,6 +292,7 @@ function MdzipWorkspace({
     flush: () => viewRef.current?.flush() ?? Promise.resolve(null),
     serialize: () => viewRef.current?.serialize() ?? Promise.resolve(null),
     getCurrentSnapshot: () => viewRef.current?.getCurrentSnapshot() ?? Promise.resolve(null),
+    whenRendered: () => viewRef.current?.whenRendered() ?? Promise.resolve(),
     markPersisted: () => viewRef.current?.markPersisted(),
     addAsset: (archivePath, fileBytes) =>
       viewRef.current?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
@@ -322,6 +334,8 @@ function MdzipWorkspace({
       onDirtyChanged: (snapshot) => callbacksRef.current.onDirtyChanged?.(snapshot),
       onValidationChanged: (snapshot) => callbacksRef.current.onValidationChanged?.(snapshot),
       onColorSchemeChanged: (colorScheme) => callbacksRef.current.onColorSchemeChanged?.(colorScheme),
+      onPreviewRendered: (snapshot) => callbacksRef.current.onPreviewRendered?.(snapshot),
+      onAssetsHydrated: (snapshot) => callbacksRef.current.onAssetsHydrated?.(snapshot),
       onFailed: (e) => callbacksRef.current.onFailed?.(e),
       // A hook returning false falls back to the built-in dialog, same as no
       // hook at all, so the always-present delegate is behavior-preserving.

@@ -55,8 +55,11 @@ import { MdzipDiff } from '@mdzip/editor-react/diff-view';
 ```
 
 `MdzipDiff` is read-only and updates the existing comparison view when its
-props change. A ref exposes `openPath`, `setShowUnchanged`, and
-`setNavigationVisible`, and `setToolbarActions`.
+props change. A ref exposes `openPath`, `openPreviousChange`, `openNextChange`,
+`setShowUnchanged`, `setNavigationVisible`, and `setToolbarActions`. The
+built-in toolbar adds Previous/Next change buttons and a Show-unchanged
+toggle; pass a `controls` prop (`{ navigation?, changeTraversal?,
+showUnchanged? }`) to opt any of them out.
 
 ## Editor Mode
 
@@ -127,6 +130,8 @@ re-mount), and unmounts on selection change.
 | `onDirtyChanged` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called when the dirty flag changes |
 | `onValidationChanged` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called when validation state changes |
 | `onColorSchemeChanged` | `(colorScheme: MdzipColorScheme) => void` | Called when the color scheme changes |
+| `onPreviewRendered` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called when the preview HTML is mounted |
+| `onAssetsHydrated` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called once the mounted preview's images have loaded |
 | `onFailed` | `(error: unknown) => void` | Called on unrecoverable errors |
 | `onConversionRequested` | `(action: MdzipConversionAction) => boolean \| Promise<boolean>` | Host hook for the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog |
 
@@ -138,7 +143,9 @@ rename/move, duplicate, replace, download, copy markdown link, set entry point, 
 image, and delete. Files can also be dragged between folders, and OS files can be dropped
 onto the pane to add them as assets. Copy and Download remain available in read-only mode.
 The same operations are exposed imperatively: `removeFile`, `renameFile`, `setEntryPoint`,
-and `setCoverImage` on the handle.
+and `setCoverImage` on the handle. The handle also exposes `whenRendered()`, which resolves
+once the current preview (including its images) is mounted — useful for revealing or
+animating read-only preview content.
 
 ## Imperative API
 

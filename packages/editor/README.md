@@ -257,8 +257,36 @@ replace both sides, `openPath(path)` to select an entry, and
 `setShowUnchanged(false)` to focus the tree on changes. Toolbar actions may be
 updated with `setToolbarActions()` without reopening either archive.
 
+The library-owned toolbar provides a navigation toggle, Previous/Next change
+buttons, and a Show-unchanged toggle. Drive change traversal in code with
+`openPreviousChange()` / `openNextChange()` (they walk non-unchanged entries
+and resolve `false` at the ends). Opt individual built-in controls out with
+the `controls` option (`navigation`, `changeTraversal`, `showUnchanged`; all
+default on). The navigation pane animates open/closed like the workspace nav
+pane.
+
 The read-only view shows the union of archive paths in a directory tree,
 added/removed/changed status, side-by-side text diffs, explicit missing-side
 states, image previews with metadata, and binary metadata. Entry content is
 loaded only when selected. Call `destroy()` to release editors, listeners, and
 image object URLs.
+
+## Preview Lifecycle Signals
+
+To reveal or animate read-only preview content without scraping internal DOM,
+use the preview lifecycle signals on `MdzipWorkspaceView`:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls: 'preview',
+  onPreviewRendered: (snapshot) => { /* preview HTML is mounted */ },
+  onAssetsHydrated: (snapshot) => { /* its images have finished loading */ }
+});
+
+// Or await the fullest "ready" point (mounted + images hydrated):
+await view.whenRendered();
+revealContent();
+```
+
+`whenRendered()` resolves immediately when the latest preview is already
+hydrated, and resolves (rather than hanging) if the view is destroyed.

@@ -88,6 +88,7 @@ export interface MdzipWorkspaceExposed {
   flush(): Promise<MdzipEditorSnapshot | null>;
   serialize(): Promise<Blob | null>;
   getCurrentSnapshot(): Promise<MdzipEditorSnapshot | null>;
+  whenRendered(): Promise<void>;
   markPersisted(): void;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
@@ -164,6 +165,8 @@ export const MdzipWorkspace = defineComponent({
     'dirtyChanged',
     'validationChanged',
     'colorSchemeChanged',
+    'previewRendered',
+    'assetsHydrated',
     'failed'
   ],
   setup(props, { emit, expose, slots }) {
@@ -228,6 +231,7 @@ export const MdzipWorkspace = defineComponent({
       flush: () => view?.flush() ?? Promise.resolve(null),
       serialize: () => view?.serialize() ?? Promise.resolve(null),
       getCurrentSnapshot: () => view?.getCurrentSnapshot() ?? Promise.resolve(null),
+      whenRendered: () => view?.whenRendered() ?? Promise.resolve(),
       markPersisted: () => view?.markPersisted(),
       addAsset: (archivePath: string, fileBytes: Uint8Array) =>
         view?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
@@ -268,6 +272,8 @@ export const MdzipWorkspace = defineComponent({
         onDirtyChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('dirtyChanged', snapshot),
         onValidationChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('validationChanged', snapshot),
         onColorSchemeChanged: (colorScheme: MdzipColorScheme) => emit('colorSchemeChanged', colorScheme),
+        onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => emit('previewRendered', snapshot),
+        onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => emit('assetsHydrated', snapshot),
         onFailed: (e: unknown) => emit('failed', e),
         onConversionRequested: props.onConversionRequested,
         markdownRenderer: props.markdownRenderer ?? undefined,

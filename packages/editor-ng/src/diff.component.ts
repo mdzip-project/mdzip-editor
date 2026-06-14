@@ -12,6 +12,7 @@ import {
   ViewChild
 } from '@angular/core';
 import type {
+  MdzipDiffControlsOptions,
   MdzipDiffSelectionEvent,
   MdzipDiffSideInput,
   MdzipDiffToolbarAction,
@@ -32,6 +33,7 @@ export class MdzipDiffComponent implements AfterViewInit, OnChanges, OnDestroy {
   @Input() initialPath?: string;
   @Input() showUnchanged = true;
   @Input() navigationVisible = true;
+  @Input() controls?: MdzipDiffControlsOptions;
   @Input() toolbarActions: readonly MdzipDiffToolbarAction[] = [];
   @Output() readonly selectionChanged = new EventEmitter<MdzipDiffSelectionEvent>();
   @Output() readonly failed = new EventEmitter<Error>();
@@ -64,6 +66,14 @@ export class MdzipDiffComponent implements AfterViewInit, OnChanges, OnDestroy {
     return this.view?.openPath(path) ?? Promise.resolve(false);
   }
 
+  openPreviousChange(): Promise<boolean> {
+    return this.view?.openPreviousChange() ?? Promise.resolve(false);
+  }
+
+  openNextChange(): Promise<boolean> {
+    return this.view?.openNextChange() ?? Promise.resolve(false);
+  }
+
   setShowUnchanged(show: boolean): void {
     this.view?.setShowUnchanged(show);
   }
@@ -89,6 +99,7 @@ export class MdzipDiffComponent implements AfterViewInit, OnChanges, OnDestroy {
       initialPath: this.initialPath,
       showUnchanged: this.showUnchanged,
       navigationVisible: this.navigationVisible,
+      controls: this.controls,
       toolbarActions: this.toolbarActions,
       onSelectionChanged: (event) => this.selectionChanged.emit(event),
       onFailed: (error) => this.failed.emit(error)

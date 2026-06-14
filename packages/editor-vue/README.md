@@ -61,8 +61,10 @@ import { MdzipDiff } from '@mdzip/editor-vue/diff-view';
 ```
 
 The component emits `selectionChanged` and `failed`. Its exposed handle
-provides `openPath`, `setShowUnchanged`, and `setNavigationVisible`.
-It also provides `setToolbarActions`.
+provides `openPath`, `openPreviousChange`, `openNextChange`, `setShowUnchanged`,
+`setNavigationVisible`, and `setToolbarActions`. The built-in toolbar adds
+Previous/Next change buttons and a Show-unchanged toggle; pass a `controls`
+prop (`{ navigation?, changeTraversal?, showUnchanged? }`) to opt any out.
 
 ## Editor Mode
 
@@ -131,6 +133,8 @@ reactive, and the tree unmounts on selection change.
 | `dirtyChanged` | `MdzipWorkspaceSnapshot` | Emitted when the dirty flag changes |
 | `validationChanged` | `MdzipWorkspaceSnapshot` | Emitted when validation state changes |
 | `colorSchemeChanged` | `MdzipColorScheme` | Emitted when the color scheme changes |
+| `previewRendered` | `MdzipWorkspaceSnapshot` | Emitted when the preview HTML is mounted |
+| `assetsHydrated` | `MdzipWorkspaceSnapshot` | Emitted once the mounted preview's images have loaded |
 | `failed` | `unknown` | Emitted on unrecoverable errors |
 
 ## Conversion hook
@@ -173,5 +177,8 @@ async function save() {
   <MdzipWorkspace ref="workspace" ... />
 </template>
 ```
+
+The handle also exposes `whenRendered()`, which resolves once the current preview (including
+its images) is mounted — useful for revealing or animating read-only preview content.
 
 See the [`@mdzip/editor`](https://www.npmjs.com/package/@mdzip/editor) package for the full API reference, theming guide, and framework-agnostic usage.

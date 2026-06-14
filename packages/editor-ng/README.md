@@ -63,8 +63,11 @@ export class DiffComponent {}
 ```
 
 `MdzipDiffComponent` is read-only. It emits `selectionChanged` and `failed`,
-and exposes `openPath`, `setShowUnchanged`, and `setNavigationVisible`.
-It also exposes `setToolbarActions`.
+and exposes `openPath`, `openPreviousChange`, `openNextChange`,
+`setShowUnchanged`, `setNavigationVisible`, and `setToolbarActions`. The
+built-in toolbar adds Previous/Next change buttons and a Show-unchanged
+toggle; bind a `controls` input (`{ navigation?, changeTraversal?,
+showUnchanged? }`) to opt any of them out.
 
 ## Editor Mode
 
@@ -138,6 +141,8 @@ change.
 | `dirtyChanged` | `MdzipWorkspaceSnapshot` | Emitted when the dirty flag changes |
 | `validationChanged` | `MdzipWorkspaceSnapshot` | Emitted when validation state changes |
 | `colorSchemeChanged` | `MdzipColorScheme` | Emitted when the color scheme changes |
+| `previewRendered` | `MdzipWorkspaceSnapshot` | Emitted when the preview HTML is mounted |
+| `assetsHydrated` | `MdzipWorkspaceSnapshot` | Emitted once the mounted preview's images have loaded |
 | `failed` | `unknown` | Emitted on unrecoverable errors |
 
 ## Conversion hook
@@ -156,6 +161,8 @@ rename/move, duplicate, replace, download, copy markdown link, set entry point, 
 image, and delete. Files can also be dragged between folders, and OS files can be dropped
 onto the pane. Copy and Download remain available in read-only mode. The same operations are
 exposed as component methods: `removeFile`, `renameFile`, `setEntryPoint`, and `setCoverImage`.
+`whenRendered()` resolves once the current preview (including its images) is mounted — useful
+for revealing or animating read-only preview content.
 
 ## Imperative API
 

@@ -292,7 +292,8 @@ test('diff toolbar toggles navigation and runs typed host actions', async () => 
     assert.equal(navButton.getAttribute('aria-pressed'), 'true');
     navButton.click();
     assert.equal(navButton.getAttribute('aria-pressed'), 'false');
-    assert.equal(container.querySelector('.mdzip-diff-nav').hidden, true);
+    // The nav pane collapses via an animatable class, not the hidden attribute.
+    assert.equal(container.querySelector('.mdzip-diff-nav').classList.contains('hidden'), true);
 
     const refreshButton = container.querySelector('[aria-label="Refresh comparison"]');
     refreshButton.click();
@@ -302,6 +303,96 @@ test('diff toolbar toggles navigation and runs typed host actions', async () => 
     finishRefresh();
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(container.querySelector('[aria-label="Refresh comparison"]').disabled, false);
+  } finally {
+    view.destroy();
+  }
+});
+
+test('change traversal walks non-unchanged entries and disables at the ends', async () => {
+  // Identical entry point so index.md stays unchanged; a.md changed, b.md
+  // unchanged, c.md added. (index.md sorts after these; a.md is the first
+  // change overall.)
+  const before = await withEntries('# Same\n', [
+    ['a.md', 'one'],
+    ['b.md', 'same']
+  ]);
+  const after = await withEntries('# Same\n', [
+    ['a.md', 'one changed'],
+    ['b.md', 'same'],
+    ['c.md', 'new file']
+  ]);
+  const container = document.createElement('div');
+  const options = { before: { bytes: before }, after: { bytes: after }, initialPath: 'a.md' };
+  const view = new MdzipDiffView(container, options);
+  const activePath = () =>
+    container.querySelector('.mdzip-diff-entry.active .mdzip-diff-path')?.textContent;
+  try {
+    await view.open(options);
+    const prev = container.querySelector('[data-ref="prev-change"]');
+    const next = container.querySelector('[data-ref="next-change"]');
+
+    // a.md is the first change: prev disabled, next enabled.
+    assert.equal(activePath(), 'a.md');
+    assert.equal(prev.disabled, true);
+    assert.equal(next.disabled, false);
+
+    // Next skips the unchanged b.md and lands on c.md.
+    assert.equal(await view.openNextChange(), true);
+    assert.equal(activePath(), 'c.md');
+    assert.equal(prev.disabled, false);
+
+    // Previous walks back to a.md, skipping b.md again.
+    assert.equal(await view.openPreviousChange(), true);
+    assert.equal(activePath(), 'a.md');
+
+    // Walking forward to the final change disables next and refuses to advance.
+    while (await view.openNextChange()) { /* advance to the last change */ }
+    assert.equal(next.disabled, true);
+    assert.equal(await view.openNextChange(), false);
+  } finally {
+    view.destroy();
+  }
+});
+
+test('show-unchanged toolbar toggle reflects and drives filtering', async () => {
+  const before = await withEntries('# Before\n', [['a.md', 'one'], ['b.md', 'same']]);
+  const after = await withEntries('# After\n', [['a.md', 'one changed'], ['b.md', 'same']]);
+  const container = document.createElement('div');
+  const options = { before: { bytes: before }, after: { bytes: after }, showUnchanged: true };
+  const view = new MdzipDiffView(container, options);
+  try {
+    await view.open(options);
+    const toggle = container.querySelector('[data-ref="show-unchanged"]');
+    assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+    const pathsWhenShown = [...container.querySelectorAll('.mdzip-diff-entry .mdzip-diff-path')]
+      .map((node) => node.textContent);
+    assert.ok(pathsWhenShown.includes('b.md'), 'unchanged entry visible when shown');
+
+    toggle.click();
+    assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+    const pathsWhenHidden = [...container.querySelectorAll('.mdzip-diff-entry .mdzip-diff-path')]
+      .map((node) => node.textContent);
+    assert.equal(pathsWhenHidden.includes('b.md'), false, 'unchanged entry hidden after toggle');
+  } finally {
+    view.destroy();
+  }
+});
+
+test('controls option hides the built-in toolbar controls it disables', async () => {
+  const { before, after } = await comparisonBytes();
+  const container = document.createElement('div');
+  const options = {
+    before: { bytes: before },
+    after: { bytes: after },
+    controls: { changeTraversal: false, showUnchanged: false }
+  };
+  const view = new MdzipDiffView(container, options);
+  try {
+    await view.open(options);
+    assert.equal(container.querySelector('[data-ref="prev-change"]').hidden, true);
+    assert.equal(container.querySelector('[data-ref="next-change"]').hidden, true);
+    assert.equal(container.querySelector('[data-ref="show-unchanged"]').hidden, true);
+    assert.equal(container.querySelector('[data-ref="navigation"]').hidden, false);
   } finally {
     view.destroy();
   }

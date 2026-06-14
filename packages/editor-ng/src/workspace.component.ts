@@ -102,6 +102,10 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Output() readonly dirtyChanged = new EventEmitter<MdzipWorkspaceSnapshot>();
   @Output() readonly validationChanged = new EventEmitter<MdzipWorkspaceSnapshot>();
   @Output() readonly colorSchemeChanged = new EventEmitter<MdzipColorScheme>();
+  /** Emits when the preview HTML for the current selection is mounted. */
+  @Output() readonly previewRendered = new EventEmitter<MdzipWorkspaceSnapshot>();
+  /** Emits once the mounted preview's images have finished loading. */
+  @Output() readonly assetsHydrated = new EventEmitter<MdzipWorkspaceSnapshot>();
   @Output() readonly failed = new EventEmitter<unknown>();
 
   @ViewChild('host') private readonly hostRef!: ElementRef<HTMLDivElement>;
@@ -179,6 +183,10 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     return this.view?.getCurrentSnapshot() ?? Promise.resolve(null);
   }
 
+  whenRendered(): Promise<void> {
+    return this.view?.whenRendered() ?? Promise.resolve();
+  }
+
   markPersisted(): void {
     this.view?.markPersisted();
   }
@@ -251,6 +259,8 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onDirtyChanged: (snapshot: MdzipWorkspaceSnapshot) => this.dirtyChanged.emit(snapshot),
       onValidationChanged: (snapshot: MdzipWorkspaceSnapshot) => this.validationChanged.emit(snapshot),
       onColorSchemeChanged: (colorScheme: MdzipColorScheme) => this.colorSchemeChanged.emit(colorScheme),
+      onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => this.previewRendered.emit(snapshot),
+      onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => this.assetsHydrated.emit(snapshot),
       onFailed: (e: unknown) => this.failed.emit(e),
       onConversionRequested: this.onConversionRequested
         ? (action, context) => this.onConversionRequested!(action, context)

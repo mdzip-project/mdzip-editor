@@ -1,5 +1,31 @@
 # Changelog
 
+## [1.3.6] - 2026-06-14
+
+### Added
+- `MdzipDiffView` change-navigation: built-in Previous/Next change toolbar
+  buttons and `openPreviousChange()` / `openNextChange()` methods that walk
+  the non-unchanged entries (disabled at the ends). Exposed on the Angular,
+  React, and Vue diff wrappers.
+- `MdzipDiffView` `controls` option (`navigation`, `changeTraversal`,
+  `showUnchanged`; all default on) to opt individual built-in toolbar
+  controls out. Also surfaced on the diff wrappers.
+- Preview lifecycle signals on `MdzipWorkspaceView`: `onPreviewRendered` and
+  `onAssetsHydrated` callbacks plus a `whenRendered()` promise that resolves
+  once the current preview (including its images) is mounted and hydrated.
+  Hosts can reveal or animate preview content without observing private DOM.
+  Exposed on all three workspace wrappers (Angular/Vue as
+  `previewRendered`/`assetsHydrated` outputs/events; `whenRendered()` on each
+  imperative handle).
+
+### Changed
+- The diff navigation pane now collapses with the same animated transition as
+  the workspace navigation pane (class-based width/opacity) instead of an
+  instant `hidden` toggle, and the diff toolbar buttons share the editor
+  nav-toggle sizing and link-colored active state.
+- "Show unchanged" moved from a nav-pane checkbox to a pressed toolbar toggle
+  to avoid duplicate controls; `setShowUnchanged()` is unchanged.
+
 ## [1.3.5] - 2026-06-14
 
 ### Added

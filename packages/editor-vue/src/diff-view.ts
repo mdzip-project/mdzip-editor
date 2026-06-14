@@ -9,6 +9,7 @@ import {
 } from 'vue';
 import {
   MdzipDiffView,
+  type MdzipDiffControlsOptions,
   type MdzipDiffSelectionEvent,
   type MdzipDiffSideInput,
   type MdzipDiffToolbarAction
@@ -16,6 +17,8 @@ import {
 
 export interface MdzipDiffExposed {
   openPath(path: string): Promise<boolean>;
+  openPreviousChange(): Promise<boolean>;
+  openNextChange(): Promise<boolean>;
   setShowUnchanged(show: boolean): void;
   setNavigationVisible(visible: boolean): void;
   setToolbarActions(actions: readonly MdzipDiffToolbarAction[]): void;
@@ -29,6 +32,7 @@ export const MdzipDiff = defineComponent({
     initialPath: String,
     showUnchanged: { type: Boolean, default: true },
     navigationVisible: { type: Boolean, default: true },
+    controls: { type: Object as PropType<MdzipDiffControlsOptions>, default: undefined },
     toolbarActions: { type: Array as PropType<readonly MdzipDiffToolbarAction[]>, default: () => [] }
   },
   emits: {
@@ -45,6 +49,7 @@ export const MdzipDiff = defineComponent({
       initialPath: props.initialPath,
       showUnchanged: props.showUnchanged,
       navigationVisible: props.navigationVisible,
+      controls: props.controls,
       toolbarActions: props.toolbarActions,
       onSelectionChanged: (event: MdzipDiffSelectionEvent) => emit('selectionChanged', event),
       onFailed: (error: Error) => emit('failed', error)
@@ -52,6 +57,8 @@ export const MdzipDiff = defineComponent({
 
     expose({
       openPath: (path: string) => view?.openPath(path) ?? Promise.resolve(false),
+      openPreviousChange: () => view?.openPreviousChange() ?? Promise.resolve(false),
+      openNextChange: () => view?.openNextChange() ?? Promise.resolve(false),
       setShowUnchanged: (show: boolean) => view?.setShowUnchanged(show),
       setNavigationVisible: (visible: boolean) => view?.setNavigationVisible(visible),
       setToolbarActions: (actions: readonly MdzipDiffToolbarAction[]) => view?.setToolbarActions(actions)

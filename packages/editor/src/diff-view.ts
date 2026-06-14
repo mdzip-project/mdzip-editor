@@ -3,7 +3,7 @@ import { MergeView } from '@codemirror/merge';
 import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { MdzArchiveCore } from '@mdzip/core-js';
-import { PanelLeft, RefreshCw, type IconNode } from 'lucide';
+import { ChevronDown, ChevronUp, Eye, PanelLeft, RefreshCw, type IconNode } from 'lucide';
 import {
   createArchiveInventoryFromArchive,
   diffArchiveInventories,
@@ -36,12 +36,26 @@ export interface MdzipDiffToolbarAction {
   run: () => void | Promise<void>;
 }
 
+/**
+ * Toggles for the library-owned toolbar controls. All default to `true`.
+ * Host-specific actions are supplied separately via `toolbarActions`.
+ */
+export interface MdzipDiffControlsOptions {
+  /** Navigation pane visibility toggle. */
+  navigation?: boolean;
+  /** Previous/next change traversal buttons. */
+  changeTraversal?: boolean;
+  /** Show-unchanged pressed toggle. */
+  showUnchanged?: boolean;
+}
+
 export interface MdzipDiffViewOptions {
   before: MdzipDiffSideInput;
   after: MdzipDiffSideInput;
   initialPath?: string;
   showUnchanged?: boolean;
   navigationVisible?: boolean;
+  controls?: MdzipDiffControlsOptions;
   toolbarActions?: readonly MdzipDiffToolbarAction[];
   onSelectionChanged?: (event: MdzipDiffSelectionEvent) => void;
   onFailed?: (error: Error) => void;
@@ -67,6 +81,7 @@ export class MdzipDiffView {
   private selectedPath: string | null = null;
   private showUnchanged: boolean;
   private navigationVisible: boolean;
+  private controls: Required<MdzipDiffControlsOptions>;
   private mergeView: MergeView | null = null;
   private editorViews: EditorView[] = [];
   private objectUrls: string[] = [];
@@ -79,6 +94,9 @@ export class MdzipDiffView {
   private readonly workspace: HTMLElement;
   private readonly toolbar: HTMLElement;
   private readonly navButton: HTMLButtonElement;
+  private readonly prevChangeButton: HTMLButtonElement;
+  private readonly nextChangeButton: HTMLButtonElement;
+  private readonly showUnchangedButton: HTMLButtonElement;
   private readonly actionHost: HTMLElement;
   private readonly nav: HTMLElement;
   private readonly summary: HTMLElement;
@@ -90,6 +108,7 @@ export class MdzipDiffView {
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? true;
     this.navigationVisible = options.navigationVisible ?? true;
+    this.controls = resolveControls(options.controls);
     this.toolbarActions = options.toolbarActions ?? [];
     injectDiffViewStyles(container.ownerDocument);
     container.replaceChildren();
@@ -98,6 +117,9 @@ export class MdzipDiffView {
     this.root.innerHTML = `
       <div class="mdzip-diff-toolbar" role="toolbar" aria-label="Comparison controls">
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="navigation" title="Toggle navigation" aria-label="Toggle navigation"></button>
+        <button class="mdzip-diff-toolbar-button" type="button" data-ref="prev-change" title="Previous change" aria-label="Previous change"></button>
+        <button class="mdzip-diff-toolbar-button" type="button" data-ref="next-change" title="Next change" aria-label="Next change"></button>
+        <button class="mdzip-diff-toolbar-button" type="button" data-ref="show-unchanged" title="Show unchanged" aria-label="Show unchanged"></button>
         <div class="mdzip-diff-toolbar-actions" data-ref="actions"></div>
       </div>
       <div class="mdzip-diff-workspace">
@@ -114,6 +136,9 @@ export class MdzipDiffView {
     this.workspace = this.root.querySelector('.mdzip-diff-workspace') as HTMLElement;
     this.toolbar = this.root.querySelector('.mdzip-diff-toolbar') as HTMLElement;
     this.navButton = this.root.querySelector('[data-ref="navigation"]') as HTMLButtonElement;
+    this.prevChangeButton = this.root.querySelector('[data-ref="prev-change"]') as HTMLButtonElement;
+    this.nextChangeButton = this.root.querySelector('[data-ref="next-change"]') as HTMLButtonElement;
+    this.showUnchangedButton = this.root.querySelector('[data-ref="show-unchanged"]') as HTMLButtonElement;
     this.actionHost = this.root.querySelector('[data-ref="actions"]') as HTMLElement;
     this.nav = this.root.querySelector('.mdzip-diff-nav') as HTMLElement;
     this.summary = this.root.querySelector('.mdzip-diff-summary') as HTMLElement;
@@ -122,6 +147,12 @@ export class MdzipDiffView {
     this.body = this.root.querySelector('.mdzip-diff-body') as HTMLElement;
     this.navButton.innerHTML = iconHtml(PanelLeft);
     this.navButton.addEventListener('click', () => this.setNavigationVisible(!this.navigationVisible));
+    this.prevChangeButton.innerHTML = iconHtml(ChevronUp);
+    this.prevChangeButton.addEventListener('click', () => { void this.openPreviousChange(); });
+    this.nextChangeButton.innerHTML = iconHtml(ChevronDown);
+    this.nextChangeButton.addEventListener('click', () => { void this.openNextChange(); });
+    this.showUnchangedButton.innerHTML = iconHtml(Eye);
+    this.showUnchangedButton.addEventListener('click', () => this.setShowUnchanged(!this.showUnchanged));
     this.renderToolbar();
     void this.open(options);
   }
@@ -148,6 +179,7 @@ export class MdzipDiffView {
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? this.showUnchanged;
     this.navigationVisible = options.navigationVisible ?? this.navigationVisible;
+    if (options.controls) this.controls = resolveControls(options.controls);
     this.toolbarActions = options.toolbarActions ?? this.toolbarActions;
     this.renderToolbar();
     this.selectedPath = null;
@@ -187,10 +219,46 @@ export class MdzipDiffView {
     this.renderNavigation();
   }
 
+  /**
+   * Selects the previous entry whose status is not `unchanged`. Resolves
+   * `false` (without changing selection) when already at the first change.
+   */
+  public async openPreviousChange(): Promise<boolean> {
+    const target = this.adjacentChange(-1);
+    return target ? this.openPath(target.path) : false;
+  }
+
+  /**
+   * Selects the next entry whose status is not `unchanged`. Resolves `false`
+   * (without changing selection) when already at the last change.
+   */
+  public async openNextChange(): Promise<boolean> {
+    const target = this.adjacentChange(1);
+    return target ? this.openPath(target.path) : false;
+  }
+
+  private adjacentChange(direction: 1 | -1): ArchiveInventoryDiffEntry | null {
+    const entries = this.diff?.entries ?? [];
+    const changed = entries.filter((entry) => entry.status !== 'unchanged');
+    if (changed.length === 0) return null;
+    const currentInChanged = changed.findIndex((entry) => entry.path === this.selectedPath);
+    if (currentInChanged >= 0) {
+      return changed[currentInChanged + direction] ?? null;
+    }
+    // The current selection is unchanged (or none): pick the nearest change in
+    // the requested direction by overall entry order.
+    const currentIndex = entries.findIndex((entry) => entry.path === this.selectedPath);
+    if (direction > 0) {
+      return changed.find((entry) => entries.indexOf(entry) > currentIndex) ?? null;
+    }
+    return [...changed].reverse().find((entry) => entries.indexOf(entry) < currentIndex) ?? null;
+  }
+
   public setNavigationVisible(visible: boolean): void {
     this.navigationVisible = visible;
-    this.nav.hidden = !visible;
-    this.workspace.style.gridTemplateColumns = visible ? '' : '1fr';
+    // Collapse via a class (animated width/opacity) rather than the `hidden`
+    // attribute so the pane slides in and out like the workspace nav pane.
+    this.nav.classList.toggle('hidden', !visible);
     this.navButton.setAttribute('aria-pressed', String(visible));
     this.navButton.classList.toggle('active', visible);
   }
@@ -208,7 +276,12 @@ export class MdzipDiffView {
   }
 
   private renderToolbar(): void {
+    this.navButton.hidden = !this.controls.navigation;
+    this.prevChangeButton.hidden = !this.controls.changeTraversal;
+    this.nextChangeButton.hidden = !this.controls.changeTraversal;
+    this.showUnchangedButton.hidden = !this.controls.showUnchanged;
     this.setNavigationVisible(this.navigationVisible);
+    this.updateBuiltInControls();
     this.actionHost.replaceChildren();
     for (const action of this.toolbarActions) {
       const button = this.root.ownerDocument.createElement('button');
@@ -227,6 +300,14 @@ export class MdzipDiffView {
       this.actionHost.append(button);
     }
     this.toolbar.hidden = false;
+  }
+
+  /** Syncs the pressed/disabled state of the built-in change + filter controls. */
+  private updateBuiltInControls(): void {
+    this.prevChangeButton.disabled = !this.adjacentChange(-1);
+    this.nextChangeButton.disabled = !this.adjacentChange(1);
+    this.showUnchangedButton.setAttribute('aria-pressed', String(this.showUnchanged));
+    this.showUnchangedButton.classList.toggle('active', this.showUnchanged);
   }
 
   private async runToolbarAction(action: MdzipDiffToolbarAction): Promise<void> {
@@ -276,14 +357,9 @@ export class MdzipDiffView {
     const counts = this.root.ownerDocument.createElement('div');
     counts.className = 'mdzip-diff-counts';
     counts.textContent = `${diff.changedCount} changed, ${diff.addedCount} added, ${diff.removedCount} removed`;
-    const filter = this.root.ownerDocument.createElement('label');
-    filter.className = 'mdzip-diff-filter';
-    const checkbox = this.root.ownerDocument.createElement('input');
-    checkbox.type = 'checkbox';
-    checkbox.checked = this.showUnchanged;
-    checkbox.addEventListener('change', () => this.setShowUnchanged(checkbox.checked));
-    filter.append(checkbox, 'Show unchanged');
-    this.summary.append(labels, counts, filter);
+    // The Show-unchanged control lives in the toolbar (see updateBuiltInControls);
+    // a separate summary checkbox would duplicate the same state.
+    this.summary.append(labels, counts);
 
     this.list.replaceChildren();
     const visibleEntries = diff.entries.filter(
@@ -325,6 +401,7 @@ export class MdzipDiffView {
       button.addEventListener('keydown', (event) => this.handleNavigationKey(event));
       this.list.append(button);
     }
+    this.updateBuiltInControls();
   }
 
   private async renderSelection(path: string): Promise<void> {
@@ -512,6 +589,14 @@ export class MdzipDiffView {
     event.preventDefault();
     target.focus();
   }
+}
+
+function resolveControls(controls: MdzipDiffControlsOptions | undefined): Required<MdzipDiffControlsOptions> {
+  return {
+    navigation: controls?.navigation ?? true,
+    changeTraversal: controls?.changeTraversal ?? true,
+    showUnchanged: controls?.showUnchanged ?? true
+  };
 }
 
 function chooseInitialPath(

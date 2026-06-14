@@ -92,7 +92,7 @@ test('composes explicit entry renderers with the #entry slot catch-all', () => {
   expect(latestView().options['libraries']).toEqual([
     expect.objectContaining({
       name: '@mdzip/editor-vue',
-      version: '1.3.5',
+      version: expect.stringMatching(/^\d+\.\d+\.\d+/),
       repositoryUrl: expect.stringContaining('/packages/editor-vue'),
       description: expect.stringContaining('Vue wrapper')
     })

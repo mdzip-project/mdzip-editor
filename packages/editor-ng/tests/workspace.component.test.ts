@@ -123,7 +123,7 @@ test('composes explicit entry renderers with template directives', () => {
   expect(latestView().options['libraries']).toEqual([
     expect.objectContaining({
       name: '@mdzip/editor-ng',
-      version: '1.3.5',
+      version: expect.stringMatching(/^\d+\.\d+\.\d+/),
       repositoryUrl: expect.stringContaining('/packages/editor-ng'),
       description: expect.stringContaining('Angular')
     })

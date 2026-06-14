@@ -144,7 +144,7 @@ test('preview-only views do not initialize CodeMirror', async () => {
     assert.match(container.querySelector('[data-ref="preview-content"]').textContent, /Preview only/);
     const libraryText = container.querySelector('[data-ref="library-list"]').textContent;
     assert.match(libraryText, /@mdzip\/editor-react\s*1\.3\.5/);
-    assert.match(libraryText, /@mdzip\/editor\s*1\.3\.5/);
+    assert.match(libraryText, /@mdzip\/editor\s*\d+\.\d+\.\d+/);
     assert.match(libraryText, /@mdzip\/core-js\s*\d+\.\d+\.\d+/);
     assert.match(libraryText, /CodeMirror\s*\d+\.\d+\.\d+/);
     assert.match(libraryText, /Marked\s*\d+\.\d+\.\d+/);
@@ -453,4 +453,32 @@ test('context.updateManifest flows through the manifest event and marks dirty', 
   } finally {
     dispose();
   }
+});
+
+test('fires onPreviewRendered then onAssetsHydrated and resolves whenRendered', async () => {
+  const events = [];
+  const { view, dispose } = await createOpenView({
+    onPreviewRendered: (snapshot) => events.push(['rendered', snapshot.currentPath]),
+    onAssetsHydrated: (snapshot) => events.push(['hydrated', snapshot.currentPath])
+  });
+
+  try {
+    // The image-free preview hydrates synchronously during the initial render.
+    assert.deepEqual(events, [
+      ['rendered', 'index.md'],
+      ['hydrated', 'index.md']
+    ]);
+    // whenRendered resolves immediately once the latest preview is hydrated.
+    await view.whenRendered();
+  } finally {
+    dispose();
+  }
+});
+
+test('whenRendered resolves on view destruction without hanging', async () => {
+  const { view, dispose } = await createOpenView();
+  const pending = view.whenRendered();
+  dispose();
+  // Should resolve (not reject or hang) even though the view was destroyed.
+  await pending;
 });
