@@ -101,6 +101,14 @@ test('composes explicit entry renderers with template directives', () => {
     'mdzip-ng-template:manifest.json',
     'mdzip-ng-template#1'
   ]);
+  expect(latestView().options['libraries']).toEqual([
+    expect.objectContaining({
+      name: '@mdzip/editor-ng',
+      version: '1.3.3',
+      repositoryUrl: expect.stringContaining('/packages/editor-ng'),
+      description: expect.stringContaining('Angular')
+    })
+  ]);
 });
 
 test('path and predicate templates match the right entries', () => {

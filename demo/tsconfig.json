@@ -4,7 +4,7 @@
     "experimentalDecorators": true,
     "paths": {
       "mdzip-editor":       ["../packages/editor/dist/index.d.ts"],
-      "@mdzip/editor-ng":    ["../dist/packages/editor-ng/index.d.ts"],
+      "@mdzip/editor-ng":    ["../packages/editor-ng/dist/index.d.ts"],
       "@mdzip/editor-react": ["../packages/editor-react/dist/index.d.ts"],
       "@mdzip/editor-vue":   ["../packages/editor-vue/dist/index.d.ts"]
     }

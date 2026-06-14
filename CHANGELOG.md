@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.3.3] - 2026-06-13
+
+### Added
+- `MdzipConversionContext` for host-resolved plain-Markdown image workflows.
+  Hosts can insert Markdown at the captured selection or continue with the
+  built-in MDZ conversion without depending on CodeMirror internals.
+- `@mdzip/editor/diff-view`, an optional read-only archive comparison view
+  with union navigation, entry status filtering, side-by-side text diffs,
+  image comparison, binary metadata, stale-load protection, and cleanup.
+- `@mdzip/editor/preview`, a preview-focused entry point that excludes the
+  CodeMirror-backed workspace view from its module graph.
+- The Document Information dialog now includes the editor and major runtime
+  libraries with their generated installed versions. Angular, React, and Vue
+  wrappers automatically identify their active framework package there.
+  Library names link to their repositories and include short descriptions.
+
+### Changed
+- `MdzipWorkspaceView` initializes CodeMirror only when source editing,
+  split layout, or an imperative editor command first requires it.
+- Angular, React, and Vue conversion hooks now receive the additive
+  selection-aware conversion context.
+
+### Performance
+- Preview-only views no longer construct a CodeMirror editor.
+- Diff entry content and image object URLs are created only for the selected
+  archive path; text diff work uses bounded scan and timeout settings.
+
 ## [1.3.2] - 2026-06-12
 
 ### Added

@@ -1217,13 +1217,26 @@ export const WORKSPACE_CSS = `
   margin: 12px 0 0;
 }
 
+.mdzip-root .metadata-dialog {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.mdzip-root .metadata-dialog h4 {
+  margin: 18px 0 0;
+  font-size: 13px;
+}
+
+.mdzip-root .metadata-dialog h4 + dl {
+  margin-top: 6px;
+}
+
 .mdzip-root .metadata-row {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
   gap: 12px;
   padding: 7px 0;
   border-bottom: 1px solid var(--mdzip-border-color);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .mdzip-root .metadata-row:last-child {
@@ -1239,6 +1252,51 @@ export const WORKSPACE_CSS = `
   min-width: 0;
   margin: 0;
   overflow-wrap: anywhere;
+}
+
+.mdzip-root .library-row dt a {
+  color: var(--mdzip-link-color);
+  text-decoration: none;
+}
+
+.mdzip-root .library-row dt a:hover,
+.mdzip-root .library-row dt a:focus-visible {
+  text-decoration: underline;
+}
+
+.mdzip-root .library-row {
+  grid-template-columns: minmax(230px, 0.75fr) minmax(280px, 1.25fr);
+}
+
+.mdzip-root .library-row dt {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  white-space: nowrap;
+}
+
+.mdzip-root .library-version {
+  color: var(--mdzip-muted-foreground-color);
+  font-weight: 400;
+}
+
+.mdzip-root .library-row dd {
+  white-space: nowrap;
+}
+
+.mdzip-root .library-description {
+  color: var(--mdzip-muted-foreground-color);
+}
+
+@media (max-width: 640px) {
+  .mdzip-root .library-row {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .mdzip-root .library-row dd {
+    white-space: normal;
+  }
 }
 
 @media (max-width: 900px) {

@@ -480,6 +480,7 @@ test('keeps boolean control overrides backward compatible', () => {
 test('routes public editor commands independently of toolbar visibility', async () => {
   const applied = [];
   const target = {
+    ensureCmEditor: async () => ({}),
     canExecuteCommand: () => true,
     applyMarkdownFormat: (command) => applied.push(command)
   };
@@ -734,13 +735,33 @@ test('normalizes and relativizes archive paths', () => {
 
 const conversionHookTarget = (hook, onFailed) => {
   const calls = { dialog: 0 };
+  const state = {
+    mode: 'editable',
+    sourceFormat: 'markdown',
+    currentPath: 'notes.md',
+    currentText: 'before after'
+  };
+  const workspace = {
+    snapshot: () => ({ ...state }),
+    editText: (text) => { state.currentText = text; }
+  };
+  const editor = {
+    state: { selection: { main: { from: 7, to: 7 } } },
+    dispatch: () => {},
+    focus: () => {}
+  };
   const target = {
-    workspace: { snapshot: () => ({ mode: 'editable', sourceFormat: 'markdown' }) },
+    workspace,
+    cmEditor: editor,
     options: { onConversionRequested: hook, onFailed },
     conversionHookPending: false,
-    openConversionDialog: () => { calls.dialog += 1; }
+    openConversionDialog: () => { calls.dialog += 1; },
+    createConversionContext: MdzipWorkspaceView.prototype.createConversionContext,
+    ensureCmEditor: async () => editor,
+    convertToMdz: async () => true,
+    render: () => {}
   };
-  return { target, calls };
+  return { target, calls, state };
 };
 
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -796,4 +817,34 @@ test('a pending onConversionRequested blocks duplicate triggers', async () => {
   resolveHook(true);
   await flushMicrotasks();
   assert.equal(calls.dialog, 0);
+});
+
+test('conversion context inserts markdown at the captured selection', async () => {
+  let context;
+  const { target, state } = conversionHookTarget((_action, suppliedContext) => {
+    context = suppliedContext;
+    return true;
+  });
+
+  MdzipWorkspaceView.prototype.requestMdzConversion.call(target, { kind: 'image-picker' });
+  await flushMicrotasks();
+
+  assert.equal(await context.insertMarkdown('linked '), true);
+  assert.equal(state.currentText, 'before linked after');
+  assert.equal(await context.insertMarkdown('again'), false, 'context is one-shot');
+});
+
+test('conversion context rejects insertion after the document changes', async () => {
+  let context;
+  const { target, state } = conversionHookTarget((_action, suppliedContext) => {
+    context = suppliedContext;
+    return true;
+  });
+
+  MdzipWorkspaceView.prototype.requestMdzConversion.call(target, { kind: 'image-picker' });
+  await flushMicrotasks();
+  state.currentText = 'changed elsewhere';
+
+  assert.equal(await context.insertMarkdown('unsafe'), false);
+  assert.equal(state.currentText, 'changed elsewhere');
 });

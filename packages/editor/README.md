@@ -43,6 +43,11 @@ await view.open(markdownBytes, {
 });
 ```
 
+CodeMirror is not initialized until a source or split layout is used. Consumers
+that only need archive, rendering, and preview helpers can import from
+`@mdzip/editor/preview`; that entry point excludes `MdzipWorkspaceView` and its
+CodeMirror dependencies from the module graph.
+
 The filename normally selects the source format. Pass `sourceFormat:
 'markdown'` or `sourceFormat: 'mdz'` to override detection.
 
@@ -132,16 +137,22 @@ flow (triggered by the nav button, Insert Image, or an image paste/drop):
 
 ```ts
 const view = new MdzipWorkspaceView(container, {
-  onConversionRequested(action) {
+  async onConversionRequested(action, context) {
     // action.kind: 'navigation' | 'image-picker' | 'image-file' (with action.file)
-    return hostHandlesConversion(action); // true suppresses the built-in dialog
+    const relativePath = await hostHandlesImage(action);
+    return relativePath
+      ? context.insertMarkdown(`![](${relativePath})`)
+      : false;
   }
 });
 ```
 
 Returning or resolving `false` (or omitting the callback) keeps the built-in
 conversion dialog. Errors thrown by the hook are reported via `onFailed` and
-fall back to the built-in dialog.
+fall back to the built-in dialog. The context preserves the triggering
+selection while a host dialog is open; it returns `false` if that document has
+changed. `context.convertToMdz()` runs the built-in conversion and image action
+against the same captured selection.
 
 `MdzipRenderingService` uses `defaultSafeMarkdownRenderer` when no renderer is
 injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
@@ -202,3 +213,23 @@ import {
 ```
 
 These helpers are built on `@mdzip/core-js` and are suitable for framework wrappers, desktop hosts, browser apps, and extension integrations.
+
+## Archive Diff View
+
+The optional diff entry point keeps merge dependencies out of normal editor
+and preview bundles:
+
+```ts
+import { MdzipDiffView } from '@mdzip/editor/diff-view';
+
+const diff = new MdzipDiffView(container, {
+  before: { bytes: baseBytes, label: 'Git base' },
+  after: { bytes: workingBytes, label: 'Working tree' },
+  initialPath: 'index.md'
+});
+```
+
+The read-only view shows the union of archive paths, added/removed/changed
+status, side-by-side text diffs, image previews, and binary metadata. Entry
+content is loaded only when selected. Call `destroy()` to release merge editors
+and image object URLs.

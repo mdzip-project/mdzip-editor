@@ -36,6 +36,7 @@ import {
 import type { MdzWorkspace, MdzWorkspaceAsset } from '@mdzip/core-js';
 import { browserClipboardHasImage, readBrowserClipboardImage } from './browser.js';
 import { MD_MARKDOWN_ICON, type LucideIconNode } from './icons/md-markdown.js';
+import { MDZIP_RUNTIME_LIBRARIES } from './library-info.js';
 import type {
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
@@ -139,6 +140,18 @@ export type MdzipConversionAction =
   | { kind: 'navigation' }
   | { kind: 'image-picker' }
   | { kind: 'image-file'; file: File };
+
+export interface MdzipConversionContext {
+  insertMarkdown(text: string): Promise<boolean>;
+  convertToMdz(): Promise<boolean>;
+}
+
+export interface MdzipLibraryInfo {
+  name: string;
+  version: string;
+  repositoryUrl?: string;
+  description?: string;
+}
 
 type MdzipNavMenuTarget =
   | {
@@ -260,6 +273,11 @@ export interface MdzipWorkspaceSave {
 }
 
 export interface MdzipWorkspaceViewOptions {
+  /**
+   * Additional host or framework libraries to show in Document Information.
+   * Framework wrappers populate this automatically.
+   */
+  libraries?: readonly MdzipLibraryInfo[];
   controls?: MdzipControlPreset | MdzipControlPolicy;
   initialLayout?: MdzipWorkspaceLayout;
   initialColorScheme?: MdzipColorScheme;
@@ -299,7 +317,10 @@ export interface MdzipWorkspaceViewOptions {
    * callback) to keep the built-in dialog. If the callback throws or rejects,
    * the error is reported via `onFailed` and the built-in dialog is shown.
    */
-  onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
+  onConversionRequested?: (
+    action: MdzipConversionAction,
+    context: MdzipConversionContext
+  ) => boolean | Promise<boolean>;
   /**
    * Replaces the default markdown renderer. Output is sanitized by the
    * pipeline unless the renderer declares `sanitizesOutput`. May render
@@ -755,6 +776,7 @@ export class MdzipWorkspaceView {
   private readonly pendingNewFolders = new Set<string>();
   private pendingReplacePath: string | null = null;
   private conversionHookPending = false;
+  private conversionDocumentGeneration = 0;
   private dragSourcePath: string | null = null;
   private dragOverElement: HTMLElement | null = null;
   private tooltipState: { text: string; x: number; y: number } | null = null;
@@ -836,6 +858,7 @@ export class MdzipWorkspaceView {
   private readonly elTitleResetBtn: HTMLButtonElement;
   private readonly elMetadataDialog: HTMLElement;
   private readonly elMetadataList: HTMLElement;
+  private readonly elLibraryList: HTMLElement;
   private readonly elConversionDialog: HTMLElement;
   private readonly elConversionConfirmBtn: HTMLButtonElement;
   private readonly elNavMenu: HTMLElement;
@@ -915,6 +938,7 @@ export class MdzipWorkspaceView {
     this.elTitleResetBtn = q('[data-ref="title-reset-btn"]');
     this.elMetadataDialog = q('[data-ref="metadata-dialog"]');
     this.elMetadataList = q('[data-ref="metadata-list"]');
+    this.elLibraryList = q('[data-ref="library-list"]');
     this.elConversionDialog = q('[data-ref="conversion-dialog"]');
     this.elConversionConfirmBtn = q('[data-ref="conversion-confirm-btn"]');
     this.elNavMenu = q('[data-ref="nav-menu"]');
@@ -952,6 +976,7 @@ export class MdzipWorkspaceView {
     this.cmEditor?.destroy();
     this.cmEditor = null;
     this.workspace = null;
+    this.conversionDocumentGeneration += 1;
 
     try {
       const ws = await MdzipWorkspaceService.open(bytes, options);
@@ -964,8 +989,11 @@ export class MdzipWorkspaceView {
         this.options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy),
         snap
       );
-      this.cmEditor = this.createCmEditor(this.elEditorHost, snap.currentText, snap.mode);
+      await this.ensureCmEditor();
       this.unsub = ws.subscribe((event) => {
+        if (event.changes.includes('workspace') || event.changes.includes('document')) {
+          this.conversionDocumentGeneration += 1;
+        }
         this.render();
         void this.notifyChanged(event);
       });
@@ -1008,6 +1036,7 @@ export class MdzipWorkspaceView {
     this.cmEditor?.destroy();
     this.cmEditor = null;
     this.workspace = null;
+    this.conversionDocumentGeneration += 1;
 
     try {
       const ws = await MdzipWorkspaceService.openWorkspace(workspace, options);
@@ -1017,8 +1046,11 @@ export class MdzipWorkspaceView {
         this.options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy),
         snap
       );
-      this.cmEditor = this.createCmEditor(this.elEditorHost, snap.currentText, snap.mode);
+      await this.ensureCmEditor();
       this.unsub = ws.subscribe((event) => {
+        if (event.changes.includes('workspace') || event.changes.includes('document')) {
+          this.conversionDocumentGeneration += 1;
+        }
         this.render();
         void this.notifyChanged(event);
       });
@@ -1085,7 +1117,7 @@ export class MdzipWorkspaceView {
     // kept so per-command policies stay a non-breaking change.
     void command;
     const snapshot = this.workspace?.snapshot();
-    if (!snapshot || !this.cmEditor || snapshot.mode === 'read-only'
+    if (!snapshot || snapshot.mode === 'read-only'
       || snapshot.currentPathType !== 'markdown') {
       return false;
     }
@@ -1093,6 +1125,7 @@ export class MdzipWorkspaceView {
   }
 
   public async executeCommand(command: MdzipEditorCommand, file?: File): Promise<boolean> {
+    await this.ensureCmEditor(true);
     if (!this.canExecuteCommand(command)) {
       return false;
     }
@@ -1133,6 +1166,7 @@ export class MdzipWorkspaceView {
   }
 
   public destroy(): void {
+    this.conversionDocumentGeneration += 1;
     try {
       this.unsub?.();
     } catch {
@@ -1592,6 +1626,20 @@ export class MdzipWorkspaceView {
     return editor;
   }
 
+  private async ensureCmEditor(force = false): Promise<EditorView | null> {
+    const snapshot = this.workspace?.snapshot();
+    if (this.cmEditor || !snapshot || (!force && this.layout === 'preview')
+      || !canShowSourceLayout(snapshot)) {
+      return this.cmEditor;
+    }
+    this.cmEditor = this.createCmEditor(
+      this.elEditorHost,
+      snapshot.currentText,
+      snapshot.mode
+    );
+    return this.cmEditor;
+  }
+
   private render(): void {
     const snapshot = this.workspace?.snapshot() ?? null;
 
@@ -1893,13 +1941,13 @@ export class MdzipWorkspaceView {
     });
 
     this.elPreviewBtn.addEventListener('click', () => {
-      if (this.controlPolicy.layout.preview) { this.setLayout('preview'); }
+      if (this.controlPolicy.layout.preview) { void this.setLayout('preview'); }
     });
     this.elSplitBtn.addEventListener('click', () => {
-      if (this.controlPolicy.layout.split) { this.setLayout('split'); }
+      if (this.controlPolicy.layout.split) { void this.setLayout('split'); }
     });
     this.elSourceBtn.addEventListener('click', () => {
-      if (this.controlPolicy.layout.source) { this.setLayout('source'); }
+      if (this.controlPolicy.layout.source) { void this.setLayout('source'); }
     });
 
     this.elSaveBtn.addEventListener('click', () => {
@@ -2378,15 +2426,60 @@ export class MdzipWorkspaceView {
     ];
 
     this.elMetadataList.replaceChildren(...fields.map(([label, value]) => {
-      const row = this.elRoot.ownerDocument.createElement('div');
-      row.className = 'metadata-row';
-      const term = this.elRoot.ownerDocument.createElement('dt');
-      term.textContent = label;
-      const detail = this.elRoot.ownerDocument.createElement('dd');
-      detail.textContent = value;
-      row.append(term, detail);
-      return row;
+      return this.createMetadataRow(label, value);
     }));
+    const libraries = [
+      ...(this.options.libraries ?? []),
+      ...MDZIP_RUNTIME_LIBRARIES
+    ].filter((library, index, all) =>
+      all.findIndex((candidate) => candidate.name === library.name) === index
+    );
+    this.elLibraryList.replaceChildren(...libraries.map((library) => {
+      return this.createLibraryRow(library);
+    }));
+  }
+
+  private createMetadataRow(label: string, value: string): HTMLElement {
+    const row = this.elRoot.ownerDocument.createElement('div');
+    row.className = 'metadata-row';
+    const term = this.elRoot.ownerDocument.createElement('dt');
+    term.textContent = label;
+    const detail = this.elRoot.ownerDocument.createElement('dd');
+    detail.textContent = value;
+    row.append(term, detail);
+    return row;
+  }
+
+  private createLibraryRow(library: MdzipLibraryInfo): HTMLElement {
+    const row = this.elRoot.ownerDocument.createElement('div');
+    row.className = 'metadata-row library-row';
+    const term = this.elRoot.ownerDocument.createElement('dt');
+    const name = this.elRoot.ownerDocument.createElement('span');
+    name.className = 'library-name';
+    if (library.repositoryUrl) {
+      const link = this.elRoot.ownerDocument.createElement('a');
+      link.href = library.repositoryUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = library.name;
+      link.setAttribute('aria-label', `${library.name} repository`);
+      name.append(link);
+    } else {
+      name.textContent = library.name;
+    }
+    const version = this.elRoot.ownerDocument.createElement('span');
+    version.className = 'library-version';
+    version.textContent = library.version;
+    term.append(name, version);
+    const detail = this.elRoot.ownerDocument.createElement('dd');
+    if (library.description) {
+      const description = this.elRoot.ownerDocument.createElement('span');
+      description.className = 'library-description';
+      description.textContent = library.description;
+      detail.append(description);
+    }
+    row.append(term, detail);
+    return row;
   }
 
   private requestMdzConversion(action: MdzipConversionAction): void {
@@ -2403,8 +2496,9 @@ export class MdzipWorkspaceView {
       return;
     }
     this.conversionHookPending = true;
+    const context = this.createConversionContext(action);
     void Promise.resolve()
-      .then(() => hook(action))
+      .then(() => hook(action, context))
       .then((handled) => {
         this.conversionHookPending = false;
         if (!handled) {
@@ -2416,6 +2510,78 @@ export class MdzipWorkspaceView {
         this.options.onFailed?.(error);
         this.openConversionDialog(action);
       });
+  }
+
+  private createConversionContext(action: MdzipConversionAction): MdzipConversionContext {
+    const workspace = this.workspace;
+    const snapshot = workspace?.snapshot();
+    const selection = this.cmEditor?.state.selection.main;
+    const captured = workspace && snapshot ? {
+      workspace,
+      documentGeneration: this.conversionDocumentGeneration,
+      path: snapshot.currentPath,
+      text: snapshot.currentText,
+      selectionStart: selection?.from,
+      selectionEnd: selection?.to
+    } : null;
+    let consumed = false;
+
+    const take = (): typeof captured => {
+      if (consumed || !captured || this.workspace !== captured.workspace
+        || this.conversionDocumentGeneration !== captured.documentGeneration) {
+        return null;
+      }
+      const current = captured.workspace.snapshot();
+      if (current.mode === 'read-only'
+        || current.sourceFormat !== 'markdown'
+        || current.currentPath !== captured.path
+        || current.currentText !== captured.text) {
+        return null;
+      }
+      consumed = true;
+      return captured;
+    };
+
+    return {
+      insertMarkdown: async (text) => {
+        const target = take();
+        if (!target || target.selectionStart === undefined || target.selectionEnd === undefined) {
+          return false;
+        }
+        const nextText = target.text.slice(0, target.selectionStart)
+          + text
+          + target.text.slice(target.selectionEnd);
+        target.workspace.editText(nextText);
+        this.render();
+        const editor = await this.ensureCmEditor();
+        if (editor) {
+          editor.dispatch({ selection: { anchor: target.selectionStart + text.length } });
+          editor.focus();
+        }
+        return true;
+      },
+      convertToMdz: async () => {
+        const target = take();
+        if (!target || !await this.convertToMdz()) {
+          return false;
+        }
+        if (action.kind === 'navigation') {
+          this.navVisible = true;
+          this.render();
+          return true;
+        }
+        const editor = await this.ensureCmEditor();
+        if (editor && target.selectionStart !== undefined) {
+          editor.dispatch({ selection: { anchor: target.selectionStart } });
+        }
+        if (action.kind === 'image-file') {
+          await this.insertImageFile(action.file);
+          return true;
+        }
+        this.elImageInput.click();
+        return true;
+      }
+    };
   }
 
   private openConversionDialog(action: MdzipConversionAction): void {
@@ -2795,9 +2961,10 @@ export class MdzipWorkspaceView {
     this.options.onColorSchemeChanged?.(colorScheme);
   }
 
-  private setLayout(requested: MdzipWorkspaceLayout): void {
+  private async setLayout(requested: MdzipWorkspaceLayout): Promise<void> {
     const snapshot = this.workspace?.snapshot();
     this.layout = snapshot ? this.validLayoutForSnapshot(requested, snapshot) : requested;
+    await this.ensureCmEditor();
     this.render();
   }
 
@@ -3634,6 +3801,8 @@ const SHELL_HTML = `
     <div class="title-dialog metadata-dialog">
       <h3 id="mdzip-metadata-dialog-heading">Document Information</h3>
       <dl data-ref="metadata-list"></dl>
+      <h4>Libraries</h4>
+      <dl data-ref="library-list"></dl>
       <div class="title-dialog-actions">
         <button type="button" class="save-title" data-action="close-metadata">Close</button>
       </div>

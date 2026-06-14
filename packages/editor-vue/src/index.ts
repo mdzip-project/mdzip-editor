@@ -17,11 +17,13 @@ import {
   type VNodeArrayChildren,
 } from 'vue';
 import { MdzipWorkspaceView } from '@mdzip/editor';
+import { PACKAGE_INFO } from './package-info.js';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipColorScheme,
   MdzipConversionAction,
+  MdzipConversionContext,
   MdzipEditorSnapshot,
   MdzipEditorCommand,
   MdzipEntryRenderContext,
@@ -123,7 +125,10 @@ export const MdzipWorkspace = defineComponent({
      * conversion dialog.
      */
     onConversionRequested: {
-      type: Function as PropType<(action: MdzipConversionAction) => boolean | Promise<boolean>>,
+      type: Function as PropType<(
+        action: MdzipConversionAction,
+        context: MdzipConversionContext
+      ) => boolean | Promise<boolean>>,
       default: undefined
     },
     /**
@@ -246,6 +251,7 @@ export const MdzipWorkspace = defineComponent({
       if (!hostRef.value) return;
       view?.destroy();
       view = new MdzipWorkspaceView(hostRef.value, {
+        libraries: [PACKAGE_INFO],
         controls: props.controls,
         initialLayout: props.initialLayout,
         initialColorScheme: props.initialColorScheme,

@@ -70,6 +70,14 @@ test('composes explicit entry renderers with the #entry slot catch-all', () => {
 
   const composed = latestView().options['entryRenderers'] as MdzipEntryRenderer[];
   expect(composed.map((renderer) => renderer.id)).toEqual(['explicit', 'mdzip-vue-entry-slot']);
+  expect(latestView().options['libraries']).toEqual([
+    expect.objectContaining({
+      name: '@mdzip/editor-vue',
+      version: '1.3.3',
+      repositoryUrl: expect.stringContaining('/packages/editor-vue'),
+      description: expect.stringContaining('Vue wrapper')
+    })
+  ]);
 });
 
 test('slot content decides matching: empty render delegates to built-ins', () => {

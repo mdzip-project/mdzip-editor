@@ -120,6 +120,48 @@ test('matcher helpers match paths and extensions case-insensitively', () => {
   assert.equal(byExt({ path: 'index.md' }), false);
 });
 
+test('preview-only views do not initialize CodeMirror', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'preview',
+    initialLayout: 'preview',
+    initialColorScheme: 'light',
+    libraries: [{
+      name: '@mdzip/editor-react',
+      version: '1.3.3',
+      repositoryUrl: 'https://github.com/mdzip-project/mdzip-editor/tree/main/packages/editor-react',
+      description: 'React wrapper for the MDZip workspace editor.'
+    }]
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Preview only\n', 'Preview');
+    await view.open(bytes, { mode: 'read-only', fileName: 'preview.mdz' });
+
+    assert.equal(container.querySelector('.cm-editor'), null);
+    assert.equal(container.querySelector('[data-ref="editor-host"]').childNodes.length, 0);
+    assert.match(container.querySelector('[data-ref="preview-content"]').textContent, /Preview only/);
+    const libraryText = container.querySelector('[data-ref="library-list"]').textContent;
+    assert.match(libraryText, /@mdzip\/editor-react\s*1\.3\.3/);
+    assert.match(libraryText, /@mdzip\/editor\s*1\.3\.3/);
+    assert.match(libraryText, /@mdzip\/core-js\s*\d+\.\d+\.\d+/);
+    assert.match(libraryText, /CodeMirror\s*\d+\.\d+\.\d+/);
+    assert.match(libraryText, /Marked\s*\d+\.\d+\.\d+/);
+    assert.match(libraryText, /DOMPurify\s*\d+\.\d+\.\d+/);
+    assert.match(libraryText, /React wrapper for the MDZip workspace editor/);
+    const reactLink = container.querySelector(
+      '[data-ref="library-list"] a[href*="/packages/editor-react"]'
+    );
+    assert.equal(reactLink?.textContent, '@mdzip/editor-react');
+    assert.equal(reactLink?.getAttribute('target'), '_blank');
+    assert.equal(reactLink?.getAttribute('rel'), 'noopener noreferrer');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
 // --- workspace.updateManifest ---
 
 test('updateManifest replaces the manifest, emits a manifest event, and persists', async () => {

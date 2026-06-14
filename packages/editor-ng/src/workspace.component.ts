@@ -15,12 +15,14 @@ import {
   ViewChild,
 } from '@angular/core';
 import { MdzipEntryRendererDirective } from './entry-renderer.directive';
+import { PACKAGE_INFO } from './package-info.js';
 import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipColorScheme,
   MdzipConversionAction,
+  MdzipConversionContext,
   MdzipEditorCommand,
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
@@ -76,7 +78,10 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
    * output) because it must return/resolve `true` to suppress the built-in
    * conversion dialog.
    */
-  @Input() onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
+  @Input() onConversionRequested?: (
+    action: MdzipConversionAction,
+    context: MdzipConversionContext
+  ) => boolean | Promise<boolean>;
   /**
    * Custom markdown renderer. Keep the reference stable: identity changes
    * apply via a cheap preview re-render, never a workspace rebuild.
@@ -229,6 +234,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   private createView(): void {
     this.view?.destroy();
     this.view = new MdzipWorkspaceView(this.hostRef.nativeElement, {
+      libraries: [PACKAGE_INFO],
       controls: this.controls,
       initialLayout: this.initialLayout,
       initialColorScheme: this.initialColorScheme,
@@ -247,7 +253,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onColorSchemeChanged: (colorScheme: MdzipColorScheme) => this.colorSchemeChanged.emit(colorScheme),
       onFailed: (e: unknown) => this.failed.emit(e),
       onConversionRequested: this.onConversionRequested
-        ? (action) => this.onConversionRequested!(action)
+        ? (action, context) => this.onConversionRequested!(action, context)
         : undefined,
       markdownRenderer: this.markdownRenderer,
       markdownExtensions: this.markdownExtensions,

@@ -37,6 +37,12 @@ export async function createArchiveInventory(
   bytes: Uint8Array
 ): Promise<ArchiveInventory> {
   const archive = await MdzArchiveCore.open(bytes);
+  return createArchiveInventoryFromArchive(archive);
+}
+
+export async function createArchiveInventoryFromArchive(
+  archive: MdzArchiveCore
+): Promise<ArchiveInventory> {
   const entryPoint = await archive.resolveEntryPoint();
   const manifest = await archive.readManifest();
   const archiveEntries = archive.listEntries();

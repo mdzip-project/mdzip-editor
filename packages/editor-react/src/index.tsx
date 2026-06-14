@@ -1,11 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MdzipWorkspaceView } from '@mdzip/editor';
+import { PACKAGE_INFO } from './package-info.js';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipColorScheme,
   MdzipConversionAction,
+  MdzipConversionContext,
   MdzipDocumentChangeEvent,
   MdzipEditorCommand,
   MdzipEditorSnapshot,
@@ -135,7 +137,10 @@ export interface MdzipWorkspaceProps {
    * Host hook for the markdown→MDZ conversion flow. Return/resolve `true`
    * to take over (the built-in conversion dialog is suppressed).
    */
-  onConversionRequested?: (action: MdzipConversionAction) => boolean | Promise<boolean>;
+  onConversionRequested?: (
+    action: MdzipConversionAction,
+    context: MdzipConversionContext
+  ) => boolean | Promise<boolean>;
   /**
    * Custom markdown renderer. Keep the reference stable (module scope or
    * useMemo): identity changes apply via a cheap preview re-render, never a
@@ -300,6 +305,7 @@ function MdzipWorkspace({
   useEffect(() => {
     if (!ref.current) return;
     const view = new MdzipWorkspaceView(ref.current, {
+      libraries: [PACKAGE_INFO],
       controls,
       initialLayout,
       initialColorScheme,
@@ -319,7 +325,8 @@ function MdzipWorkspace({
       onFailed: (e) => callbacksRef.current.onFailed?.(e),
       // A hook returning false falls back to the built-in dialog, same as no
       // hook at all, so the always-present delegate is behavior-preserving.
-      onConversionRequested: (action) => callbacksRef.current.onConversionRequested?.(action) ?? false,
+      onConversionRequested: (action, context) =>
+        callbacksRef.current.onConversionRequested?.(action, context) ?? false,
       markdownRenderer: renderingRef.current.markdownRenderer,
       markdownExtensions: renderingRef.current.markdownExtensions,
       entryRenderers: composeEntryRenderers(

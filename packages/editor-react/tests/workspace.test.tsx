@@ -68,6 +68,14 @@ test('composes explicit entry renderers with the renderEntry catch-all', () => {
 
   const composed = latestView().options['entryRenderers'] as MdzipEntryRenderer[];
   expect(composed.map((renderer) => renderer.id)).toEqual(['explicit', 'mdzip-react-render-entry']);
+  expect(latestView().options['libraries']).toEqual([
+    expect.objectContaining({
+      name: '@mdzip/editor-react',
+      version: '1.3.3',
+      repositoryUrl: expect.stringContaining('/packages/editor-react'),
+      description: expect.stringContaining('React wrapper')
+    })
+  ]);
 });
 
 test('inline prop identities with stable ids never recreate or re-apply', () => {
