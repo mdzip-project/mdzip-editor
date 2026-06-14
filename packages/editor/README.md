@@ -290,3 +290,10 @@ revealContent();
 
 `whenRendered()` resolves immediately when the latest preview is already
 hydrated, and resolves (rather than hanging) if the view is destroyed.
+
+The preview hydrates images progressively: the text mounts right away and each
+archive image swaps in as its bytes resolve, with layout space reserved ahead
+of the visual load from dimensions sniffed out of the image header — so there
+is no text-blocked-on-images delay and no layout shift. `onPreviewRendered`
+fires when the text is mounted; `onAssetsHydrated` fires once every referenced
+image has resolved and its final `src` is assigned.

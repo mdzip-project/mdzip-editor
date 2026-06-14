@@ -146,8 +146,17 @@ export interface MdzipAssetSessionOptions {
   onFailed?: (error: unknown) => void;
 }
 
+export interface MdzipResolvedImage {
+  url: string;
+  /** Intrinsic pixel width, when it could be sniffed from the image bytes. */
+  width?: number;
+  /** Intrinsic pixel height, when it could be sniffed from the image bytes. */
+  height?: number;
+}
+
 export class MdzipAssetSession {
   private readonly urls = new Map<string, string>();
+  private readonly sizes = new Map<string, { width: number; height: number }>();
   private readonly pending = new Map<string, Promise<string | undefined>>();
   private sourceIdPromise: Promise<string> | null = null;
   private destroyed = false;
@@ -178,6 +187,19 @@ export class MdzipAssetSession {
     return pending;
   }
 
+  /**
+   * Resolves an image to its URL plus, when sniffable from the bytes, its
+   * intrinsic dimensions — enabling progressive hydration that reserves layout
+   * space before the image visually loads.
+   */
+  public async resolveImage(path: string, currentPath: string): Promise<MdzipResolvedImage | undefined> {
+    const url = await this.resolve(path, currentPath);
+    if (!url) return undefined;
+    const assetPath = resolveAssetPath(path, currentPath, this.assets);
+    const size = assetPath ? this.sizes.get(assetPath.toLowerCase()) : undefined;
+    return size ? { url, width: size.width, height: size.height } : { url };
+  }
+
   public async rewriteHtml(html: string, currentPath: string, signal: AbortSignal): Promise<string> {
     const template = this.ownerDocument.createElement('template');
     template.innerHTML = html;
@@ -201,6 +223,7 @@ export class MdzipAssetSession {
       }
     }
     this.urls.clear();
+    this.sizes.clear();
     this.pending.clear();
   }
 
@@ -240,6 +263,8 @@ export class MdzipAssetSession {
       ? urlApi.createObjectURL(new Blob([bytes as BlobPart], { type: mimeType }))
       : `data:${mimeType};base64,${bytesToBase64(bytes)}`;
     this.urls.set(path.toLowerCase(), url);
+    const size = sniffImageSize(bytes, mimeType);
+    if (size) this.sizes.set(path.toLowerCase(), size);
     return url;
   }
 
@@ -268,6 +293,90 @@ async function sha256(bytes: Uint8Array): Promise<string> {
   const input = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   const digest = await crypto.subtle.digest('SHA-256', input);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Reads intrinsic pixel dimensions from common image headers without decoding
+ * the image. Returns `undefined` for formats it does not recognize.
+ */
+export function sniffImageSize(
+  bytes: Uint8Array,
+  mimeType: string
+): { width: number; height: number } | undefined {
+  const len = bytes.length;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+
+  // PNG: 8-byte signature, then IHDR with big-endian width/height.
+  if (len >= 24 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  }
+
+  // GIF: 'GIF', then little-endian logical screen width/height.
+  if (len >= 10 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) {
+    return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
+  }
+
+  // BMP: 'BM', then signed little-endian width/height in the DIB header.
+  if (len >= 26 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return { width: Math.abs(view.getInt32(18, true)), height: Math.abs(view.getInt32(22, true)) };
+  }
+
+  // WebP: RIFF container with a WEBP fourcc and one of three chunk forms.
+  if (len >= 30
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) {
+    const chunk = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+    if (chunk === 'VP8 ') {
+      return { width: view.getUint16(26, true) & 0x3fff, height: view.getUint16(28, true) & 0x3fff };
+    }
+    if (chunk === 'VP8L') {
+      const b0 = bytes[21], b1 = bytes[22], b2 = bytes[23], b3 = bytes[24];
+      return {
+        width: 1 + (((b1 & 0x3f) << 8) | b0),
+        height: 1 + (((b3 & 0x0f) << 10) | (b2 << 2) | ((b1 & 0xc0) >> 6))
+      };
+    }
+    if (chunk === 'VP8X') {
+      return {
+        width: 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)),
+        height: 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16))
+      };
+    }
+  }
+
+  // JPEG: scan for a Start-Of-Frame marker carrying the dimensions.
+  if (len >= 4 && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 < len) {
+      if (bytes[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = bytes[offset + 1];
+      if (marker >= 0xc0 && marker <= 0xcf
+        && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: view.getUint16(offset + 5), width: view.getUint16(offset + 7) };
+      }
+      const segmentLength = view.getUint16(offset + 2);
+      if (segmentLength < 2) break;
+      offset += 2 + segmentLength;
+    }
+  }
+
+  // SVG: read width/height or fall back to the viewBox extents.
+  if (mimeType === 'image/svg+xml' || (len >= 5 && bytes[0] === 0x3c)) {
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes.subarray(0, Math.min(len, 2048)));
+    const svg = /<svg[^>]*>/i.exec(text)?.[0];
+    if (svg) {
+      const width = /\bwidth\s*=\s*["']?\s*([\d.]+)/i.exec(svg)?.[1];
+      const height = /\bheight\s*=\s*["']?\s*([\d.]+)/i.exec(svg)?.[1];
+      if (width && height) return { width: Math.round(Number(width)), height: Math.round(Number(height)) };
+      const viewBox = /\bviewBox\s*=\s*["']?\s*[\d.]+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)/i.exec(svg);
+      if (viewBox) return { width: Math.round(Number(viewBox[1])), height: Math.round(Number(viewBox[2])) };
+    }
+  }
+
+  return undefined;
 }
 
 function resolveAssetPath(

@@ -482,3 +482,48 @@ test('whenRendered resolves on view destruction without hanging', async () => {
   // Should resolve (not reject or hang) even though the view was destroyed.
   await pending;
 });
+
+const PNG_1X1 = Uint8Array.from(Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+  'base64'
+));
+
+test('progressively hydrates archive images: text first, then sized swap-in', async () => {
+  const events = [];
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'viewer',
+    initialColorScheme: 'light',
+    onPreviewRendered: () => events.push('rendered'),
+    onAssetsHydrated: () => events.push('hydrated')
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle(
+      '# Title\n\n![logo](images/logo.png)\n',
+      'Demo',
+      [{ archivePath: 'images/logo.png', fileBytes: PNG_1X1 }]
+    );
+    await view.open(bytes, { mode: 'read-only', fileName: 'demo.mdz' });
+
+    // Text mounts immediately: rendered has fired, but the image is still a
+    // placeholder (no src yet) so hydration has not completed.
+    assert.deepEqual(events, ['rendered']);
+    const image = container.querySelector('[data-ref="preview-content"] img');
+    assert.ok(image, 'image element is in the mounted preview');
+    assert.equal(image.getAttribute('src'), null, 'archive src is withheld until resolved');
+    assert.equal(image.classList.contains('mdzip-image-loading'), true);
+
+    // Once the image resolves it is sized from its sniffed dimensions and the
+    // resolved URL is swapped in; hydration then completes.
+    await view.whenRendered();
+    assert.deepEqual(events, ['rendered', 'hydrated']);
+    assert.match(image.getAttribute('src') ?? '', /^(data:image|blob:)/);
+    assert.equal(image.getAttribute('width'), '1');
+    assert.equal(image.getAttribute('height'), '1');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});

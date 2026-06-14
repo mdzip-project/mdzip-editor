@@ -1039,6 +1039,25 @@ export const WORKSPACE_CSS = `
   border-radius: 4px;
 }
 
+/* Progressive image hydration: a placeholder occupies the reserved space
+   (sized from the image's sniffed width/height attributes) until its bytes
+   resolve and the real src is assigned. */
+.mdzip-root .preview-content img.mdzip-image-loading {
+  background: var(--mdzip-control-background-color, rgba(127, 127, 127, 0.12));
+  animation: mdzip-image-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mdzip-image-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mdzip-root .preview-content img.mdzip-image-loading {
+    animation: none;
+  }
+}
+
 .mdzip-root .plain-text-preview {
   margin: 0;
   white-space: pre-wrap;

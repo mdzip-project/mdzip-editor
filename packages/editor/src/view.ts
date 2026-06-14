@@ -1372,11 +1372,13 @@ export class MdzipWorkspaceView {
           this.elPreviewContent.innerHTML = src
             ? `<div class="asset-preview-wrap"><img class="asset-preview-image" src="${escapeHtml(src)}" alt="${escapeHtml(snapshot.currentPath)}"></div>`
             : renderMdzipPreviewHtml(snapshot);
-          this.notifyPreviewMounted(snapshot, generation);
+          this.firePreviewRendered(snapshot, generation);
+          this.fireAssetsHydrated(snapshot, generation);
         }).catch((error) => this.options.onFailed?.(error));
       } else {
         this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
-        this.notifyPreviewMounted(snapshot, generation);
+        this.firePreviewRendered(snapshot, generation);
+        this.fireAssetsHydrated(snapshot, generation);
       }
       return;
     }
@@ -1391,7 +1393,8 @@ export class MdzipWorkspaceView {
     } catch (error) {
       this.options.onFailed?.(error);
       this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
-      this.notifyPreviewMounted(snapshot, generation);
+      this.firePreviewRendered(snapshot, generation);
+      this.fireAssetsHydrated(snapshot, generation);
       return;
     }
 
@@ -1422,13 +1425,12 @@ export class MdzipWorkspaceView {
     context: MdzipMarkdownRenderContext,
     generation: number
   ): void {
-    if (html.includes('<img') && this.assetSession) {
-      void this.assetSession.rewriteHtml(html, context.currentPath, context.signal).then((rewritten) => {
-        if (generation !== this.previewGeneration || context.signal.aborted) return;
-        this.mountPreviewHtml(rewritten, snapshot, context, generation);
-      }).catch((error) => {
-        if ((error as { name?: string })?.name !== 'AbortError') this.options.onFailed?.(error);
-      });
+    // When the preview references archive images, mount the text immediately
+    // and hydrate each image progressively (reserving layout space from its
+    // sniffed intrinsic size), rather than blocking the whole preview on image
+    // resolution. Other markdown mounts synchronously.
+    if (this.assetSession && /<img\b/i.test(html)) {
+      this.mountProgressivePreview(html, snapshot, context, generation);
       return;
     }
     this.mountPreviewHtml(html, snapshot, context, generation);
@@ -1441,6 +1443,88 @@ export class MdzipWorkspaceView {
     generation: number
   ): void {
     this.elPreviewContent.innerHTML = html;
+    this.mountPreviewExtensions(context, generation);
+    // No archive images to resolve on this path: the preview is ready now.
+    this.firePreviewRendered(snapshot, generation);
+    this.fireAssetsHydrated(snapshot, generation);
+  }
+
+  /**
+   * Mounts the rendered text immediately with image placeholders, then swaps
+   * each archive image in as it resolves. `onPreviewRendered` fires once the
+   * text is in the DOM; `onAssetsHydrated` fires once every referenced image
+   * has resolved and had its final `src` assigned (or there are none).
+   */
+  private mountProgressivePreview(
+    html: string,
+    snapshot: MdzipWorkspaceSnapshot,
+    context: MdzipMarkdownRenderContext,
+    generation: number
+  ): void {
+    this.elPreviewContent.innerHTML = html;
+    const session = this.assetSession;
+    const pending: { image: HTMLImageElement; source: string }[] = [];
+    for (const image of Array.from(this.elPreviewContent.querySelectorAll('img'))) {
+      const source = image.getAttribute('src');
+      // Leave external, protocol-relative, data, and fragment URLs untouched.
+      if (!source || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(source)) {
+        continue;
+      }
+      // Drop the archive-relative src so the browser does not fetch the bad
+      // path; reserve the slot until the resolved bytes arrive.
+      image.removeAttribute('src');
+      image.classList.add('mdzip-image-loading');
+      pending.push({ image, source });
+    }
+
+    this.mountPreviewExtensions(context, generation);
+    this.firePreviewRendered(snapshot, generation);
+
+    if (!session || pending.length === 0) {
+      this.fireAssetsHydrated(snapshot, generation);
+      return;
+    }
+
+    let remaining = pending.length;
+    const settle = (): void => {
+      remaining -= 1;
+      if (remaining === 0) {
+        this.fireAssetsHydrated(snapshot, generation);
+      }
+    };
+    for (const { image, source } of pending) {
+      void session.resolveImage(source, context.currentPath).then((resolved) => {
+        if (generation !== this.previewGeneration || context.signal.aborted) {
+          settle();
+          return;
+        }
+        if (!resolved) {
+          image.classList.remove('mdzip-image-loading');
+          settle();
+          return;
+        }
+        // Reserve correctly-proportioned space before the pixels decode so the
+        // surrounding text does not reflow when the image appears.
+        if (resolved.width && resolved.height) {
+          image.setAttribute('width', String(resolved.width));
+          image.setAttribute('height', String(resolved.height));
+        }
+        const clear = (): void => image.classList.remove('mdzip-image-loading');
+        image.addEventListener('load', clear, { once: true });
+        image.addEventListener('error', clear, { once: true });
+        image.setAttribute('src', resolved.url);
+        settle();
+      }).catch((error) => {
+        if ((error as { name?: string } | null)?.name !== 'AbortError') {
+          this.options.onFailed?.(error);
+        }
+        image.classList.remove('mdzip-image-loading');
+        settle();
+      });
+    }
+  }
+
+  private mountPreviewExtensions(context: MdzipMarkdownRenderContext, generation: number): void {
     for (const extension of this.markdownExtensions) {
       if (!extension.mount) {
         continue;
@@ -1473,15 +1557,9 @@ export class MdzipWorkspaceView {
         this.options.onFailed?.(error);
       }
     }
-    this.notifyPreviewMounted(snapshot, generation);
   }
 
-  /**
-   * Signals that the preview for `generation` is mounted, then waits for its
-   * images to finish loading before signalling hydration. Stale generations
-   * are ignored.
-   */
-  private notifyPreviewMounted(snapshot: MdzipWorkspaceSnapshot, generation: number): void {
+  private firePreviewRendered(snapshot: MdzipWorkspaceSnapshot, generation: number): void {
     if (generation !== this.previewGeneration) {
       return;
     }
@@ -1490,35 +1568,19 @@ export class MdzipWorkspaceView {
     } catch (error) {
       this.options.onFailed?.(error);
     }
-    const images = Array.from(this.elPreviewContent.querySelectorAll('img'));
-    const pending = images.filter((image) => !image.complete);
-    const finish = (): void => {
-      if (generation !== this.previewGeneration) {
-        return;
-      }
-      this.previewHydrated = true;
-      try {
-        this.options.onAssetsHydrated?.(snapshot);
-      } catch (error) {
-        this.options.onFailed?.(error);
-      }
-      this.flushRenderedWaiters();
-    };
-    if (pending.length === 0) {
-      finish();
+  }
+
+  private fireAssetsHydrated(snapshot: MdzipWorkspaceSnapshot, generation: number): void {
+    if (generation !== this.previewGeneration) {
       return;
     }
-    let remaining = pending.length;
-    const settle = (): void => {
-      remaining -= 1;
-      if (remaining === 0) {
-        finish();
-      }
-    };
-    for (const image of pending) {
-      image.addEventListener('load', settle, { once: true });
-      image.addEventListener('error', settle, { once: true });
+    this.previewHydrated = true;
+    try {
+      this.options.onAssetsHydrated?.(snapshot);
+    } catch (error) {
+      this.options.onFailed?.(error);
     }
+    this.flushRenderedWaiters();
   }
 
   private flushRenderedWaiters(): void {

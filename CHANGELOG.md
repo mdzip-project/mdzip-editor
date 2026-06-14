@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.7] - 2026-06-14
+
+### Added
+- Progressive preview image hydration (completes #9). The read-only preview
+  now mounts its text immediately and swaps each archive image in as its bytes
+  resolve, reserving correctly-proportioned layout space ahead of the visual
+  load from dimensions sniffed out of the image header (PNG, JPEG, GIF, WebP,
+  BMP, SVG). This avoids the text-blocked-on-images delay and the layout shift
+  of late-arriving images. Exposed `MdzipAssetSession.resolveImage()` (URL +
+  intrinsic size) and the `sniffImageSize()` helper.
+
+### Changed
+- `onAssetsHydrated` / `whenRendered()` now resolve once every referenced
+  preview image has resolved and had its final `src` assigned, rather than
+  waiting on individual `<img>` load events.
+
 ## [1.3.6] - 2026-06-14
 
 ### Added
