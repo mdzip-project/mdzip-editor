@@ -209,6 +209,38 @@ options are available as inputs/props on the Angular, React, and Vue wrappers.
 See the Developer Guide's Rendering Extensibility section for the contracts
 and lifecycle rules.
 
+An extension whose `transformHtml` emits markup the default policy would strip
+(inline SVG, for example) declares the narrow relaxations it needs via a
+`sanitize` contribution (`MdzipSanitizeContribution`), merged into the single
+DOMPurify pass. Keep contributions minimal — they widen the policy for the
+whole preview, since the extension output and surrounding markdown HTML are
+sanitized together.
+
+### Mermaid diagrams
+
+Render fenced ` ```mermaid ` blocks to inline SVG with the optional extension
+from the `@mdzip/editor/mermaid` entrypoint. It is shipped separately so the
+~1MB mermaid library stays out of the core bundle — it is dynamically imported
+the first time a document actually contains a mermaid block. Install `mermaid`
+(an optional peer dependency) alongside `@mdzip/editor`:
+
+```ts
+import { mdzipMermaidExtension } from '@mdzip/editor/mermaid';
+
+const view = new MdzipWorkspaceView(container, {
+  markdownExtensions: [mdzipMermaidExtension({ theme: 'auto' })]
+});
+```
+
+Diagrams render with mermaid's `strict` security level, each SVG is
+re-sanitized before insertion, and an invalid diagram renders as an inline
+error block instead of breaking the preview. `theme` defaults to `'auto'`,
+following the preview color scheme. Enabling the extension widens the preview's
+sanitize policy to allow SVG and inline styles for the whole render. For a
+CSP-restricted host, mermaid bundles into the consumer's webview script (no new
+`img-src` needs); if you lazy-load its chunk, serve it under the existing
+`script-src` nonce.
+
 ## Developer Guide
 
 See the [Developer Guide](https://github.com/mdzip-project/mdzip-editor/blob/main/docs/developer-guide.md)
@@ -299,3 +331,30 @@ box, so the pixels arrive with no further reflow (and it snaps open instead
 under `prefers-reduced-motion`). `onPreviewRendered` fires when the text is
 mounted; `onAssetsHydrated` fires once every referenced image has resolved and
 its final `src` is assigned.
+
+## Content Security Policy (restricted hosts)
+
+Archive images resolve to `URL.createObjectURL()` **`blob:` object URLs** (the
+view falls back to `data:` URLs only where `createObjectURL` is unavailable,
+such as Node). When embedding the editor in a host with a restrictive
+Content-Security-Policy — a VS Code webview, a sandboxed iframe, etc. — the
+policy's `img-src` **must include `blob:`**, or every archive image renders as a
+broken placeholder:
+
+```
+img-src 'self' <cspSource> blob: data:;
+```
+
+Including `data:` as well lets the view's built-in recovery path work: if a
+`blob:` URL fails to load (for example because `img-src` omits `blob:`), the
+view retries that image once with a `data:` URL and, if it still fails, reports
+the error through the `onFailed` option instead of failing silently. Listen on
+`onFailed` to surface image-load problems during development:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  onFailed: (error) => console.warn('[mdzip]', error)
+});
+```
+
+Call `destroy()` to revoke the object URLs the view created.

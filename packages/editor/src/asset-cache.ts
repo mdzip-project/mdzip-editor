@@ -200,6 +200,30 @@ export class MdzipAssetSession {
     return size ? { url, width: size.width, height: size.height } : { url };
   }
 
+  /**
+   * Builds a `data:` URL for an image asset, independent of object URLs.
+   *
+   * Used as a recovery path when a `blob:` URL fails to load — most commonly a
+   * host whose Content-Security-Policy `img-src` omits `blob:` but permits
+   * `data:` (e.g. the typical VS Code webview `img-src data: <cspSource>`).
+   * Unlike {@link resolve}, the result is not cached or revoked: it exists only
+   * for the lifetime of the `<img>` that adopts it, so the normal path keeps
+   * the memory benefit of object URLs.
+   */
+  public async resolveDataUrl(path: string, currentPath: string): Promise<string | undefined> {
+    if (this.destroyed) return undefined;
+    const assetPath = resolveAssetPath(path, currentPath, this.assets);
+    if (!assetPath) return undefined;
+    const asset = this.assets.find((item) => item.path.toLowerCase() === assetPath.toLowerCase());
+    if (!asset) return undefined;
+    const bytes = await this.workspace.readPathBytes(asset.path).catch((error) => {
+      this.options.onFailed?.(error);
+      return undefined;
+    });
+    if (!bytes || this.destroyed) return undefined;
+    return `data:${asset.mimeType};base64,${bytesToBase64(bytes)}`;
+  }
+
   public async rewriteHtml(html: string, currentPath: string, signal: AbortSignal): Promise<string> {
     const template = this.ownerDocument.createElement('template');
     template.innerHTML = html;

@@ -1,5 +1,57 @@
 # Changelog
 
+## [1.3.11] - 2026-06-15
+
+### Fixed
+- Mermaid diagrams now initialize with `htmlLabels: false` (and
+  `flowchart.htmlLabels: false`), so labels render as SVG `<text>` instead of
+  HTML inside `<foreignObject>`. The bundled SVG sanitize policy strips
+  foreignObject HTML, so html labels would otherwise vanish from the rendered
+  diagram. This keeps the emitted SVG self-consistent with the sanitizer for
+  every consumer without re-allowing HTML in labels.
+
+## [1.3.10] - 2026-06-15
+
+### Added
+- Mermaid diagram support via a new optional extension at the
+  `@mdzip/editor/mermaid` entrypoint (`mdzipMermaidExtension`). Renders fenced
+  ` ```mermaid ` blocks to inline SVG in the preview, with theme following the
+  color scheme (`'auto'` by default), mermaid `strict` security level, per-SVG
+  re-sanitization, and inline error blocks for invalid diagrams. Mermaid is an
+  optional peer dependency, dynamically imported only when a document contains a
+  mermaid block, so the ~1MB library stays out of the core bundle (issue #14).
+- `MdzipSanitizeContribution`: render extensions can declare narrow, opt-in
+  relaxations to the pipeline's DOMPurify pass (e.g. `allowSvg`) via a new
+  `sanitize` field, so `transformHtml` output such as inline SVG survives
+  sanitization. Exposed `sanitizeMdzipHtml(html, contributions)`.
+
+### Changed
+- The default markdown renderer now preserves the requested language as a
+  `language-*` class on fenced code blocks even when the language is not
+  highlightable (e.g. `mermaid`), so extensions and client-side highlighters
+  can find them.
+- Archive image load failures are no longer silent (issue #11). When a `blob:`
+  object URL fails to load (typically a host CSP whose `img-src` omits `blob:`),
+  the view retries once with a `data:` URL and, if that also fails, reports it
+  via `onFailed` instead of leaving a blank box. Documented the `blob:`/`data:`
+  CSP requirement for restricted hosts in the README. Added
+  `MdzipAssetSession.resolveDataUrl()`.
+
+## [1.3.9] - 2026-06-15
+
+### Fixed
+- Out-of-order async parses no longer leave the editor on stale content when
+  `[bytes]` changes twice in quick succession (issue #10). `openArchive` and
+  `openWorkspace` now carry a generation token and discard any parse that a
+  newer open has superseded, so the most recent input always wins regardless
+  of resolution order. Covers the Angular `MdzipWorkspaceComponent`, which
+  routes `[bytes]`/`[workspace]` changes through these methods.
+- Orphaned-asset indicators in the nav pane no longer disappear from the
+  remaining orphans after removing one orphaned asset (issue #12). Reloads that
+  preserve the current text now re-run orphaned-asset analysis when it was
+  already active, so remaining orphans stay flagged without reopening the nav
+  pane. Applies to every mutation that reloads (remove/rename/etc.).
+
 ## [1.3.8] - 2026-06-14
 
 ### Changed

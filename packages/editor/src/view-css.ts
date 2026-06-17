@@ -1079,6 +1079,30 @@ export const WORKSPACE_CSS = `
   }
 }
 
+.mdzip-root .preview-content .mdzip-mermaid {
+  display: flex;
+  justify-content: center;
+  margin: 1em 0;
+}
+
+.mdzip-root .preview-content .mdzip-mermaid > svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mdzip-root .preview-content .mdzip-mermaid-error {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border-radius: 6px;
+  border: 1px solid var(--mdzip-error-border-color, rgba(220, 70, 70, 0.5));
+  background: var(--mdzip-error-background-color, rgba(220, 70, 70, 0.08));
+  color: var(--mdzip-error-color, #b03030);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .mdzip-root .plain-text-preview {
   margin: 0;
   white-space: pre-wrap;

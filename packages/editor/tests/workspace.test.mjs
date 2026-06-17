@@ -4,9 +4,33 @@ import { JSDOM } from 'jsdom';
 import { MdzArchiveCore } from '@mdzip/core-js';
 
 // The default renderer sanitizes through DOMPurify, which needs a DOM window
-// in Node. The library resolves it lazily from globalThis.window.
+// in Node. The library resolves it lazily from globalThis.window. Constructing
+// a full MdzipWorkspaceView additionally needs document/HTMLElement, animation
+// frame helpers, matchMedia (color-scheme detection) and object-URL stubs.
 if (typeof globalThis.window === 'undefined') {
-  globalThis.window = new JSDOM('').window;
+  const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
+    pretendToBeVisual: true
+  });
+  const { window } = dom;
+  window.matchMedia = (query) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener() {},
+    removeEventListener() {},
+    addListener() {},
+    removeListener() {},
+    dispatchEvent() { return false; }
+  });
+  globalThis.window = window;
+  globalThis.document = window.document;
+  globalThis.HTMLElement = window.HTMLElement;
+  globalThis.Node = window.Node;
+  globalThis.MutationObserver = window.MutationObserver;
+  globalThis.requestAnimationFrame = window.requestAnimationFrame.bind(window);
+  globalThis.cancelAnimationFrame = window.cancelAnimationFrame.bind(window);
+  globalThis.URL.createObjectURL = () => 'blob:test';
+  globalThis.URL.revokeObjectURL = () => {};
 }
 import {
   MdzipReadOnlyError,
@@ -242,6 +266,69 @@ test('manages manifest title and orphaned assets', async () => {
   await workspace.setManifestTitle('Renamed');
   const saved = await workspace.saveToBytes();
   assert.equal((await openMdzArchive(saved)).manifest.title, 'Renamed');
+});
+
+test('keeps remaining orphaned indicators after removing one orphaned asset', async () => {
+  // Two images referenced by no markdown — both orphaned.
+  const bytes = await buildNewArchiveBytesWithTitle('# Doc\n', 'Doc', [
+    { archivePath: 'images/a.png', fileBytes: PNG_1X1 },
+    { archivePath: 'images/b.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  // Opening the nav pane triggers this analysis; reproduce that here.
+  await workspace.ensureOrphanedAssetsAnalyzed();
+  assert.deepEqual(
+    workspace.snapshot().content.orphanedAssetPaths.slice().sort(),
+    ['images/a.png', 'images/b.png']
+  );
+
+  // Removing one orphan reloads the workspace. Without re-analysis the snapshot
+  // would report no orphans until the nav pane was reopened (issue #12).
+  const removed = await workspace.removeAsset('images/a.png', { requireOrphaned: true });
+  assert.equal(removed, true);
+  assert.deepEqual(
+    workspace.snapshot().content.orphanedAssetPaths,
+    ['images/b.png'],
+    'remaining orphan should still be flagged without reopening the nav pane'
+  );
+});
+
+test('latest [bytes] wins when two openArchive calls resolve out of order', async () => {
+  // Force the FIRST (superseded) parse to resolve AFTER the second so the stale
+  // result, if not guarded by a generation token, would overwrite the latest
+  // input (issue #10).
+  const originalOpenWorkspace = MdzArchiveCore.openWorkspace.bind(MdzArchiveCore);
+  let parseCount = 0;
+  MdzArchiveCore.openWorkspace = async (...args) => {
+    parseCount += 1;
+    if (parseCount === 1) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return originalOpenWorkspace(...args);
+  };
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {});
+  try {
+    const stale = await buildNewArchiveBytesWithTitle('# Stale\n', 'Stale');
+    const latest = await buildNewArchiveBytesWithTitle('# Latest\n\nReal content\n', 'Latest');
+    parseCount = 0; // count only the two openArchive parses below
+
+    const first = view.openArchive(stale, { fileName: 'stale.mdz' });
+    const second = view.openArchive(latest, { fileName: 'latest.mdz' });
+    await Promise.all([first, second]);
+    // Let the delayed stale continuation run; it must be discarded.
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const snapshot = await view.getCurrentSnapshot();
+    assert.equal(snapshot?.state.fileName, 'latest.mdz');
+  } finally {
+    view.destroy();
+    container.remove();
+    MdzArchiveCore.openWorkspace = originalOpenWorkspace;
+  }
 });
 
 test('addAsset preserves the content of lazily-opened documents the user never visited', async () => {

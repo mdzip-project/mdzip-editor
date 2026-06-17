@@ -1,6 +1,6 @@
 {
   "name": "@mdzip/editor",
-  "version": "1.3.8",
+  "version": "1.3.11",
   "description": "Framework-independent MDZip workspace engine.",
   "license": "Apache-2.0",
   "repository": {
@@ -27,6 +27,10 @@
     "./diff-view": {
       "types": "./dist/diff-view.d.ts",
       "import": "./dist/diff-view.js"
+    },
+    "./mermaid": {
+      "types": "./dist/mermaid.d.ts",
+      "import": "./dist/mermaid.js"
     }
   },
   "files": [
@@ -53,6 +57,14 @@
     "highlight.js": "^11.10.0",
     "lucide": "^1.17.0",
     "marked": "^15.0.12"
+  },
+  "peerDependencies": {
+    "mermaid": "^11.0.0"
+  },
+  "peerDependenciesMeta": {
+    "mermaid": {
+      "optional": true
+    }
   },
   "publishConfig": {
     "access": "public"

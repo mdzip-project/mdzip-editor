@@ -32,13 +32,57 @@ function resolvePurifier(): typeof DOMPurify {
   return purifier;
 }
 
-const SANITIZE_OPTIONS = {
-  USE_PROFILES: { html: true },
-  ADD_ATTR: ['class'],
-  FORBID_TAGS: ['base', 'embed', 'form', 'iframe', 'input', 'link', 'meta', 'object', 'script', 'style'],
-  FORBID_ATTR: ['style'],
-  ALLOW_DATA_ATTR: false
-};
+const BASE_FORBID_TAGS = ['base', 'embed', 'form', 'iframe', 'input', 'link', 'meta', 'object', 'script', 'style'];
+const BASE_FORBID_ATTR = ['style'];
+
+/**
+ * Narrow, opt-in relaxations a render extension contributes to the single
+ * DOMPurify pass so its `transformHtml` output survives sanitization.
+ *
+ * The default policy is HTML-only and strips SVG, inline styles, `<style>`,
+ * and data attributes. An extension that injects richer markup — inline SVG
+ * for a diagram, say — declares exactly what it needs here. Keep contributions
+ * as narrow as possible: they widen the policy for the **whole** render pass
+ * (the extension output and the surrounding markdown HTML are sanitized
+ * together), so anything allowed here is allowed everywhere in that preview.
+ */
+export interface MdzipSanitizeContribution {
+  /**
+   * Enable DOMPurify's `svg` + `svgFilters` profiles so inline SVG survives.
+   * Even with this on, DOMPurify still strips scripts and event handlers from
+   * the SVG — extensions should additionally sanitize and lock down their own
+   * SVG before injecting it.
+   */
+  allowSvg?: boolean;
+  /** Extra element names to allow beyond the default policy. */
+  addTags?: readonly string[];
+  /** Extra attribute names to allow beyond the default policy. */
+  addAttr?: readonly string[];
+  /** Tags to drop from the default forbid-list (e.g. re-allow `style`). */
+  unforbidTags?: readonly string[];
+  /** Attributes to drop from the default forbid-list (e.g. re-allow inline `style`). */
+  unforbidAttr?: readonly string[];
+}
+
+function lower(value: string): string {
+  return value.toLowerCase();
+}
+
+function buildSanitizeOptions(contributions: readonly MdzipSanitizeContribution[]) {
+  const allowSvg = contributions.some((contribution) => contribution.allowSvg);
+  const addTags = [...new Set(contributions.flatMap((contribution) => contribution.addTags ?? []))];
+  const addAttr = ['class', ...new Set(contributions.flatMap((contribution) => contribution.addAttr ?? []))];
+  const unforbidTags = new Set(contributions.flatMap((contribution) => contribution.unforbidTags ?? []).map(lower));
+  const unforbidAttr = new Set(contributions.flatMap((contribution) => contribution.unforbidAttr ?? []).map(lower));
+  return {
+    USE_PROFILES: allowSvg ? { html: true, svg: true, svgFilters: true } : { html: true },
+    ADD_TAGS: addTags,
+    ADD_ATTR: addAttr,
+    FORBID_TAGS: BASE_FORBID_TAGS.filter((tag) => !unforbidTags.has(tag)),
+    FORBID_ATTR: BASE_FORBID_ATTR.filter((attr) => !unforbidAttr.has(attr)),
+    ALLOW_DATA_ATTR: false
+  };
+}
 
 /**
  * Sanitizes rendered HTML with the editor's default DOMPurify policy.
@@ -47,9 +91,15 @@ const SANITIZE_OPTIONS = {
  * extensions that need to find placeholders again in `mount()` should use
  * class or id markers and carry payloads out-of-band (e.g. a side map keyed
  * by marker id), not element attributes.
+ *
+ * Pass `contributions` (an extension's {@link MdzipSanitizeContribution}s) to
+ * widen the policy just enough for richer output such as inline SVG.
  */
-export function sanitizeMdzipHtml(html: string): string {
-  return resolvePurifier().sanitize(html, SANITIZE_OPTIONS);
+export function sanitizeMdzipHtml(
+  html: string,
+  contributions: readonly MdzipSanitizeContribution[] = []
+): string {
+  return resolvePurifier().sanitize(html, buildSanitizeOptions(contributions));
 }
 
 /**
@@ -114,6 +164,13 @@ export interface MdzipRenderHandle {
  */
 export interface MdzipMarkdownRenderExtension {
   name: string;
+
+  /**
+   * Narrow sanitizer relaxations this extension needs for its `transformHtml`
+   * output to survive the pipeline's DOMPurify pass (e.g. inline SVG). Merged
+   * across all registered extensions. See {@link MdzipSanitizeContribution}.
+   */
+  sanitize?: MdzipSanitizeContribution;
 
   transformMarkdown?(
     markdown: string,
@@ -222,7 +279,11 @@ const marked = new Marked({
           // Fall through to escaped plain code.
         }
       }
-      return `<pre><code>${escapeHtml(token.text)}</code></pre>`;
+      // Preserve the requested language as a class even when it is not a
+      // highlightable language (e.g. `mermaid`), so render extensions and
+      // client-side highlighters can still find and claim the block.
+      const className = requestedLanguage ? ` class="language-${escapeHtml(requestedLanguage)}"` : '';
+      return `<pre><code${className}>${escapeHtml(token.text)}</code></pre>`;
     },
     table(token: Tokens.Table) {
       const renderCell = (cell: Tokens.TableCell): string => {
@@ -346,7 +407,10 @@ export class MdzipRenderingService {
 
     const skipSanitize = htmlTransforms.length === 0 && this.renderer.sanitizesOutput === true;
     if (!skipSanitize) {
-      value = chainRenderStage(value, (html) => sanitizeMdzipHtml(html), context.signal);
+      const contributions = this.extensions
+        .map((ext) => ext.sanitize)
+        .filter((contribution): contribution is MdzipSanitizeContribution => contribution !== undefined);
+      value = chainRenderStage(value, (html) => sanitizeMdzipHtml(html, contributions), context.signal);
     }
     return value;
   }

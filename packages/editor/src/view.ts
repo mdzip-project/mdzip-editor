@@ -799,6 +799,11 @@ export class MdzipWorkspaceView {
   private pendingReplacePath: string | null = null;
   private conversionHookPending = false;
   private conversionDocumentGeneration = 0;
+  // Monotonic token bumped on every openArchive/openWorkspace call. The async
+  // parse for a superseded call must not win the race and overwrite the latest
+  // input, so each call captures its token and discards its result once a newer
+  // open has started.
+  private openGeneration = 0;
   private dragSourcePath: string | null = null;
   private dragOverElement: HTMLElement | null = null;
   private tooltipState: { text: string; x: number; y: number } | null = null;
@@ -996,6 +1001,7 @@ export class MdzipWorkspaceView {
   }
 
   public async openArchive(bytes: Uint8Array, options: MdzipWorkspaceOpenOptions = {}): Promise<void> {
+    const generation = ++this.openGeneration;
     this.unsub?.();
     this.resetRenderingState();
     this.cmEditor?.destroy();
@@ -1006,6 +1012,11 @@ export class MdzipWorkspaceView {
 
     try {
       const ws = await MdzipWorkspaceService.open(bytes, options);
+      if (generation !== this.openGeneration) {
+        // A newer open() started while this parse was in flight; discard this
+        // stale result so the latest input remains authoritative.
+        return;
+      }
       this.workspace = ws;
       this.replaceAssetSession(new MdzipAssetSession(
         ws,
@@ -1026,6 +1037,9 @@ export class MdzipWorkspaceView {
         snap
       );
       await this.ensureCmEditor();
+      if (generation !== this.openGeneration) {
+        return;
+      }
       this.unsub = ws.subscribe((event) => {
         if (event.changes.includes('asset')) {
           this.replaceAssetSession(new MdzipAssetSession(
@@ -1048,6 +1062,9 @@ export class MdzipWorkspaceView {
       this.render();
       void this.notifyChanged(this.initialWorkspaceEvent(ws.snapshot()));
     } catch (error) {
+      if (generation !== this.openGeneration) {
+        return;
+      }
       this.options.onFailed?.(error);
     }
   }
@@ -1079,6 +1096,7 @@ export class MdzipWorkspaceView {
    * `ERR_LAZY_TEXT_UNAVAILABLE` instead of silently producing an empty file.
    */
   public async openWorkspace(workspace: MdzWorkspace, options: MdzipWorkspaceOpenOptions = {}): Promise<void> {
+    const generation = ++this.openGeneration;
     this.unsub?.();
     this.resetRenderingState();
     this.cmEditor?.destroy();
@@ -1089,6 +1107,10 @@ export class MdzipWorkspaceView {
 
     try {
       const ws = await MdzipWorkspaceService.openWorkspace(workspace, options);
+      if (generation !== this.openGeneration) {
+        // A newer open started while this parse was in flight; discard it.
+        return;
+      }
       this.workspace = ws;
       this.replaceAssetSession(new MdzipAssetSession(
         ws,
@@ -1107,6 +1129,9 @@ export class MdzipWorkspaceView {
         snap
       );
       await this.ensureCmEditor();
+      if (generation !== this.openGeneration) {
+        return;
+      }
       this.unsub = ws.subscribe((event) => {
         if (event.changes.includes('asset')) {
           this.replaceAssetSession(new MdzipAssetSession(
@@ -1131,6 +1156,9 @@ export class MdzipWorkspaceView {
       this.render();
       void this.notifyChanged(this.initialWorkspaceEvent(ws.snapshot()));
     } catch (error) {
+      if (generation !== this.openGeneration) {
+        return;
+      }
       this.options.onFailed?.(error);
     }
   }
@@ -1518,9 +1546,7 @@ export class MdzipWorkspaceView {
           image.setAttribute('width', String(resolved.width));
           image.setAttribute('height', String(resolved.height));
         }
-        const clear = (): void => image.classList.remove('mdzip-image-loading');
-        image.addEventListener('load', clear, { once: true });
-        image.addEventListener('error', clear, { once: true });
+        this.attachImageLoadHandlers(image, source, resolved.url, context, generation);
         image.setAttribute('src', resolved.url);
         this.openImageSlot(slot);
         settle();
@@ -1544,6 +1570,62 @@ export class MdzipWorkspaceView {
   private openImageSlot(slot: HTMLElement): void {
     void slot.offsetHeight;
     slot.classList.add('mdzip-image-open');
+  }
+
+  /**
+   * Wires `<img>` load/error handling for a resolved archive image.
+   *
+   * `resolveImage()` already succeeded, so an `error` here is environmental
+   * rather than a missing asset — most often a host whose CSP `img-src` blocks
+   * the `blob:` object URL. When that happens we retry once with a `data:` URL
+   * (which many such hosts still permit), and only if that also fails do we
+   * surface the failure via `onFailed` instead of leaving a silent blank box.
+   */
+  private attachImageLoadHandlers(
+    image: HTMLImageElement,
+    source: string,
+    resolvedUrl: string,
+    context: MdzipMarkdownRenderContext,
+    generation: number
+  ): void {
+    const clear = (): void => image.classList.remove('mdzip-image-loading');
+    image.addEventListener('load', clear, { once: true });
+    image.addEventListener('error', () => {
+      const session = this.assetSession;
+      if (resolvedUrl.startsWith('blob:') && session) {
+        void session.resolveDataUrl(source, context.currentPath).then((dataUrl) => {
+          if (generation !== this.previewGeneration || context.signal.aborted) {
+            clear();
+            return;
+          }
+          if (dataUrl && dataUrl !== resolvedUrl) {
+            image.addEventListener('load', clear, { once: true });
+            image.addEventListener('error', () => {
+              clear();
+              this.reportImageLoadFailure(source);
+            }, { once: true });
+            image.setAttribute('src', dataUrl);
+            return;
+          }
+          clear();
+          this.reportImageLoadFailure(source);
+        }).catch((error) => {
+          clear();
+          this.options.onFailed?.(error);
+        });
+        return;
+      }
+      clear();
+      this.reportImageLoadFailure(source);
+    }, { once: true });
+  }
+
+  private reportImageLoadFailure(source: string): void {
+    this.options.onFailed?.(new Error(
+      `Failed to load archive image "${source}". When embedding the editor in a `
+      + 'CSP-restricted host (e.g. a VS Code webview), ensure img-src permits '
+      + 'blob: and data:.'
+    ));
   }
 
   private mountPreviewExtensions(context: MdzipMarkdownRenderContext, generation: number): void {

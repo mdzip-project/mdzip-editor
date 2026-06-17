@@ -119,3 +119,25 @@ test('resolveImage returns the URL plus sniffed intrinsic dimensions', async () 
   assert.equal(await session.resolveImage('images/missing.png', 'index.md'), undefined);
   session.destroy();
 });
+
+test('resolveDataUrl returns a data: URL fallback regardless of object-URL support', async () => {
+  // Stub createObjectURL so resolve() returns blob:, proving resolveDataUrl is
+  // an independent data: path (the CSP-blocked-blob recovery in the view).
+  const dom = new JSDOM('');
+  dom.window.URL.createObjectURL = () => 'blob:test';
+  dom.window.URL.revokeObjectURL = () => {};
+  const reads = [];
+  const assets = [asset('images/logo.png', PNG_1X1, reads)];
+  const workspace = {
+    readPathBytes: async (path) => assets.find((item) => item.path === path)?.readBytes()
+  };
+  const session = new MdzipAssetSession(workspace, assets, dom.window.document);
+
+  assert.equal(await session.resolve('images/logo.png', 'index.md'), 'blob:test');
+  const dataUrl = await session.resolveDataUrl('images/logo.png', 'index.md');
+  assert.ok(dataUrl?.startsWith('data:image/png;base64,'), 'expected a data: URL');
+
+  assert.equal(await session.resolveDataUrl('images/missing.png', 'index.md'), undefined);
+  session.destroy();
+  assert.equal(await session.resolveDataUrl('images/logo.png', 'index.md'), undefined);
+});

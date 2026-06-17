@@ -800,6 +800,12 @@ export class MdzipWorkspaceService {
     const currentText = this.currentTextValue;
     const currentPath = this.currentPathValue;
     const currentPathType = this.currentPathTypeValue;
+    // Reopening drops orphaned analysis (includeOrphanedAssetAnalysis: false), so
+    // contentValue.orphanedAssetPaths becomes []. If analysis was already active
+    // (e.g. the nav pane computed it), recompute it before the caller emits, or
+    // the re-render would show remaining orphans as normal files until the nav
+    // pane is reopened.
+    const hadOrphanedAnalysis = this.liveOrphanedPaths !== null;
     this.archiveBytes = bytes;
     this.workspaceValue = await MdzArchiveCore.openWorkspace(bytes, {
       includeOrphanedAssetAnalysis: false,
@@ -813,12 +819,15 @@ export class MdzipWorkspaceService {
       this.currentTextValue = this.contentValue.markdownText;
       this.currentPathValue = this.contentValue.entryPoint;
       this.currentPathTypeValue = 'markdown';
-      return;
+    } else {
+      this.currentTextValue = currentText;
+      this.currentPathValue = currentPath;
+      this.currentPathTypeValue = currentPathType;
     }
 
-    this.currentTextValue = currentText;
-    this.currentPathValue = currentPath;
-    this.currentPathTypeValue = currentPathType;
+    if (hadOrphanedAnalysis) {
+      await this.ensureOrphanedAssetsAnalyzed();
+    }
   }
 
   private findPath(archivePath: string): ArchiveEntry | undefined {

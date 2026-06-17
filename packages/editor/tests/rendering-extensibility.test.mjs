@@ -65,6 +65,27 @@ test('async transformHtml output passes through sanitization', async () => {
   assert.match(html, /hello/);
 });
 
+test('default policy strips inline SVG; a sanitize contribution keeps it (minus scripts)', async () => {
+  const injectSvg = (html) =>
+    `${html}<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"></circle>`
+    + '<script>alert(1)</script></svg>';
+
+  // Without a contribution the HTML-only profile removes the whole SVG.
+  const stripped = await new MdzipRenderingService(defaultSafeMarkdownRenderer, [
+    { name: 'diagram', transformHtml: injectSvg }
+  ]).renderMarkdown('hi', renderContext());
+  assert.doesNotMatch(stripped, /<svg/, 'SVG is stripped by the default html-only policy');
+
+  // allowSvg widens the single pass so the SVG survives — but DOMPurify still
+  // strips scripts/event handlers nested inside it.
+  const kept = await new MdzipRenderingService(defaultSafeMarkdownRenderer, [
+    { name: 'diagram', sanitize: { allowSvg: true }, transformHtml: injectSvg }
+  ]).renderMarkdown('hi', renderContext());
+  assert.match(kept, /<svg/, 'allowSvg keeps the SVG');
+  assert.match(kept, /<circle/, 'shape elements survive');
+  assert.doesNotMatch(kept, /<script/, 'scripts inside the SVG are still removed');
+});
+
 test('custom renderer output is sanitized by the pipeline', () => {
   const service = new MdzipRenderingService({
     render: () => '<p>ok</p><img src="x" onerror="alert(1)">'
