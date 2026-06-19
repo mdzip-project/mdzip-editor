@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `MdzipWorkspaceComponent.setColorScheme(scheme)` forwards to the live editor
+  view so Angular hosts can retheme without recreating the workspace (issue
+  #15).
+
+### Fixed
+- The Link toolbar command now selects only the inserted `url` placeholder, so
+  users can paste a URL immediately after creating a Markdown link (issue #22).
+- The package navigation tree pins the active entry point and `manifest.json`
+  ahead of other root files, including archives whose asset names sort before
+  `index.md` (issue #18).
+- Nested navigation guide lines now draw continuous ancestor rails instead of
+  disconnected per-row verticals at deeper folder levels (issue #16).
+
 ## [1.3.11] - 2026-06-15
 
 ### Fixed

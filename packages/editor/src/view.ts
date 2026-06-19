@@ -673,11 +673,36 @@ interface NavRenderOptions {
   pendingFolders: ReadonlySet<string>;
 }
 
+// Renders the per-row indent/guide cells: one fixed-width cell per ancestor
+// depth. An ancestor column draws a continuous vertical rail when that folder
+// still has siblings below it (so the spine keeps going), otherwise it is
+// blank. The final cell connects to this row with an elbow (└, last child) or a
+// tee (├). Painting per row at the row's own height means the guides never
+// overshoot an expanded last subfolder the way a single container rail did.
+function renderNavGuides(trail: readonly boolean[], isLast: boolean): string {
+  const cells = trail.map(
+    (continues) => `<span class="nav-indent${continues ? ' nav-indent-rail' : ''}"></span>`
+  );
+  cells.push(
+    `<span class="nav-indent nav-indent-connector${isLast ? '' : ' nav-indent-continues'}"></span>`
+  );
+  return cells.join('');
+}
+
 function renderNavNode(
   node: MdzipNavNode,
   state: MdzipWorkspaceSnapshot,
-  options: NavRenderOptions
+  options: NavRenderOptions,
+  // Per-ancestor flags: whether each ancestor column still has a sibling below
+  // it (so its rail continues through this row). One entry per guide column
+  // above the immediate connector.
+  trail: readonly boolean[] = [],
+  // Whether this node is the last among its siblings (elbow vs tee connector).
+  isLast = true,
+  // Nesting depth; depth 0 (root entries) draws no guides.
+  depth = 0
 ): string {
+  const guides = depth === 0 ? '' : renderNavGuides(trail, isLast);
   if (node.entry) {
     const isCurrent = node.entry.path === state.currentPath;
     const isOrphaned = isOrphanedMdzipAsset(node.entry, state);
@@ -713,17 +738,21 @@ function renderNavNode(
     const draggable = options.allowDrag && !isManifest;
     return `<button type="button" class="${classes}" title="${title}"
       data-nav-path="${safePath}" data-orphan="${isOrphaned ? 'true' : ''}"${draggable ? ' draggable="true"' : ''}>
-      <span class="nav-caret"></span>
+      ${guides}<span class="nav-caret"></span>
       <span class="nav-file-icon ${iconKind}">${iconHtml}</span>
       ${orphanBtnHtml}
       <span class="nav-label">${safeName}</span>
     </button>`;
   }
-  const children = node.children.map(c => renderNavNode(c, state, options)).join('');
+  const childTrail = depth === 0 ? [] : [...trail, !isLast];
+  const children = node.children
+    .map((child, index) =>
+      renderNavNode(child, state, options, childTrail, index === node.children.length - 1, depth + 1))
+    .join('');
   const pending = options.pendingFolders.has(node.path.toLowerCase());
   return `<details class="nav-directory${pending ? ' pending-folder' : ''}" open data-nav-dir="${escapeHtml(node.path)}">
     <summary${pending ? ` title="${escapeHtml(node.path)} — not saved until it contains a file"` : ''}>
-      <span class="nav-caret" aria-hidden="true"></span>
+      ${guides}<span class="nav-caret" aria-hidden="true"></span>
       <span class="nav-folder-icon closed">${FOLDER_CLOSED_ICON_HTML}</span>
       <span class="nav-folder-icon open">${FOLDER_OPEN_ICON_HTML}</span>
       <span class="nav-label">${escapeHtml(node.name)}</span>
@@ -2096,7 +2125,7 @@ export class MdzipWorkspaceView {
 
     this.prunePendingFolders(snapshot);
     const navTree = snapshot.sourceFormat === 'mdz'
-      ? mergePendingFolders(buildMdzipNavTree(snapshot.content.paths), this.pendingNewFolders)
+      ? mergePendingFolders(buildMdzipNavTree(snapshot.content.paths, snapshot.content.entryPoint), this.pendingNewFolders)
       : [];
     const allowOrphanActions = this.controlPolicy.orphanActions && snapshot.mode !== 'read-only';
     const allowFileActions = this.allowFileActions(snapshot);
@@ -2106,7 +2135,9 @@ export class MdzipWorkspaceView {
       allowDrag: snapshot.mode !== 'read-only' && snapshot.sourceFormat === 'mdz',
       pendingFolders: new Set([...this.pendingNewFolders].map((path) => path.toLowerCase()))
     };
-    this.elNavTree.innerHTML = navTree.map(n => renderNavNode(n, snapshot, navRenderOptions)).join('');
+    this.elNavTree.innerHTML = navTree
+      .map((n, i) => renderNavNode(n, snapshot, navRenderOptions, [], i === navTree.length - 1, 0))
+      .join('');
     this.prepareTooltips();
 
     if (this.cmEditor) {
@@ -3066,7 +3097,7 @@ export class MdzipWorkspaceView {
         this.prefixSelectedLines('> ', /^(\s*)>\s?/);
         break;
       case 'link':
-        this.wrapSelection('[', '](url)', 'link text');
+        this.insertMarkdownLink();
         break;
       default:
         return;
@@ -3147,6 +3178,25 @@ export class MdzipWorkspaceView {
     editor.dispatch({
       changes: { from: selection.from, to: selection.to, insert },
       selection: { anchor, head: anchor + content.length },
+      scrollIntoView: true
+    });
+    editor.focus();
+  }
+
+  private insertMarkdownLink(): void {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    const selectedText = editor.state.sliceDoc(selection.from, selection.to);
+    const linkText = selectedText || 'link text';
+    const urlPlaceholder = 'url';
+    const insert = `[${linkText}](${urlPlaceholder})`;
+    const anchor = selection.from + linkText.length + 3;
+    editor.dispatch({
+      changes: { from: selection.from, to: selection.to, insert },
+      selection: { anchor, head: anchor + urlPlaceholder.length },
       scrollIntoView: true
     });
     editor.focus();

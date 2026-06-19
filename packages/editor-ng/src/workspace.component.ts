@@ -171,6 +171,10 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     this.view?.focus();
   }
 
+  setColorScheme(scheme: MdzipColorScheme): void {
+    this.view?.setColorScheme(scheme);
+  }
+
   flush(): Promise<MdzipEditorSnapshot | null> {
     return this.view?.flush() ?? Promise.resolve(null);
   }

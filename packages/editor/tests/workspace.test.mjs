@@ -23,6 +23,7 @@ if (typeof globalThis.window === 'undefined') {
     dispatchEvent() { return false; }
   });
   globalThis.window = window;
+  globalThis.Window = window.Window;
   globalThis.document = window.document;
   globalThis.HTMLElement = window.HTMLElement;
   globalThis.Node = window.Node;
@@ -331,6 +332,51 @@ test('latest [bytes] wins when two openArchive calls resolve out of order', asyn
   }
 });
 
+test('nav tree draws per-row indent guides that do not overshoot the last child', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Root\n', 'Demo', [
+    // Deep single-child chain: a clean staircase of elbows, no continuation.
+    { archivePath: 'images/new-folder/new-folder/pasted.png', fileBytes: PNG_1X1 },
+    // A non-last folder (f1, sorted before f2) whose spine must continue past
+    // its child as a rail to reach the sibling below.
+    { archivePath: 'parent/f1/x.md', fileBytes: new TextEncoder().encode('# x\n') },
+    { archivePath: 'parent/f2/y.md', fileBytes: new TextEncoder().encode('# y\n') }
+  ]);
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {});
+  try {
+    await view.openArchive(bytes, { fileName: 'demo.mdz' });
+    const tree = container.querySelector('[data-ref="nav-tree"]');
+
+    const signatureFor = (label) => {
+      const row = [...tree.querySelectorAll('.nav-file, .nav-directory > summary')]
+        .find((el) => el.querySelector('.nav-label')?.textContent === label);
+      return [...row.querySelectorAll(':scope > .nav-indent')].map((cell) => {
+        if (cell.classList.contains('nav-indent-connector')) {
+          return cell.classList.contains('nav-indent-continues') ? 'tee' : 'elbow';
+        }
+        return cell.classList.contains('nav-indent-rail') ? 'rail' : 'blank';
+      });
+    };
+
+    // Root entries carry no guides.
+    assert.deepEqual(signatureFor('index.md'), []);
+    assert.deepEqual(signatureFor('images'), []);
+    // Deep single-child chain stays a staircase — the last child's rail stops
+    // at its own elbow, so ancestor columns are blank (no overshoot).
+    assert.deepEqual(signatureFor('pasted.png'), ['blank', 'blank', 'elbow']);
+    // f1 is not the last child of parent, so its connector is a tee; the rail
+    // then continues through f1's child to reach f2 below.
+    assert.deepEqual(signatureFor('f1'), ['tee']);
+    assert.deepEqual(signatureFor('x.md'), ['rail', 'elbow']);
+    assert.deepEqual(signatureFor('f2'), ['elbow']);
+    assert.deepEqual(signatureFor('y.md'), ['blank', 'elbow']);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
 test('addAsset preserves the content of lazily-opened documents the user never visited', async () => {
   const seedBytes = await buildNewArchiveBytesWithTitle('# Entry\n', 'Lazy');
   const seedWorkspace = await MdzArchiveCore.openWorkspace(seedBytes);
@@ -468,6 +514,26 @@ test('provides workspace view helpers outside framework wrappers', async () => {
   assert.equal(tree.some((node) => node.name === 'index.md'), true);
 });
 
+test('nav tree pins the entry point and manifest before hash-named assets', () => {
+  const entries = [
+    { path: '42337a91.png', isMarkdown: false, isImage: true, isDirectory: false },
+    { path: 'docs/start.md', isMarkdown: true, isImage: false, isDirectory: false },
+    { path: '1f211f89.png', isMarkdown: false, isImage: true, isDirectory: false },
+    { path: 'manifest.json', isMarkdown: false, isImage: false, isDirectory: false },
+    { path: 'index.md', isMarkdown: true, isImage: false, isDirectory: false }
+  ];
+
+  assert.deepEqual(
+    buildMdzipNavTree(entries, 'docs/start.md').map((node) => node.path),
+    ['docs', 'manifest.json', '1f211f89.png', '42337a91.png', 'index.md']
+  );
+  assert.deepEqual(buildMdzipNavTree(entries, 'docs/start.md')[0].children.map((node) => node.path), ['docs/start.md']);
+  assert.deepEqual(
+    buildMdzipNavTree(entries, 'index.md').map((node) => node.path),
+    ['index.md', 'manifest.json', '1f211f89.png', '42337a91.png', 'docs']
+  );
+});
+
 test('resolves archive-local markdown preview links', () => {
   const entries = [
     { path: 'docs/index.md', isMarkdown: true, isImage: false, isDirectory: false },
@@ -584,6 +650,45 @@ test('routes public editor commands independently of toolbar visibility', async 
     false
   );
   assert.deepEqual(applied, ['bold']);
+});
+
+test('link command selects the URL placeholder after insertion', () => {
+  function runLinkCommand(doc, from, to) {
+    let dispatched;
+    let focused = false;
+    const target = Object.assign(Object.create(MdzipWorkspaceView.prototype), {
+      workspace: {
+        snapshot: () => ({ mode: 'editable', currentPathType: 'markdown' })
+      },
+      cmEditor: {
+        state: {
+          selection: { main: { from, to } },
+          sliceDoc: (start, end) => doc.slice(start, end)
+        },
+        dispatch: (transaction) => { dispatched = transaction; },
+        focus: () => { focused = true; }
+      }
+    });
+    MdzipWorkspaceView.prototype.applyMarkdownFormat.call(target, 'link');
+    return { dispatched, focused };
+  }
+
+  const selected = runLinkCommand('OpenAI', 0, 6);
+  assert.deepEqual(selected.dispatched.changes, {
+    from: 0,
+    to: 6,
+    insert: '[OpenAI](url)'
+  });
+  assert.deepEqual(selected.dispatched.selection, { anchor: 9, head: 12 });
+  assert.equal(selected.focused, true);
+
+  const empty = runLinkCommand('', 0, 0);
+  assert.deepEqual(empty.dispatched.changes, {
+    from: 0,
+    to: 0,
+    insert: '[link text](url)'
+  });
+  assert.deepEqual(empty.dispatched.selection, { anchor: 12, head: 15 });
 });
 
 test('reports editor command availability from workspace state', () => {

@@ -11,8 +11,9 @@ export interface MdzipNavNode {
   entry?: ArchiveEntry;
 }
 
-export function buildMdzipNavTree(entries: ArchiveEntry[]): MdzipNavNode[] {
+export function buildMdzipNavTree(entries: ArchiveEntry[], entryPoint?: string): MdzipNavNode[] {
   const root: MdzipNavNode = { name: '', path: '', children: [] };
+  const pinnedPaths = pinnedNavPaths(entryPoint);
 
   for (const entry of entries.slice().sort((a, b) => a.path.localeCompare(b.path))) {
     const parts = entry.path.split('/').filter(Boolean);
@@ -37,7 +38,8 @@ export function buildMdzipNavTree(entries: ArchiveEntry[]): MdzipNavNode[] {
     }
   }
 
-  return root.children.sort(sortNavNodes);
+  sortNavNodeTree(root, pinnedPaths);
+  return root.children;
 }
 
 export function canEditMdzipPath(
@@ -185,10 +187,46 @@ export function rewriteMdzipImageSources(markdown: string, images: Map<string, s
   });
 }
 
-function sortNavNodes(a: MdzipNavNode, b: MdzipNavNode): number {
+function sortNavNodeTree(node: MdzipNavNode, pinnedPaths: ReadonlyMap<string, number>): void {
+  for (const child of node.children) {
+    sortNavNodeTree(child, pinnedPaths);
+  }
+  node.children.sort((a, b) => sortNavNodes(a, b, pinnedPaths));
+}
+
+function sortNavNodes(a: MdzipNavNode, b: MdzipNavNode, pinnedPaths?: ReadonlyMap<string, number>): number {
+  const pinnedA = pinnedRank(a, pinnedPaths);
+  const pinnedB = pinnedRank(b, pinnedPaths);
+  if (pinnedA !== undefined || pinnedB !== undefined) {
+    return (pinnedA ?? Number.MAX_SAFE_INTEGER) - (pinnedB ?? Number.MAX_SAFE_INTEGER);
+  }
   if (a.entry && !b.entry) return -1;
   if (!a.entry && b.entry) return 1;
   return a.name.localeCompare(b.name);
+}
+
+function pinnedNavPaths(entryPoint?: string): ReadonlyMap<string, number> {
+  const pinned = new Map<string, number>();
+  if (entryPoint) {
+    pinned.set(entryPoint.toLowerCase(), 0);
+  }
+  pinned.set('manifest.json', 1);
+  return pinned;
+}
+
+function pinnedRank(node: MdzipNavNode, pinnedPaths?: ReadonlyMap<string, number>): number | undefined {
+  const direct = pinnedPaths?.get(node.entry?.path.toLowerCase() ?? '');
+  if (direct !== undefined) {
+    return direct;
+  }
+  let best: number | undefined;
+  for (const child of node.children) {
+    const childRank = pinnedRank(child, pinnedPaths);
+    if (childRank !== undefined && (best === undefined || childRank < best)) {
+      best = childRank;
+    }
+  }
+  return best;
 }
 
 function normalizeArchiveLinkPath(path: string): string | null {

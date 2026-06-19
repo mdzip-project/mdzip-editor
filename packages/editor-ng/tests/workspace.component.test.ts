@@ -13,6 +13,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly container: HTMLElement;
     public readonly options: Record<string, unknown>;
     public readonly setRenderingOptions = vi.fn();
+    public readonly setColorScheme = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly destroy = vi.fn();
@@ -173,6 +174,18 @@ test('identity changes with stable ids never recreate or re-apply', () => {
   fixture.detectChanges();
   expect(viewInstances).toHaveLength(1);
   expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
+});
+
+test('setColorScheme updates the live view without recreating it', () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.detectChanges();
+  const view = latestView();
+
+  fixture.componentInstance.setColorScheme('dark');
+
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setColorScheme).toHaveBeenCalledWith('dark');
 });
 
 test('diff component updates one view and exposes navigation methods', async () => {

@@ -424,7 +424,10 @@ export const WORKSPACE_CSS = `
   gap: 9px;
   width: 100%;
   min-height: 34px;
-  padding: 5px 9px;
+  /* No vertical padding: row height comes from min-height, and zero top/bottom
+     padding lets the stretched .nav-indent guide cells fill the full row so the
+     per-row rails meet between siblings instead of leaving padding-sized gaps. */
+  padding: 0 9px;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -443,34 +446,73 @@ export const WORKSPACE_CSS = `
   background: var(--mdzip-hover-background-color);
 }
 
+/* Indentation comes from per-row guide cells (.nav-indent), not container
+   margins, so each row owns its guide lines. */
 .mdzip-root .nav-directory-children {
   position: relative;
-  margin-left: 19px;
-  padding-left: 14px;
 }
 
-.mdzip-root .nav-directory-children > .nav-file,
-.mdzip-root .nav-directory-children > .nav-directory > summary {
+/* One guide cell per ancestor depth, prepended to each nested row. Fixed width
+   gives the indentation; the rails/elbow are painted within the cell at the
+   row's own height, so they never overshoot an expanded last subfolder.
+
+   --nav-guide-x positions the rail so it drops straight from the parent
+   folder's icon: the icon sits 19px (caret 10px + the 9px row gap) right of its
+   disclosure column, and because the per-level step (cell 16px + 9px gap = 25)
+   equals the rail-to-icon distance, the same offset keeps every depth aligned. */
+.mdzip-root .nav-indent {
+  flex: 0 0 16px;
+  align-self: stretch;
   position: relative;
+  --nav-guide-x: 19px;
 }
 
-.mdzip-root .nav-directory-children > .nav-file::before,
-.mdzip-root .nav-directory-children > .nav-directory > summary::before {
+/* Ancestor column with more siblings below: continuous full-height rail. */
+.mdzip-root .nav-indent-rail::before {
   content: "";
   position: absolute;
-  left: 6px;
+  left: var(--nav-guide-x);
   top: 0;
   bottom: 0;
-  width: 22px;
+  width: 1px;
   background: var(--mdzip-tree-guide-color);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
 }
 
-.mdzip-root .nav-directory-children > .nav-file:not(:last-child)::before,
-.mdzip-root .nav-directory-children > .nav-directory:not(:last-child) > summary::before {
-  -webkit-mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V34 M0.5 17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg viewBox='0 0 22 34' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0.5 0 V34 M0.5 17.5 H22' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E") left top / 22px 100% no-repeat;
+/* Connector to this row: vertical down to the row center (elbow └), extended
+   full-height for a tee (├) when the row's folder has siblings below. */
+.mdzip-root .nav-indent-connector::before {
+  content: "";
+  position: absolute;
+  left: var(--nav-guide-x);
+  top: 0;
+  height: 50%;
+  width: 1px;
+  background: var(--mdzip-tree-guide-color);
+}
+
+.mdzip-root .nav-indent-connector.nav-indent-continues::before {
+  height: 100%;
+}
+
+/* Horizontal arm from the connector rail to the row's caret/icon. Reaches the
+   disclosure triangle that sits one row-gap past the cell (folders). */
+.mdzip-root .nav-indent-connector::after {
+  content: "";
+  position: absolute;
+  left: var(--nav-guide-x);
+  right: -9px;
+  top: 50%;
+  height: 1px;
+  background: var(--mdzip-tree-guide-color);
+}
+
+/* Files have no disclosure triangle in the caret slot, so extend the arm across
+   it (the empty 10px caret plus the 9px row gaps on either side) to meet the
+   file icon; folders keep the short arm because their triangle already sits at
+   the cell edge. The right offset is measured from the cell edge, so this holds
+   regardless of where --nav-guide-x places the rail. */
+.mdzip-root .nav-file > .nav-indent-connector::after {
+  right: calc(-1 * (10px + 2 * 9px));
 }
 
 .mdzip-root .nav-caret {
