@@ -57,6 +57,11 @@ const PNG_1X1 = Uint8Array.from(
     'base64'
   )
 );
+const PNG_200X100_HEADER = Uint8Array.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0xc8, 0x00, 0x00, 0x00, 0x64
+]);
 
 test('opens archives for view-only inspection', async () => {
   const bytes = await buildNewArchiveBytesWithTitle('# Hello\n\n![Logo](images/logo.png)\n', 'Demo', [
@@ -132,6 +137,71 @@ test('converts a plain Markdown workspace to a real MDZ archive', async () => {
   const saved = await workspace.saveToBytes();
   assert.equal(await readTextFileFromArchive(saved, 'index.md'), '# Convert me\n');
   assert.equal(await workspace.convertToMdz(), false);
+});
+
+test('nav toolbar button presents conversion when a plain Markdown file is open', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    await view.open(
+      new TextEncoder().encode('# Notes\n'),
+      { mode: 'editable', fileName: 'notes.md' }
+    );
+    const navButton = container.querySelector('[data-ref="nav-btn"]');
+    assert.equal(navButton?.getAttribute('aria-label'), 'Convert to MDZ');
+    assert.equal(navButton?.dataset['tooltip'], 'Convert to MDZ');
+    assert.equal(navButton?.hasAttribute('aria-pressed'), false);
+    assert.ok(navButton?.classList.contains('convert-mdz-toggle'));
+
+    const bytes = await buildNewArchiveBytesWithTitle('# Archive\n', 'Archive');
+    await view.open(bytes, { mode: 'editable', fileName: 'archive.mdz' });
+    assert.equal(navButton?.getAttribute('aria-label'), 'Toggle contents');
+    assert.equal(navButton?.dataset['tooltip'], 'Toggle contents');
+    assert.equal(navButton?.getAttribute('aria-pressed'), 'false');
+    assert.equal(navButton?.classList.contains('convert-mdz-toggle'), false);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('density options apply semantic sizing classes without reopening the view', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    toolbarDensity: 'compact',
+    contentDensity: 'compact',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const root = container.querySelector('.mdzip-root');
+    assert.ok(root?.classList.contains('toolbar-density-compact'));
+    assert.ok(root?.classList.contains('content-density-compact'));
+
+    const bytes = await buildNewArchiveBytesWithTitle('# Density\n', 'Density');
+    await view.open(bytes, { mode: 'editable', fileName: 'density.mdz' });
+    const editor = view.cmEditor;
+    assert.ok(editor, 'CodeMirror editor was created');
+
+    view.setDensityOptions({ toolbarDensity: 'dense', contentDensity: 'comfortable' });
+    assert.equal(view.cmEditor, editor, 'density update does not recreate the editor');
+    assert.ok(root?.classList.contains('toolbar-density-dense'));
+    assert.ok(root?.classList.contains('content-density-comfortable'));
+    assert.equal(root?.classList.contains('toolbar-density-compact'), false);
+    assert.equal(root?.classList.contains('content-density-compact'), false);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
 });
 
 test('infers source format from file name and ZIP signature', async () => {
@@ -239,6 +309,15 @@ test('default renderer strips executable HTML and unsafe URLs', () => {
   assert.equal(html.includes('javascript:'), false);
   assert.equal(html.includes('onerror'), false);
   assert.match(defaultSafeMarkdownRenderer.render('# Safe'), /<h1>Safe<\/h1>/);
+});
+
+test('default renderer preserves portable image alignment attributes', () => {
+  const html = defaultSafeMarkdownRenderer.render(
+    '<p align="center"><img src="images/logo.png" alt="Logo" width="320"></p>'
+  );
+
+  assert.match(html, /<p align="center"><img src="images\/logo\.png" alt="Logo" width="320"><\/p>/);
+  assert.doesNotMatch(html, /style=/);
 });
 
 test('default renderer wraps Markdown tables for horizontal scrolling', () => {
@@ -499,6 +578,289 @@ test('pastes an image through the framework-independent workspace service', asyn
   assert.equal(await readTextFileFromArchive(saved, 'index.md'), `# Original\n\n${result.markdownImage}`);
 });
 
+test('pastes an image with caller-provided markup through the workspace service', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Original\n\n', 'Original');
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  const result = await workspace.pasteImage({
+    bytes: PNG_1X1,
+    mimeType: 'image/png',
+    selectionStart: '# Original\n\n'.length,
+    selectionEnd: '# Original\n\n'.length,
+    markdownImage: (markdownPath) => `<img src="${markdownPath}" alt="Logo" width="320">`
+  });
+
+  assert.ok(result);
+  assert.equal(result.markdownImage, `<img src="${result.markdownPath}" alt="Logo" width="320">`);
+  assert.equal(workspace.currentText, `# Original\n\n${result.markdownImage}`);
+});
+
+test('image insert handler can choose HTML markup with sizing', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const requests = [];
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light',
+    imageInsertHandler: (request) => {
+      requests.push(request);
+      return {
+        mode: 'html',
+        altText: 'Custom logo',
+        width: 320,
+        position: 'center'
+      };
+    }
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Original\n\n', 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const file = new window.File([PNG_1X1], 'logo.png', { type: 'image/png' });
+
+    assert.equal(await view.executeCommand('insert-image', file), true);
+    const snapshot = await view.getCurrentSnapshot();
+    const markdown = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].fileName, 'logo.png');
+    assert.equal(requests[0].source, 'picker');
+    assert.equal(requests[0].intrinsicWidth, 1);
+    assert.match(markdown, /<p align="center"><img src="images\/pasted-\d+\.png" alt="Custom logo" width="320"><\/p>\n\n# Original/);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('image paste uses the image insert options path', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light',
+    imageInsertMode: 'html'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Original\n\n', 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const target = container.querySelector('.cm-content');
+    assert.ok(target);
+    const file = new window.File([PNG_1X1], 'pasted.png', { type: 'image/png' });
+    const event = new window.Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        files: [file],
+        items: [],
+        getData: () => ''
+      }
+    });
+
+    target.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const snapshot = await view.getCurrentSnapshot();
+    const markdown = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.match(markdown, /<img src="images\/pasted-\d+\.png" alt="Pasted image" width="1" height="1">\n\n# Original/);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('image insert handler can cancel insertion cleanly', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light',
+    imageInsertHandler: () => null
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Original\n\n', 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const file = new window.File([PNG_1X1], 'logo.png', { type: 'image/png' });
+
+    assert.equal(await view.executeCommand('insert-image', file), true);
+    const snapshot = await view.getCurrentSnapshot();
+    const snapshotBytes = new Uint8Array(await snapshot.bytes.arrayBuffer());
+
+    assert.equal(await readTextFileFromArchive(snapshotBytes, 'index.md'), '# Original\n\n');
+    assert.equal((await openMdzArchive(snapshotBytes)).paths.some((entry) => entry.path.startsWith('images/pasted-')), false);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('built-in image insert dialog can insert sized HTML', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    imageInsertMode: 'ask',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Original\n\n', 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const file = new window.File([PNG_1X1], 'logo.png', { type: 'image/png' });
+
+    const pending = view.executeCommand('insert-image', file);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const dialog = container.querySelector('[data-ref="image-insert-dialog"]');
+    const markdownMode = container.querySelector('[data-ref="image-insert-mode-markdown"]');
+    const htmlMode = container.querySelector('[data-ref="image-insert-mode-html"]');
+    const sizeModeSelect = container.querySelector('[data-ref="image-insert-size-mode"]');
+    const sizeValueInput = container.querySelector('[data-ref="image-insert-size-value"]');
+    const positionSelect = container.querySelector('[data-ref="image-insert-position"]');
+    assert.equal(dialog.hidden, false);
+    assert.equal(sizeModeSelect.disabled, true);
+    assert.equal(sizeValueInput.disabled, true);
+    assert.equal(positionSelect.disabled, true);
+    htmlMode.checked = true;
+    htmlMode.dispatchEvent(new window.Event('change', { bubbles: true }));
+    assert.equal(sizeModeSelect.disabled, false);
+    assert.equal(sizeValueInput.disabled, false);
+    assert.equal(positionSelect.disabled, false);
+    sizeModeSelect.value = 'original';
+    sizeModeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    assert.equal(sizeValueInput.disabled, true);
+    markdownMode.checked = true;
+    markdownMode.dispatchEvent(new window.Event('change', { bubbles: true }));
+    assert.equal(sizeModeSelect.disabled, true);
+    htmlMode.checked = true;
+    htmlMode.dispatchEvent(new window.Event('change', { bubbles: true }));
+    container.querySelector('[data-ref="image-insert-alt"]').value = 'Dialog logo';
+    sizeModeSelect.value = 'width';
+    sizeModeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    sizeValueInput.value = '480';
+    positionSelect.value = 'right';
+    container.querySelector('[data-ref="image-insert-confirm-btn"]').click();
+
+    await pending;
+    const snapshot = await view.getCurrentSnapshot();
+    const markdown = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.match(markdown, /<p align="right"><img src="images\/pasted-\d+\.png" alt="Dialog logo" width="480"><\/p>\n\n# Original/);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('built-in image insert dialog scales by percent without changing aspect ratio', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    imageInsertMode: 'ask',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Original\n\n', 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const file = new window.File([PNG_200X100_HEADER], 'wide.png', { type: 'image/png' });
+
+    const pending = view.executeCommand('insert-image', file);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const htmlMode = container.querySelector('[data-ref="image-insert-mode-html"]');
+    const sizeModeSelect = container.querySelector('[data-ref="image-insert-size-mode"]');
+    const sizeValueInput = container.querySelector('[data-ref="image-insert-size-value"]');
+    htmlMode.checked = true;
+    htmlMode.dispatchEvent(new window.Event('change', { bubbles: true }));
+    sizeModeSelect.value = 'percent';
+    sizeModeSelect.dispatchEvent(new window.Event('change', { bubbles: true }));
+    sizeValueInput.value = '50';
+    container.querySelector('[data-ref="image-insert-confirm-btn"]').click();
+
+    await pending;
+    const snapshot = await view.getCurrentSnapshot();
+    const markdown = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.match(markdown, /<img src="images\/pasted-\d+\.png" alt="Pasted image" width="100" height="50">\n\n# Original/);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('built-in image insert dialog opens for every paste in ask mode', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    imageInsertMode: 'ask',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  const pasteImage = async () => {
+    const target = container.querySelector('.cm-content');
+    assert.ok(target);
+    const file = new window.File([PNG_1X1], 'pasted.png', { type: 'image/png' });
+    const event = new window.Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        files: [file],
+        items: [],
+        getData: () => ''
+      }
+    });
+    target.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Original\n\n', 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const dialog = container.querySelector('[data-ref="image-insert-dialog"]');
+    const confirm = container.querySelector('[data-ref="image-insert-confirm-btn"]');
+
+    await pasteImage();
+    assert.equal(dialog.hidden, false);
+    confirm.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(dialog.hidden, true);
+
+    await pasteImage();
+    assert.equal(dialog.hidden, false);
+    confirm.click();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const snapshot = await view.getCurrentSnapshot();
+    const markdown = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.equal((markdown.match(/!\[Pasted image\]\(images\/pasted-\d+\.png\)/g) ?? []).length, 2);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
 test('provides workspace view helpers outside framework wrappers', async () => {
   const bytes = await buildNewArchiveBytesWithTitle('# Original\n', 'Original', [
     { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
@@ -566,6 +928,7 @@ test('resolves control policy presets for common host scenarios', () => {
       inlineCode: false,
       codeBlock: false,
       blockquote: false,
+      lineBreak: false,
       link: false,
       image: false
     },
@@ -612,6 +975,7 @@ test('resolves custom control policy overrides', () => {
   assert.equal(policy.formatting.italic, false);
   assert.deepEqual(policy.formatting.headings, [2, 3]);
   assert.equal(policy.formatting.image, false);
+  assert.equal(policy.formatting.lineBreak, false);
   assert.equal(policy.formatting.link, false);
   assert.equal(policy.lineNumbers, false);
 });
@@ -689,6 +1053,65 @@ test('link command selects the URL placeholder after insertion', () => {
     insert: '[link text](url)'
   });
   assert.deepEqual(empty.dispatched.selection, { anchor: 12, head: 15 });
+});
+
+test('line break command inserts an explicit HTML hard break', () => {
+  let dispatched;
+  let focused = false;
+  const target = Object.assign(Object.create(MdzipWorkspaceView.prototype), {
+    workspace: {
+      snapshot: () => ({ mode: 'editable', currentPathType: 'markdown' })
+    },
+    cmEditor: {
+      state: {
+        selection: { main: { from: 5, to: 5 } }
+      },
+      dispatch: (transaction) => { dispatched = transaction; },
+      focus: () => { focused = true; }
+    }
+  });
+
+  MdzipWorkspaceView.prototype.applyMarkdownFormat.call(target, 'insert-line-break');
+
+  assert.deepEqual(dispatched.changes, {
+    from: 5,
+    to: 5,
+    insert: '<br>\n'
+  });
+  assert.deepEqual(dispatched.selection, { anchor: 10 });
+  assert.equal(focused, true);
+});
+
+test('line numbers toggle live without recreating the CodeMirror editor', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: { preset: 'standalone-editor', lineNumbers: true },
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('# Lines\n\nbody\n', 'Lines');
+    await view.open(bytes, { mode: 'editable', fileName: 'lines.mdz' });
+    const editor = view.cmEditor;
+    assert.ok(editor, 'CodeMirror editor was created');
+    editor.dispatch({ selection: { anchor: 2 } });
+    assert.ok(container.querySelector('.cm-lineNumbers'), 'line-number gutter starts visible');
+
+    view.setControls({ preset: 'standalone-editor', lineNumbers: false });
+    assert.equal(view.cmEditor, editor, 'editor instance is preserved');
+    assert.equal(editor.state.doc.toString(), '# Lines\n\nbody\n');
+    assert.equal(editor.state.selection.main.from, 2);
+    assert.equal(container.querySelector('.cm-lineNumbers'), null, 'line-number gutter is removed');
+
+    view.setControls({ preset: 'standalone-editor', lineNumbers: true });
+    assert.equal(view.cmEditor, editor, 'editor instance is still preserved');
+    assert.ok(container.querySelector('.cm-lineNumbers'), 'line-number gutter returns');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
 });
 
 test('reports editor command availability from workspace state', () => {

@@ -20,6 +20,7 @@ import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
+  MdzipContentDensity,
   MdzipColorScheme,
   MdzipConversionAction,
   MdzipConversionContext,
@@ -29,9 +30,13 @@ import type {
   MdzipEntryRenderer,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
+  MdzipImageHydrationAnimation,
+  MdzipImageInsertHandler,
+  MdzipImageInsertMode,
   MdzipNavigationMode,
   MdzipRemoveAssetOptions,
   MdzipSourceFormat,
+  MdzipToolbarDensity,
   MdzWorkspace,
   MdzWorkspaceAsset,
   MdzipWorkspaceChange,
@@ -69,6 +74,11 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() mode: MdzipWorkspaceMode = 'read-only';
   @Input() sourceFormat?: MdzipSourceFormat;
   @Input() controls: MdzipControlPreset | MdzipControlPolicy = 'viewer';
+  @Input() toolbarDensity?: MdzipToolbarDensity;
+  @Input() contentDensity?: MdzipContentDensity;
+  @Input() imageHydrationAnimation?: MdzipImageHydrationAnimation;
+  @Input() imageInsertMode?: MdzipImageInsertMode;
+  @Input() imageInsertHandler?: MdzipImageInsertHandler;
   @Input() initialLayout?: MdzipWorkspaceLayout;
   @Input() initialColorScheme?: MdzipColorScheme;
   @Input() navigationMode: MdzipNavigationMode = 'editor';
@@ -133,12 +143,29 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (this.view && (changes['controls'] || changes['initialLayout']
-      || changes['initialColorScheme'] || changes['navigationMode']
+    if (this.view && (changes['initialLayout'] || changes['initialColorScheme'] || changes['navigationMode']
       || changes['navigationButtonActive'])) {
       this.createView();
       this.syncView();
       return;
+    }
+    if (this.view && changes['controls']) {
+      this.view.setControls(this.controls);
+    }
+    if (this.view && (changes['toolbarDensity'] || changes['contentDensity'])) {
+      this.view.setDensityOptions({
+        toolbarDensity: this.toolbarDensity,
+        contentDensity: this.contentDensity,
+      });
+    }
+    if (this.view && changes['imageHydrationAnimation']) {
+      this.view.setImageHydrationAnimation(this.imageHydrationAnimation);
+    }
+    if (this.view && (changes['imageInsertMode'] || changes['imageInsertHandler'])) {
+      this.view.setImageInsertOptions({
+        imageInsertMode: this.imageInsertMode,
+        imageInsertHandler: (request) => this.imageInsertHandler?.(request),
+      });
     }
     if (this.view && (changes['bytes'] || changes['workspace'] || changes['mode']
       || changes['sourceFormat'] || changes['fileName'])) {
@@ -248,6 +275,10 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     this.view = new MdzipWorkspaceView(this.hostRef.nativeElement, {
       libraries: [PACKAGE_INFO],
       controls: this.controls,
+      toolbarDensity: this.toolbarDensity,
+      contentDensity: this.contentDensity,
+      imageHydrationAnimation: this.imageHydrationAnimation,
+      imageInsertMode: this.imageInsertMode,
       initialLayout: this.initialLayout,
       initialColorScheme: this.initialColorScheme,
       navigationMode: this.navigationMode,
@@ -269,6 +300,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onConversionRequested: this.onConversionRequested
         ? (action, context) => this.onConversionRequested!(action, context)
         : undefined,
+      imageInsertHandler: (request) => this.imageInsertHandler?.(request),
       markdownRenderer: this.markdownRenderer,
       markdownExtensions: this.markdownExtensions,
       entryRenderers: this.composedEntryRenderers(),

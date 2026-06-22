@@ -11,8 +11,8 @@ import {
 } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { MdzipWorkspaceComponent } from '@mdzip/editor-ng';
-import type { MdzipControlPreset, MdzipWorkspaceSave } from 'mdzip-editor';
-import { modeFromControls } from '../tab-controls.js';
+import type { MdzipWorkspaceSave } from 'mdzip-editor';
+import { modeFromControls, type DemoControls, type DemoImageInsertOptions } from '../tab-controls.js';
 import type { TabController } from '../tab-controller.js';
 
 let _onSaved: (b: Uint8Array, fileName?: string) => void = () => {};
@@ -20,7 +20,8 @@ let _onFailed: (e: unknown) => void = () => {};
 let _appRef: ApplicationRef | null = null;
 
 const _bytes = signal<Uint8Array | null>(null);
-const _controls = signal<MdzipControlPreset>('standalone-editor');
+const _controls = signal<DemoControls>('standalone-editor');
+const _imageInsert = signal<DemoImageInsertOptions>({ mode: 'markdown' });
 const _fileName = signal('document.mdz');
 
 @Component({
@@ -34,6 +35,9 @@ const _fileName = signal('document.mdz');
       [mode]="mode()"
       [fileName]="fileName()"
       [controls]="controls()"
+      imageHydrationAnimation="initial"
+      [imageInsertMode]="imageInsert().mode"
+      [imageInsertHandler]="imageInsert().handler"
       (saved)="onSaved($event)"
       (failed)="onFailed($event)"
     />
@@ -44,6 +48,7 @@ class AngularTabComponent {
   @ViewChild(MdzipWorkspaceComponent) private workspace?: MdzipWorkspaceComponent;
   readonly bytes = _bytes;
   readonly controls = _controls;
+  readonly imageInsert = _imageInsert;
   readonly fileName = _fileName;
   readonly mode = () => modeFromControls(_controls());
 
@@ -72,6 +77,7 @@ export async function initAngular(
   _appRef = null;
   _bytes.set(null);
   _controls.set('standalone-editor');
+  _imageInsert.set({ mode: 'markdown' });
   _fileName.set('document.mdz');
   container.replaceChildren();
 
@@ -84,10 +90,19 @@ export async function initAngular(
   });
 
   return {
-    update(bytes: Uint8Array, fileName: string, controls: MdzipControlPreset): void {
+    update(bytes: Uint8Array, fileName: string, controls: DemoControls, imageInsert: DemoImageInsertOptions): void {
       _bytes.set(bytes);
       _controls.set(controls);
+      _imageInsert.set(imageInsert);
       _fileName.set(fileName);
+      _appRef?.tick();
+    },
+    setControls(controls: DemoControls): void {
+      _controls.set(controls);
+      _appRef?.tick();
+    },
+    setImageInsertOptions(imageInsert: DemoImageInsertOptions): void {
+      _imageInsert.set(imageInsert);
       _appRef?.tick();
     },
     markPersisted(): void {

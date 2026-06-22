@@ -10,6 +10,9 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly container: HTMLElement;
     public readonly options: Record<string, unknown>;
     public readonly setRenderingOptions = vi.fn();
+    public readonly setControls = vi.fn();
+    public readonly setDensityOptions = vi.fn();
+    public readonly setImageHydrationAnimation = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly destroy = vi.fn();
@@ -145,6 +148,35 @@ test('inline prop identities with stable ids never recreate or re-apply', async 
     entryRenderers: MdzipEntryRenderer[];
   };
   expect(applied.entryRenderers.map((renderer) => renderer.id)).toEqual(['changed']);
+});
+
+test('controls, density, and image animation props update in place', async () => {
+  const before = { preset: 'standalone-editor', lineNumbers: true } as const;
+  const after = { preset: 'standalone-editor', lineNumbers: false } as const;
+  const wrapper = mount(MdzipWorkspace, {
+    props: {
+      controls: before,
+      toolbarDensity: 'comfortable',
+      contentDensity: 'comfortable',
+      imageHydrationAnimation: 'auto'
+    }
+  });
+  const view = latestView();
+
+  await wrapper.setProps({
+    controls: after,
+    toolbarDensity: 'dense',
+    contentDensity: 'compact',
+    imageHydrationAnimation: 'off'
+  });
+
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setControls).toHaveBeenLastCalledWith(after);
+  expect(view.setDensityOptions).toHaveBeenLastCalledWith({
+    toolbarDensity: 'dense',
+    contentDensity: 'compact'
+  });
+  expect(view.setImageHydrationAnimation).toHaveBeenLastCalledWith('off');
 });
 
 test('diff wrapper updates one view and exposes navigation methods', async () => {

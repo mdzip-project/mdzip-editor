@@ -5,6 +5,9 @@
 
 # @mdzip/editor
 
+[![npm](https://img.shields.io/npm/v/@mdzip/editor?logo=npm)](https://www.npmjs.com/package/@mdzip/editor)
+[![license](https://img.shields.io/npm/l/@mdzip/editor)](https://github.com/mdzip-project/mdzip-editor/blob/main/LICENSE)
+
 Framework-independent MDZip workspace engine and browser view.
 
 `@mdzip/editor` provides reusable helpers for opening `.mdz` archives, rendering Markdown previews, editing archive contents, comparing archive inventories, and embedding a configurable MDZip workspace UI.
@@ -107,6 +110,44 @@ workspace dirty.
 - `standalone-editor`: full editor controls, including save.
 - `hosted-editor`: editor controls without an embedded save button, for hosts such as VS Code that own persistence.
 
+Call `setControls(nextControls)` to update the policy after construction
+without rebuilding the workspace view. `lineNumbers` changes are applied to the
+existing CodeMirror editor, preserving the current document and selection.
+
+## Density and Spacing
+
+Hosts can opt into smaller built-in UI without targeting private classes:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls: 'hosted-editor',
+  toolbarDensity: 'compact', // 'comfortable' | 'compact' | 'dense'
+  contentDensity: 'compact'  // 'comfortable' | 'compact'
+});
+
+view.setDensityOptions({
+  toolbarDensity: 'dense',
+  contentDensity: 'compact'
+});
+```
+
+For exact sizing, set stable CSS custom properties on an ancestor of the
+workspace:
+
+```css
+.studio-editor {
+  --mdzip-toolbar-button-size: 28px;
+  --mdzip-toolbar-compact-button-size: 26px;
+  --mdzip-toolbar-icon-size: 14px;
+  --mdzip-format-button-size: 26px;
+  --mdzip-format-icon-size: 14px;
+  --mdzip-toolbar-padding: 2px 8px;
+  --mdzip-toolbar-gap: 4px;
+  --mdzip-editor-content-padding: 16px 20px;
+  --mdzip-preview-content-padding: 16px 20px 24px;
+}
+```
+
 ## Host Persistence
 
 Desktop hosts can flush pending editor content, persist the returned bytes, and
@@ -170,6 +211,23 @@ fall back to the built-in dialog. The context preserves the triggering
 selection while a host dialog is open; it returns `false` if that document has
 changed. `context.convertToMdz()` runs the built-in conversion and image action
 against the same captured selection.
+
+## Image Insert Hook
+
+Set `imageInsertMode` to choose the built-in image markup flow:
+`'markdown'` keeps the default `![alt](path)` insertion, `'html'` inserts a
+default `<img>` element, and `'ask'` opens a small dialog for Markdown vs HTML,
+alt text, proportional size, and alignment.
+
+For host-owned UI, provide `imageInsertHandler`. It receives file metadata,
+intrinsic image size when detected, and the source (`'paste'`, `'drop'`, or
+`'picker'`). Return `{ mode: 'markdown', altText }` or
+`{ mode: 'html', altText, width, height, position }`; return `null` to cancel.
+The built-in dialog asks for width, height, or percent scaling and preserves
+aspect ratio by emitting one dimension, or proportional dimensions for percent
+scaling. Returning `undefined` falls back to `imageInsertMode`.
+The built-in HTML path uses portable `align` attributes for positioning because
+the default preview sanitizer strips inline `style` attributes.
 
 `MdzipRenderingService` uses `defaultSafeMarkdownRenderer` when no renderer is
 injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
@@ -331,6 +389,11 @@ box, so the pixels arrive with no further reflow (and it snaps open instead
 under `prefers-reduced-motion`). `onPreviewRendered` fires when the text is
 mounted; `onAssetsHydrated` fires once every referenced image has resolved and
 its final `src` is assigned.
+
+In live-editing hosts where the preview re-renders frequently, pass
+`imageHydrationAnimation: 'initial'` to keep the first-load reveal but snap
+images open on same-document edits. Use `'off'` to disable the loading pulse
+and slide-open animation entirely.
 
 ## Content Security Policy (restricted hosts)
 

@@ -115,6 +115,7 @@ export interface MdzipPasteImageOptions {
   mimeType: string;
   selectionStart: number;
   selectionEnd: number;
+  markdownImage?: string | ((markdownPath: string, archivePath: string) => string);
 }
 
 export interface MdzipPasteImageResult {
@@ -643,7 +644,9 @@ export class MdzipWorkspaceService {
     const extension = extensionForMime(options.mimeType);
     const archivePath = nextPastedImagePath(this.snapshot(), extension);
     const markdownPath = relativeMarkdownAssetPath(this.currentPathValue, archivePath);
-    const markdownImage = `![Pasted image](${markdownPath})`;
+    const markdownImage = typeof options.markdownImage === 'function'
+      ? options.markdownImage(markdownPath, archivePath)
+      : options.markdownImage ?? `![Pasted image](${markdownPath})`;
     const start = Math.max(0, Math.min(options.selectionStart, this.currentTextValue.length));
     const end = Math.max(start, Math.min(options.selectionEnd, this.currentTextValue.length));
     const text = `${this.currentTextValue.slice(0, start)}${markdownImage}${this.currentTextValue.slice(end)}`;

@@ -38,6 +38,49 @@ export const WORKSPACE_CSS = `
   box-sizing: border-box;
 }
 
+.mdzip-root.toolbar-density-compact {
+  --mdzip-density-toolbar-padding: 3px 10px;
+  --mdzip-density-toolbar-gap: 6px;
+  --mdzip-density-toolbar-start-gap: 8px;
+  --mdzip-density-toolbar-group-padding: 2px;
+  --mdzip-density-toolbar-button-width: 34px;
+  --mdzip-density-toolbar-button-height: 30px;
+  --mdzip-density-toolbar-compact-button-size: 28px;
+  --mdzip-density-toolbar-icon-size: 15px;
+  --mdzip-density-toolbar-icon-large-size: 19px;
+  --mdzip-density-toolbar-icon-extra-large-size: 22px;
+  --mdzip-density-theme-icon-size: 16px;
+  --mdzip-density-format-toolbar-gap: 4px;
+  --mdzip-density-format-toolbar-group-gap: 1px;
+  --mdzip-density-format-button-size: 28px;
+  --mdzip-density-format-menu-button-width: 36px;
+  --mdzip-density-format-icon-size: 15px;
+}
+
+.mdzip-root.toolbar-density-dense {
+  --mdzip-density-toolbar-padding: 2px 8px;
+  --mdzip-density-toolbar-gap: 4px;
+  --mdzip-density-toolbar-start-gap: 6px;
+  --mdzip-density-toolbar-group-padding: 1px;
+  --mdzip-density-toolbar-button-width: 30px;
+  --mdzip-density-toolbar-button-height: 28px;
+  --mdzip-density-toolbar-compact-button-size: 26px;
+  --mdzip-density-toolbar-icon-size: 14px;
+  --mdzip-density-toolbar-icon-large-size: 18px;
+  --mdzip-density-toolbar-icon-extra-large-size: 20px;
+  --mdzip-density-theme-icon-size: 15px;
+  --mdzip-density-format-toolbar-gap: 3px;
+  --mdzip-density-format-toolbar-group-gap: 1px;
+  --mdzip-density-format-button-size: 26px;
+  --mdzip-density-format-menu-button-width: 34px;
+  --mdzip-density-format-icon-size: 14px;
+}
+
+.mdzip-root.content-density-compact {
+  --mdzip-density-editor-content-padding: 20px 28px;
+  --mdzip-density-preview-content-padding: 20px 24px 32px;
+}
+
 .mdzip-root.mdzip-theme-light {
   color-scheme: light;
   ${MDZIP_LIGHT_DEFAULTS_CSS}
@@ -75,11 +118,14 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .toolbar {
+  --view-mode-min-left: calc(var(--editor-pane-offset) + 520px);
+  --view-mode-max-left: calc(100% - 170px);
+
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   column-gap: 12px;
-  padding: 4px 12px;
+  padding: var(--mdzip-toolbar-padding, var(--mdzip-density-toolbar-padding, 4px 12px));
   background: var(--mdzip-toolbar-background-color);
   border-bottom: 1px solid var(--mdzip-border-color);
   min-height: 48px;
@@ -93,7 +139,7 @@ export const WORKSPACE_CSS = `
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 10px;
+  gap: var(--mdzip-toolbar-gap, var(--mdzip-density-toolbar-gap, 10px));
 }
 
 .mdzip-root .toolbar-start {
@@ -101,7 +147,7 @@ export const WORKSPACE_CSS = `
   align-items: center;
   justify-self: start;
   min-width: 0;
-  gap: 12px;
+  gap: var(--mdzip-toolbar-start-gap, var(--mdzip-density-toolbar-start-gap, 12px));
 }
 
 .mdzip-root.navigation-pane-visible {
@@ -186,7 +232,7 @@ export const WORKSPACE_CSS = `
   align-items: center;
   gap: 4px;
   justify-self: center;
-  padding: 3px;
+  padding: var(--mdzip-toolbar-group-padding, var(--mdzip-density-toolbar-group-padding, 3px));
   border: 1px solid var(--mdzip-widget-border-color);
   border-radius: 8px;
   background: var(--mdzip-widget-background-color);
@@ -194,7 +240,11 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root .view-mode-toggle-group {
   position: absolute;
-  left: calc((100% + var(--workspace-pane-offset)) / 2);
+  left: clamp(
+    var(--view-mode-min-left),
+    calc((100% + var(--workspace-pane-offset)) / 2),
+    var(--view-mode-max-left)
+  );
   top: 50%;
   transform: translate(-50%, -50%);
   gap: 2px;
@@ -205,8 +255,8 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .icon-toggle {
-  width: 42px;
-  height: 36px;
+  width: var(--mdzip-toolbar-button-width, var(--mdzip-toolbar-button-size, var(--mdzip-density-toolbar-button-width, 42px)));
+  height: var(--mdzip-toolbar-button-height, var(--mdzip-toolbar-button-size, var(--mdzip-density-toolbar-button-height, 36px)));
   padding: 0;
   cursor: pointer;
   background: transparent;
@@ -233,16 +283,16 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .toggle-icon {
-  width: 17px;
-  height: 17px;
+  width: var(--mdzip-toolbar-icon-size, var(--mdzip-density-toolbar-icon-size, 17px));
+  height: var(--mdzip-toolbar-icon-size, var(--mdzip-density-toolbar-icon-size, 17px));
   fill: none;
   stroke: currentColor;
 }
 
 .mdzip-root .view-mode-toggle {
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
+  height: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
   border-radius: 6px;
   color: var(--mdzip-control-foreground-color);
 }
@@ -269,13 +319,13 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .view-mode-toggle .toggle-icon {
-  width: 1.5em;
-  height: 1.5em;
+  width: var(--mdzip-toolbar-icon-large-size, var(--mdzip-density-toolbar-icon-large-size, 1.5em));
+  height: var(--mdzip-toolbar-icon-large-size, var(--mdzip-density-toolbar-icon-large-size, 1.5em));
 }
 
 .mdzip-root .nav-toggle {
-  width: 32px;
-  height: 32px;
+  width: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
+  height: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
   border-radius: 6px;
 }
 
@@ -284,14 +334,22 @@ export const WORKSPACE_CSS = `
   color: var(--mdzip-link-color);
 }
 
+.mdzip-root .nav-toggle.convert-mdz-toggle {
+  color: var(--mdzip-link-color);
+}
+
+.mdzip-root .nav-toggle.convert-mdz-toggle:hover:not(:disabled) {
+  background: var(--mdzip-control-hover-background-color);
+}
+
 .mdzip-root .nav-toggle .toggle-icon {
-  width: 1.9em;
-  height: 1.9em;
+  width: var(--mdzip-toolbar-icon-extra-large-size, var(--mdzip-density-toolbar-icon-extra-large-size, 1.9em));
+  height: var(--mdzip-toolbar-icon-extra-large-size, var(--mdzip-density-toolbar-icon-extra-large-size, 1.9em));
 }
 
 .mdzip-root .zoom-toggle .toggle-icon {
-  width: 1.5em;
-  height: 1.5em;
+  width: var(--mdzip-toolbar-icon-large-size, var(--mdzip-density-toolbar-icon-large-size, 1.5em));
+  height: var(--mdzip-toolbar-icon-large-size, var(--mdzip-density-toolbar-icon-large-size, 1.5em));
 }
 
 .mdzip-root .zoom-toggle.active {
@@ -303,15 +361,15 @@ export const WORKSPACE_CSS = `
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 3px;
+  padding: var(--mdzip-toolbar-group-padding, var(--mdzip-density-toolbar-group-padding, 3px));
   border: 1px solid var(--mdzip-widget-border-color);
   border-radius: 8px;
   background: var(--mdzip-widget-background-color);
 }
 
 .mdzip-root .theme-toggle {
-  width: 32px;
-  height: 32px;
+  width: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
+  height: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
   border-radius: 6px;
 }
 
@@ -321,8 +379,8 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .theme-toggle .toggle-icon {
-  width: 18px;
-  height: 18px;
+  width: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
+  height: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
 }
 
 .mdzip-root .workspace-shell {
@@ -800,7 +858,7 @@ export const WORKSPACE_CSS = `
 .mdzip-root .edit-toolbar {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--mdzip-format-toolbar-gap, var(--mdzip-density-format-toolbar-gap, 7px));
   min-height: 32px;
   padding: 0;
   overflow: visible;
@@ -822,7 +880,7 @@ export const WORKSPACE_CSS = `
 .mdzip-root .edit-toolbar-group {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--mdzip-format-toolbar-group-gap, var(--mdzip-density-format-toolbar-group-gap, 2px));
   flex: 0 0 auto;
 }
 
@@ -831,8 +889,8 @@ export const WORKSPACE_CSS = `
   align-items: center;
   justify-content: center;
   gap: 2px;
-  width: 32px;
-  height: 32px;
+  width: var(--mdzip-format-button-size, var(--mdzip-density-format-button-size, 32px));
+  height: var(--mdzip-format-button-size, var(--mdzip-density-format-button-size, 32px));
   padding: 0;
   border: 0;
   border-radius: 5px;
@@ -857,7 +915,7 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .edit-toolbar .format-menu-toggle {
-  width: 42px;
+  width: var(--mdzip-format-menu-button-width, var(--mdzip-density-format-menu-button-width, 42px));
   gap: 2px;
 }
 
@@ -908,8 +966,8 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .format-icon {
-  width: 17px;
-  height: 17px;
+  width: var(--mdzip-format-icon-size, var(--mdzip-density-format-icon-size, 17px));
+  height: var(--mdzip-format-icon-size, var(--mdzip-density-format-icon-size, 17px));
   fill: none;
   stroke: currentColor;
 }
@@ -960,7 +1018,7 @@ export const WORKSPACE_CSS = `
 .mdzip-root .preview-content {
   max-width: 900px;
   margin: 0 auto;
-  padding: 36px 32px 48px;
+  padding: var(--mdzip-preview-content-padding, var(--mdzip-density-preview-content-padding, 36px 32px 48px));
   line-height: 1.55;
   font-size: calc(16px * var(--mdz-zoom));
 }
@@ -1081,6 +1139,24 @@ export const WORKSPACE_CSS = `
   border-radius: 4px;
 }
 
+.mdzip-root .preview-content img.mdzip-image-left,
+.mdzip-root .preview-content img.mdzip-image-wrap-left {
+  float: left;
+  margin: 0.25em 1em 0.75em 0;
+}
+
+.mdzip-root .preview-content img.mdzip-image-right,
+.mdzip-root .preview-content img.mdzip-image-wrap-right {
+  float: right;
+  margin: 0.25em 0 0.75em 1em;
+}
+
+.mdzip-root .preview-content img.mdzip-image-center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 /* Progressive image hydration. Each archive image mounts inside a collapsed
    slot so the text stays compact and immediately readable; when the image
    resolves, the slot eases open (0fr -> 1fr) to the height reserved from its
@@ -1098,8 +1174,22 @@ export const WORKSPACE_CSS = `
   grid-template-rows: 1fr;
 }
 
+.mdzip-root .preview-content .mdzip-image-slot.mdzip-image-animation-off {
+  transition: none;
+}
+
 .mdzip-root .preview-content .mdzip-image-slot > img {
   min-height: 0;
+}
+
+.mdzip-root .preview-content .mdzip-image-slot.mdzip-image-align-left {
+  float: left;
+  margin: 0.25em 1em 0.75em 0;
+}
+
+.mdzip-root .preview-content .mdzip-image-slot.mdzip-image-align-right {
+  float: right;
+  margin: 0.25em 0 0.75em 1em;
 }
 
 .mdzip-root .preview-content img.mdzip-image-loading {
@@ -1288,6 +1378,29 @@ export const WORKSPACE_CSS = `
   font-size: 13px;
 }
 
+.mdzip-root .title-dialog select {
+  width: 100%;
+  border: 1px solid var(--mdzip-widget-border-color);
+  background: var(--mdzip-editor-background-color);
+  color: var(--mdzip-editor-foreground-color);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+
+.mdzip-root .title-dialog input:disabled,
+.mdzip-root .title-dialog select:disabled {
+  border-color: var(--mdzip-border-color);
+  background: var(--mdzip-secondary-background-color);
+  color: var(--mdzip-muted-foreground-color);
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.mdzip-root .title-dialog input:disabled::placeholder {
+  color: var(--mdzip-muted-foreground-color);
+}
+
 .mdzip-root .title-dialog-validation {
   color: #cf222e !important;
 }
@@ -1317,6 +1430,57 @@ export const WORKSPACE_CSS = `
   border-color: var(--mdzip-accent-color);
   background: var(--mdzip-accent-color);
   color: var(--mdzip-accent-foreground-color);
+}
+
+.mdzip-root .image-insert-dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.mdzip-root .image-insert-options {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--mdzip-widget-border-color);
+  border-radius: 4px;
+}
+
+.mdzip-root .image-insert-options legend {
+  padding: 0 4px;
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mdzip-root .image-insert-options label,
+.mdzip-root .image-insert-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.mdzip-root .image-insert-options label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.mdzip-root .image-insert-options input {
+  width: auto;
+}
+
+.mdzip-root .image-insert-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mdzip-root .image-insert-field {
+  margin-top: 8px;
+}
+
+.mdzip-root .image-insert-field.field-disabled {
+  color: var(--mdzip-muted-foreground-color);
 }
 
 .mdzip-root .metadata-dialog dl {
@@ -1409,11 +1573,9 @@ export const WORKSPACE_CSS = `
   .mdzip-root { --nav-pane-width: 220px; }
 }
 
-/* Stack the formatting toolbar onto its own row before the absolutely
-   centered view-mode toggle can collide with it. Without the navigation pane
-   the collision band starts just under ~1000px; with the (resizable, default
-   280px) navigation pane open everything shifts right, so stack earlier. */
-@media (max-width: 1000px) {
+/* Stack the formatting toolbar only once the pushed-right view-mode toggle no
+   longer has enough room between the edit tools and the right-side controls. */
+@media (max-width: 760px) {
   .mdzip-root .toolbar {
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     row-gap: 4px;
@@ -1442,7 +1604,7 @@ export const WORKSPACE_CSS = `
   }
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1100px) {
   .mdzip-root.navigation-pane-visible .toolbar {
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     row-gap: 4px;

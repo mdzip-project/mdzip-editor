@@ -2,7 +2,17 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { Compartment, EditorState } from '@codemirror/state';
-import { EditorView, dropCursor, keymap, lineNumbers } from '@codemirror/view';
+import {
+  Decoration,
+  EditorView,
+  MatchDecorator,
+  ViewPlugin,
+  dropCursor,
+  keymap,
+  lineNumbers,
+  type DecorationSet,
+  type ViewUpdate
+} from '@codemirror/view';
 import { tags } from '@lezer/highlight';
 import {
   Bold,
@@ -24,7 +34,9 @@ import {
   Link,
   List,
   ListOrdered,
+  CornerDownLeft,
   Moon,
+  PackagePlus,
   PanelLeft,
   Quote,
   Save,
@@ -38,6 +50,7 @@ import { browserClipboardHasImage, readBrowserClipboardImage } from './browser.j
 import {
   MdzipAssetSession,
   mdzipArchiveSourceId,
+  sniffImageSize,
   type MdzipAssetCache
 } from './asset-cache.js';
 import { MD_MARKDOWN_ICON, type LucideIconNode } from './icons/md-markdown.js';
@@ -101,6 +114,7 @@ const ORPHAN_ICON_HTML = lucideIcon(Link2Off, '');
 const SOURCE_EDIT_ICON_HTML = lucideIcon(SquarePen, TOOLBAR_ICON_CLASS);
 const SOURCE_MARKDOWN_ICON_HTML = lucideIcon(Hash, TOOLBAR_ICON_CLASS);
 const NAV_TOGGLE_ICON_HTML = lucideIcon(PanelLeft, `${TOOLBAR_ICON_CLASS} nav-toggle-icon`);
+const CONVERT_TO_MDZ_ICON_HTML = lucideIcon(PackagePlus, `${TOOLBAR_ICON_CLASS} convert-mdz-icon`);
 const PREVIEW_ICON_HTML = lucideIcon(Eye, TOOLBAR_ICON_CLASS);
 const SPLIT_ICON_HTML = lucideIcon(Columns2, TOOLBAR_ICON_CLASS);
 const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
@@ -116,6 +130,7 @@ const BULLET_LIST_ICON_HTML = lucideIcon(List, FORMAT_ICON_CLASS);
 const ORDERED_LIST_ICON_HTML = lucideIcon(ListOrdered, FORMAT_ICON_CLASS);
 const CODE_ICON_HTML = lucideIcon(Code, FORMAT_ICON_CLASS);
 const QUOTE_ICON_HTML = lucideIcon(Quote, FORMAT_ICON_CLASS);
+const LINE_BREAK_ICON_HTML = lucideIcon(CornerDownLeft, FORMAT_ICON_CLASS);
 const LINK_ICON_HTML = lucideIcon(Link, FORMAT_ICON_CLASS);
 const IMAGE_FORMAT_ICON_HTML = lucideIcon(ImagePlus, FORMAT_ICON_CLASS);
 const CHEVRON_ICON_HTML = lucideIcon(ChevronDown, 'format-chevron');
@@ -125,6 +140,34 @@ export type MdzipWorkspaceLayout = 'preview' | 'source' | 'split';
 export type MdzipNavigationMode = 'editor' | 'host' | 'none';
 export type MdzipColorScheme = 'light' | 'dark';
 export type MdzipHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
+export type MdzipImageHydrationAnimation = 'auto' | 'initial' | 'off';
+export type MdzipImageInsertMode = 'markdown' | 'ask' | 'html';
+export type MdzipImageInsertOutputMode = 'markdown' | 'html';
+export type MdzipImageInsertSource = 'paste' | 'drop' | 'picker';
+export type MdzipImagePosition = 'inline' | 'left' | 'center' | 'right' | 'wrap-left' | 'wrap-right';
+export type MdzipToolbarDensity = 'comfortable' | 'compact' | 'dense';
+export type MdzipContentDensity = 'comfortable' | 'compact';
+
+export interface MdzipImageInsertRequest {
+  fileName: string;
+  mimeType: string;
+  intrinsicWidth?: number;
+  intrinsicHeight?: number;
+  defaultAltText: string;
+  source: MdzipImageInsertSource;
+}
+
+export interface MdzipImageInsertDecision {
+  mode: MdzipImageInsertOutputMode;
+  altText: string;
+  width?: number;
+  height?: number;
+  position?: MdzipImagePosition;
+}
+
+export type MdzipImageInsertHandler =
+  (request: MdzipImageInsertRequest) =>
+    MdzipImageInsertDecision | null | undefined | Promise<MdzipImageInsertDecision | null | undefined>;
 
 export type MdzipEditorCommand =
   | 'bold'
@@ -137,13 +180,14 @@ export type MdzipEditorCommand =
   | 'inline-code'
   | 'code-block'
   | 'blockquote'
+  | 'insert-line-break'
   | 'link'
   | 'insert-image';
 
 export type MdzipConversionAction =
   | { kind: 'navigation' }
   | { kind: 'image-picker' }
-  | { kind: 'image-file'; file: File };
+  | { kind: 'image-file'; file: File; source?: MdzipImageInsertSource };
 
 export interface MdzipConversionContext {
   insertMarkdown(text: string): Promise<boolean>;
@@ -206,6 +250,7 @@ export interface MdzipFormattingControlPolicy {
   inlineCode?: boolean;
   codeBlock?: boolean;
   blockquote?: boolean;
+  lineBreak?: boolean;
   link?: boolean;
   image?: boolean;
 }
@@ -247,6 +292,7 @@ export interface MdzipResolvedFormattingControlPolicy {
   inlineCode: boolean;
   codeBlock: boolean;
   blockquote: boolean;
+  lineBreak: boolean;
   link: boolean;
   image: boolean;
 }
@@ -285,6 +331,36 @@ export interface MdzipWorkspaceViewOptions {
   /** Optional persistent cache for lazily resolved archive assets. */
   assetCache?: MdzipAssetCache;
   controls?: MdzipControlPreset | MdzipControlPolicy;
+  /**
+   * Semantic toolbar sizing preset. Defaults to `'comfortable'`. Hosts can
+   * still fine-tune with stable `--mdzip-toolbar-*` CSS custom properties.
+   */
+  toolbarDensity?: MdzipToolbarDensity;
+  /**
+   * Semantic editor/preview padding preset. Defaults to `'comfortable'`. Hosts
+   * can still fine-tune with stable `--mdzip-*-content-padding` CSS variables.
+   */
+  contentDensity?: MdzipContentDensity;
+  /**
+   * Controls the progressive preview image reveal animation. Use `'off'` in
+   * live-editing hosts to prevent images from pulsing/sliding. Use `'initial'`
+   * to animate the first render for a document path but snap open subsequent
+   * same-document text edits. Defaults to `'auto'`.
+   */
+  imageHydrationAnimation?: MdzipImageHydrationAnimation;
+  /**
+   * Controls how inserted images become Markdown text when no host
+   * `imageInsertHandler` is provided. Defaults to `'markdown'`, preserving the
+   * existing no-dialog `![Pasted image](...)` behavior. Use `'ask'` for the
+   * built-in Markdown/HTML sizing dialog, or `'html'` to insert a default
+   * `<img>` element without prompting.
+   */
+  imageInsertMode?: MdzipImageInsertMode;
+  /**
+   * Optional host-owned async UI for image insertion. Return `null` to cancel
+   * the insertion cleanly.
+   */
+  imageInsertHandler?: MdzipImageInsertHandler;
   initialLayout?: MdzipWorkspaceLayout;
   initialColorScheme?: MdzipColorScheme;
   navigationMode?: MdzipNavigationMode;
@@ -385,6 +461,7 @@ const ALL_FORMATTING_CONTROLS: MdzipResolvedFormattingControlPolicy = {
   inlineCode: true,
   codeBlock: true,
   blockquote: true,
+  lineBreak: true,
   link: true,
   image: true
 };
@@ -398,6 +475,7 @@ const NO_FORMATTING_CONTROLS: MdzipResolvedFormattingControlPolicy = {
   inlineCode: false,
   codeBlock: false,
   blockquote: false,
+  lineBreak: false,
   link: false,
   image: false
 };
@@ -571,6 +649,14 @@ function resolveFormattingControls(
   };
 }
 
+function normalizeToolbarDensity(value: MdzipToolbarDensity | undefined): MdzipToolbarDensity {
+  return value === 'compact' || value === 'dense' ? value : 'comfortable';
+}
+
+function normalizeContentDensity(value: MdzipContentDensity | undefined): MdzipContentDensity {
+  return value === 'compact' ? value : 'comfortable';
+}
+
 const mdzipEditorTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -585,7 +671,7 @@ const mdzipEditorTheme = EditorView.theme({
     overflow: 'auto',
   },
   '.cm-content': {
-    padding: '36px 48px',
+    padding: 'var(--mdzip-editor-content-padding, var(--mdzip-density-editor-content-padding, 36px 48px))',
     caretColor: 'var(--mdzip-editor-cursor-color)',
     overflowWrap: 'anywhere',
     wordBreak: 'normal',
@@ -616,6 +702,10 @@ const mdzipEditorTheme = EditorView.theme({
   '.cm-activeLineGutter': {
     background: 'transparent',
   },
+  '.mdzip-hard-break-marker': {
+    color: 'var(--mdzip-muted-foreground-color)',
+    opacity: '0.65',
+  },
 });
 
 const mdzipMarkdownHighlight = HighlightStyle.define([
@@ -632,6 +722,27 @@ const mdzipMarkdownHighlight = HighlightStyle.define([
   { tag: tags.contentSeparator, color: '#6a9955' },
   { tag: tags.atom, color: '#d100d1' },
 ]);
+
+const hardBreakMarkerMatcher = new MatchDecorator({
+  regexp: /<br\s*\/?>/gi,
+  decoration: Decoration.mark({ class: 'mdzip-hard-break-marker' })
+});
+
+const hardBreakMarkerHighlight = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = hardBreakMarkerMatcher.createDeco(view);
+  }
+
+  update(update: ViewUpdate): void {
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = hardBreakMarkerMatcher.updateDeco(update, this.decorations);
+    }
+  }
+}, {
+  decorations: value => value.decorations
+});
 
 function injectStyles(doc: Document): void {
   const existing = doc.querySelector<HTMLStyleElement>(`style[${STYLE_ATTR}]`);
@@ -795,13 +906,23 @@ function navNodeOrder(a: MdzipNavNode, b: MdzipNavNode): number {
   return a.name.localeCompare(b.name);
 }
 
+interface MdzipPreviewMemo {
+  path: string;
+  pathType: MdzipPathType;
+  text: string;
+  colorScheme: MdzipColorScheme;
+}
+
 export class MdzipWorkspaceView {
   private workspace: MdzipWorkspaceService | null = null;
   private assetSession: MdzipAssetSession | null = null;
   private unsub: (() => void) | null = null;
   private readonly options: MdzipWorkspaceViewOptions;
-  private readonly controlPolicy: MdzipResolvedControlPolicy;
+  private controlPolicy: MdzipResolvedControlPolicy;
   private readonly navigationMode: MdzipNavigationMode;
+  private imageHydrationAnimation: MdzipImageHydrationAnimation;
+  private toolbarDensity: MdzipToolbarDensity;
+  private contentDensity: MdzipContentDensity;
 
   private layout: MdzipWorkspaceLayout = 'split';
   private navVisible = true;
@@ -812,6 +933,10 @@ export class MdzipWorkspaceView {
   private metadataDialogOpen = false;
   private titleDraft = '';
   private conversionAction: MdzipConversionAction | null = null;
+  private imageInsertDialogState: {
+    request: MdzipImageInsertRequest;
+    resolve: (decision: MdzipImageInsertDecision | null) => void;
+  } | null = null;
   private navPaneWidth = 280;
   private splitRatio = 0.5;
   private resizing = false;
@@ -841,6 +966,7 @@ export class MdzipWorkspaceView {
 
   private cmEditor: EditorView | null = null;
   private readonly readOnlyCompartment = new Compartment();
+  private readonly lineNumbersCompartment = new Compartment();
   private updatingCm = false;
   private syncing = false;
 
@@ -851,12 +977,7 @@ export class MdzipWorkspaceView {
   // Preview render memo: the preview pipeline only re-runs when one of these
   // inputs actually changed, so unrelated snapshot renders (dialogs, nav,
   // layout toggles) never reset preview DOM or re-run extension mounts.
-  private previewMemo: {
-    path: string;
-    pathType: MdzipPathType;
-    text: string;
-    colorScheme: MdzipColorScheme;
-  } | null = null;
+  private previewMemo: MdzipPreviewMemo | null = null;
   private previewGeneration = 0;
   private previewAbort: AbortController | null = null;
   private previewHandles: MdzipRenderHandle[] = [];
@@ -920,6 +1041,14 @@ export class MdzipWorkspaceView {
   private readonly elLibraryList: HTMLElement;
   private readonly elConversionDialog: HTMLElement;
   private readonly elConversionConfirmBtn: HTMLButtonElement;
+  private readonly elImageInsertDialog: HTMLElement;
+  private readonly elImageInsertModeMarkdown: HTMLInputElement;
+  private readonly elImageInsertModeHtml: HTMLInputElement;
+  private readonly elImageInsertAltInput: HTMLInputElement;
+  private readonly elImageInsertSizeModeSelect: HTMLSelectElement;
+  private readonly elImageInsertSizeValueInput: HTMLInputElement;
+  private readonly elImageInsertPositionSelect: HTMLSelectElement;
+  private readonly elImageInsertConfirmBtn: HTMLButtonElement;
   private readonly elNavMenu: HTMLElement;
   private readonly elNameDialog: HTMLElement;
   private readonly elNameDialogHeading: HTMLElement;
@@ -937,6 +1066,9 @@ export class MdzipWorkspaceView {
     this.options = options;
     this.controlPolicy = resolveMdzipControlPolicy(options.controls);
     this.navigationMode = options.navigationMode ?? 'editor';
+    this.imageHydrationAnimation = options.imageHydrationAnimation ?? 'auto';
+    this.toolbarDensity = options.toolbarDensity ?? 'comfortable';
+    this.contentDensity = options.contentDensity ?? 'comfortable';
     this.layout = options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy);
     this.colorScheme = options.initialColorScheme
       ?? (container.ownerDocument.defaultView?.matchMedia('(prefers-color-scheme: dark)').matches
@@ -958,6 +1090,7 @@ export class MdzipWorkspaceView {
       container.querySelector<T>(sel) as T;
 
     this.elRoot = q('.mdzip-root');
+    this.applyDensityClasses();
     this.elDocumentStrip = q('[data-ref="document-strip"]');
     this.elToolbar = q('[data-ref="toolbar"]');
     this.elToolbarLeft = q('.toolbar-left');
@@ -1000,6 +1133,14 @@ export class MdzipWorkspaceView {
     this.elLibraryList = q('[data-ref="library-list"]');
     this.elConversionDialog = q('[data-ref="conversion-dialog"]');
     this.elConversionConfirmBtn = q('[data-ref="conversion-confirm-btn"]');
+    this.elImageInsertDialog = q('[data-ref="image-insert-dialog"]');
+    this.elImageInsertModeMarkdown = q('[data-ref="image-insert-mode-markdown"]');
+    this.elImageInsertModeHtml = q('[data-ref="image-insert-mode-html"]');
+    this.elImageInsertAltInput = q('[data-ref="image-insert-alt"]');
+    this.elImageInsertSizeModeSelect = q('[data-ref="image-insert-size-mode"]');
+    this.elImageInsertSizeValueInput = q('[data-ref="image-insert-size-value"]');
+    this.elImageInsertPositionSelect = q('[data-ref="image-insert-position"]');
+    this.elImageInsertConfirmBtn = q('[data-ref="image-insert-confirm-btn"]');
     this.elNavMenu = q('[data-ref="nav-menu"]');
     this.elNameDialog = q('[data-ref="name-dialog"]');
     this.elNameDialogHeading = q('[data-ref="name-dialog-heading"]');
@@ -1263,12 +1404,12 @@ export class MdzipWorkspaceView {
     if (command === 'insert-image') {
       if (this.workspace?.sourceFormat === 'markdown') {
         this.requestMdzConversion(file
-          ? { kind: 'image-file', file }
+          ? { kind: 'image-file', file, source: 'picker' }
           : { kind: 'image-picker' });
         return true;
       }
       if (file) {
-        await this.insertImageFile(file);
+        await this.insertImageFile(file, 'picker');
       } else {
         this.elImageInput.click();
       }
@@ -1298,6 +1439,7 @@ export class MdzipWorkspaceView {
 
   public destroy(): void {
     this.conversionDocumentGeneration += 1;
+    this.resolveImageInsertDialog(null);
     try {
       this.unsub?.();
     } catch {
@@ -1344,6 +1486,70 @@ export class MdzipWorkspaceView {
     this.teardownEntryRenderer();
     this.entryMatchMissKey = null;
     this.render();
+  }
+
+  /**
+   * Replaces the view control policy without recreating the workspace or
+   * CodeMirror editor. In particular, `lineNumbers` is reconfigured through a
+   * CodeMirror compartment so text, selection, focus, scroll, and undo history
+   * stay intact.
+   */
+  public setControls(controls: MdzipControlPreset | MdzipControlPolicy | undefined): void {
+    const next = resolveMdzipControlPolicy(controls);
+    const lineNumbersChanged = next.lineNumbers !== this.controlPolicy.lineNumbers;
+    this.controlPolicy = next;
+    if (lineNumbersChanged && this.cmEditor) {
+      this.cmEditor.dispatch({
+        effects: this.lineNumbersCompartment.reconfigure(
+          next.lineNumbers ? lineNumbers() : []
+        )
+      });
+    }
+    const snapshot = this.workspace?.snapshot();
+    if (snapshot) {
+      this.layout = this.validLayoutForSnapshot(this.layout, snapshot);
+    }
+    this.render();
+  }
+
+  public setImageHydrationAnimation(animation: MdzipImageHydrationAnimation | undefined): void {
+    const next = animation ?? 'auto';
+    if (next === this.imageHydrationAnimation) {
+      return;
+    }
+    this.imageHydrationAnimation = next;
+    this.resetPreviewState();
+    this.render();
+  }
+
+  public setDensityOptions(options: Pick<MdzipWorkspaceViewOptions, 'toolbarDensity' | 'contentDensity'>): void {
+    const nextToolbarDensity = normalizeToolbarDensity(options.toolbarDensity);
+    const nextContentDensity = normalizeContentDensity(options.contentDensity);
+    if (nextToolbarDensity === this.toolbarDensity && nextContentDensity === this.contentDensity) {
+      return;
+    }
+    this.toolbarDensity = nextToolbarDensity;
+    this.contentDensity = nextContentDensity;
+    this.applyDensityClasses();
+  }
+
+  public setImageInsertOptions(
+    options: Pick<MdzipWorkspaceViewOptions, 'imageInsertMode' | 'imageInsertHandler'>
+  ): void {
+    this.options.imageInsertMode = options.imageInsertMode;
+    this.options.imageInsertHandler = options.imageInsertHandler;
+  }
+
+  private applyDensityClasses(): void {
+    this.elRoot.classList.remove(
+      'toolbar-density-comfortable',
+      'toolbar-density-compact',
+      'toolbar-density-dense',
+      'content-density-comfortable',
+      'content-density-compact'
+    );
+    this.elRoot.classList.add(`toolbar-density-${this.toolbarDensity}`);
+    this.elRoot.classList.add(`content-density-${this.contentDensity}`);
   }
 
   /**
@@ -1408,6 +1614,7 @@ export class MdzipWorkspaceView {
       return;
     }
 
+    const animateImageHydration = this.shouldAnimateImageHydration(memo, snapshot);
     this.previewAbort?.abort();
     this.previewAbort = null;
     this.destroyPreviewHandles();
@@ -1457,7 +1664,7 @@ export class MdzipWorkspaceView {
 
     if (typeof result === 'string') {
       // Sync fast path: no microtask hop when every pipeline stage is sync.
-      this.applyPreviewHtml(result, snapshot, context, generation);
+      this.applyPreviewHtml(result, snapshot, context, generation, animateImageHydration);
       return;
     }
 
@@ -1465,7 +1672,7 @@ export class MdzipWorkspaceView {
       if (generation !== this.previewGeneration || abort.signal.aborted) {
         return; // Stale: the selection or content moved on while rendering.
       }
-      this.applyPreviewHtml(html, snapshot, context, generation);
+      this.applyPreviewHtml(html, snapshot, context, generation, animateImageHydration);
     }).catch((error) => {
       if (generation !== this.previewGeneration || abort.signal.aborted) {
         return;
@@ -1480,17 +1687,33 @@ export class MdzipWorkspaceView {
     html: string,
     snapshot: MdzipWorkspaceSnapshot,
     context: MdzipMarkdownRenderContext,
-    generation: number
+    generation: number,
+    animateImageHydration: boolean
   ): void {
     // When the preview references archive images, mount the text immediately
     // and hydrate each image progressively (reserving layout space from its
     // sniffed intrinsic size), rather than blocking the whole preview on image
     // resolution. Other markdown mounts synchronously.
     if (this.assetSession && /<img\b/i.test(html)) {
-      this.mountProgressivePreview(html, snapshot, context, generation);
+      this.mountProgressivePreview(html, snapshot, context, generation, animateImageHydration);
       return;
     }
     this.mountPreviewHtml(html, snapshot, context, generation);
+  }
+
+  private shouldAnimateImageHydration(
+    previousMemo: MdzipPreviewMemo | null,
+    snapshot: MdzipWorkspaceSnapshot
+  ): boolean {
+    if (this.imageHydrationAnimation === 'off') {
+      return false;
+    }
+    if (this.imageHydrationAnimation === 'auto') {
+      return true;
+    }
+    return !previousMemo
+      || previousMemo.path !== snapshot.currentPath
+      || previousMemo.pathType !== snapshot.currentPathType;
   }
 
   private mountPreviewHtml(
@@ -1516,7 +1739,8 @@ export class MdzipWorkspaceView {
     html: string,
     snapshot: MdzipWorkspaceSnapshot,
     context: MdzipMarkdownRenderContext,
-    generation: number
+    generation: number,
+    animateImageHydration: boolean
   ): void {
     this.elPreviewContent.innerHTML = html;
     const session = this.assetSession;
@@ -1533,9 +1757,19 @@ export class MdzipWorkspaceView {
       // immediately readable; the slot eases open to the reserved height once
       // the image resolves.
       image.removeAttribute('src');
-      image.classList.add('mdzip-image-loading');
+      if (animateImageHydration) {
+        image.classList.add('mdzip-image-loading');
+      }
       const slot = document.createElement('span');
-      slot.className = 'mdzip-image-slot';
+      slot.className = animateImageHydration
+        ? 'mdzip-image-slot'
+        : 'mdzip-image-slot mdzip-image-open mdzip-image-animation-off';
+      const align = image.getAttribute('align')?.toLowerCase();
+      if (align === 'left' || image.classList.contains('mdzip-image-wrap-left')) {
+        slot.classList.add('mdzip-image-align-left');
+      } else if (align === 'right' || image.classList.contains('mdzip-image-wrap-right')) {
+        slot.classList.add('mdzip-image-align-right');
+      }
       image.parentNode?.insertBefore(slot, image);
       slot.appendChild(image);
       pending.push({ image, slot, source });
@@ -1571,7 +1805,8 @@ export class MdzipWorkspaceView {
         // Size the reserved box from the sniffed dimensions so the slot eases
         // open to the image's exact height in a single slide — and the pixels
         // drop into an already-correct box with no further reflow.
-        if (resolved.width && resolved.height) {
+        if (resolved.width && resolved.height
+          && !image.hasAttribute('width') && !image.hasAttribute('height')) {
           image.setAttribute('width', String(resolved.width));
           image.setAttribute('height', String(resolved.height));
         }
@@ -1597,6 +1832,10 @@ export class MdzipWorkspaceView {
    * under `prefers-reduced-motion`.
    */
   private openImageSlot(slot: HTMLElement): void {
+    if (this.imageHydrationAnimation === 'off' || slot.classList.contains('mdzip-image-animation-off')) {
+      slot.classList.add('mdzip-image-open');
+      return;
+    }
     void slot.offsetHeight;
     slot.classList.add('mdzip-image-open');
   }
@@ -1930,11 +2169,12 @@ export class MdzipWorkspaceView {
     const state = EditorState.create({
       doc: initialText,
       extensions: [
-        ...(this.controlPolicy.lineNumbers ? [lineNumbers()] : []),
+        this.lineNumbersCompartment.of(this.controlPolicy.lineNumbers ? lineNumbers() : []),
         history(),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         markdown(),
         syntaxHighlighting(mdzipMarkdownHighlight),
+        hardBreakMarkerHighlight,
         EditorView.lineWrapping,
         dropCursor(),
         mdzipEditorTheme,
@@ -2104,8 +2344,23 @@ export class MdzipWorkspaceView {
     this.elPreviewBtn.setAttribute('aria-pressed', String(this.layout === 'preview'));
     this.elSplitBtn.setAttribute('aria-pressed', String(this.layout === 'split'));
     this.elSourceBtn.setAttribute('aria-pressed', String(this.layout === 'source'));
-    this.elNavBtn.classList.toggle('active', this.navVisible);
-    this.elNavBtn.setAttribute('aria-pressed', String(this.navVisible));
+    if (snapshot.sourceFormat === 'markdown') {
+      this.elNavBtn.innerHTML = CONVERT_TO_MDZ_ICON_HTML;
+      this.elNavBtn.classList.remove('active');
+      this.elNavBtn.classList.add('convert-mdz-toggle');
+      this.elNavBtn.setAttribute('title', 'Convert to MDZ');
+      this.elNavBtn.setAttribute('aria-label', 'Convert to MDZ');
+      this.elNavBtn.dataset['tooltip'] = 'Convert to MDZ';
+      this.elNavBtn.removeAttribute('aria-pressed');
+    } else {
+      this.elNavBtn.innerHTML = NAV_TOGGLE_ICON_HTML;
+      this.elNavBtn.classList.remove('convert-mdz-toggle');
+      this.elNavBtn.classList.toggle('active', this.navVisible);
+      this.elNavBtn.setAttribute('title', 'Toggle contents');
+      this.elNavBtn.setAttribute('aria-label', 'Toggle contents');
+      this.elNavBtn.dataset['tooltip'] = 'Toggle contents';
+      this.elNavBtn.setAttribute('aria-pressed', String(this.navVisible));
+    }
     this.elZoomBtn.classList.toggle('active', this.zoomOpen);
     this.elDarkThemeBtn.classList.toggle('active', this.colorScheme === 'dark');
     this.elLightThemeBtn.classList.toggle('active', this.colorScheme === 'light');
@@ -2181,6 +2436,18 @@ export class MdzipWorkspaceView {
       this.elTitleSaveBtn.disabled = !valid;
     }
     this.elConversionDialog.hidden = this.conversionAction === null;
+    this.elImageInsertDialog.hidden = this.imageInsertDialogState === null;
+    if (this.imageInsertDialogState) {
+      this.elImageInsertAltInput.value = this.imageInsertDialogState.request.defaultAltText;
+      this.elImageInsertModeMarkdown.checked = true;
+      this.elImageInsertModeHtml.checked = false;
+      this.elImageInsertSizeModeSelect.value = 'width';
+      this.elImageInsertSizeValueInput.value = this.imageInsertDialogState.request.intrinsicWidth
+        ? String(this.imageInsertDialogState.request.intrinsicWidth)
+        : '';
+      this.elImageInsertPositionSelect.value = 'inline';
+      this.updateImageInsertOptionControls();
+    }
     this.elMetadataDialog.hidden = !this.metadataDialogOpen;
 
     if (this.navMenuState) {
@@ -2381,7 +2648,7 @@ export class MdzipWorkspaceView {
       const file = this.elImageInput.files?.[0];
       this.elImageInput.value = '';
       if (file) {
-        void this.insertImageFile(file);
+        void this.insertImageFile(file, 'picker');
       }
     });
     this.elEditToolbar.addEventListener('keydown', (event) => {
@@ -2537,6 +2804,19 @@ export class MdzipWorkspaceView {
       });
     this.elConversionConfirmBtn.addEventListener('click', () => {
       void this.confirmMdzConversion();
+    });
+    this.elImageInsertDialog.querySelector<HTMLButtonElement>('[data-action="cancel-image-insert"]')!
+      .addEventListener('click', () => {
+        this.resolveImageInsertDialog(null);
+      });
+    this.elImageInsertConfirmBtn.addEventListener('click', () => {
+      this.resolveImageInsertDialog(this.readImageInsertDialogDecision());
+    });
+    this.elImageInsertModeMarkdown.addEventListener('change', () => this.updateImageInsertOptionControls());
+    this.elImageInsertModeHtml.addEventListener('change', () => this.updateImageInsertOptionControls());
+    this.elImageInsertSizeModeSelect.addEventListener('change', () => {
+      this.resetImageInsertSizeValue();
+      this.updateImageInsertOptionControls();
     });
 
     this.elNavMenu.addEventListener('click', (e) => {
@@ -2953,7 +3233,7 @@ export class MdzipWorkspaceView {
           editor.dispatch({ selection: { anchor: target.selectionStart } });
         }
         if (action.kind === 'image-file') {
-          await this.insertImageFile(action.file);
+          await this.insertImageFile(action.file, action.source ?? 'picker');
           return true;
         }
         this.elImageInput.click();
@@ -2981,7 +3261,7 @@ export class MdzipWorkspaceView {
       return;
     }
     if (action.kind === 'image-file') {
-      await this.insertImageFile(action.file);
+      await this.insertImageFile(action.file, action.source ?? 'picker');
       return;
     }
     this.elImageInput.click();
@@ -3007,46 +3287,181 @@ export class MdzipWorkspaceView {
           `pasted.${extension}`,
           { type: image.mimeType }
         );
-        this.requestMdzConversion({ kind: 'image-file', file: pastedFile });
+        this.requestMdzConversion({ kind: 'image-file', file: pastedFile, source: 'paste' });
         return;
       }
 
-      await this.insertImageBytes(image.bytes, image.mimeType);
+      await this.insertImageBytes(image.bytes, image.mimeType, {
+        fileName: `pasted.${extensionForMime(image.mimeType)}`,
+        source: 'paste'
+      });
     } catch (error) {
       this.options.onFailed?.(error);
     }
   }
 
-  private async insertImageFile(file: File): Promise<void> {
+  private async insertImageFile(file: File, source: MdzipImageInsertSource = 'picker'): Promise<void> {
     if (!file.type.startsWith('image/') && !/\.(png|jpe?g|gif|webp|svg)$/i.test(file.name)) {
       return;
     }
     try {
       await this.insertImageBytes(
         new Uint8Array(await file.arrayBuffer()),
-        file.type || imageMimeTypeFromFileName(file.name)
+        file.type || imageMimeTypeFromFileName(file.name),
+        { fileName: file.name, source }
       );
     } catch (error) {
       this.options.onFailed?.(error);
     }
   }
 
-  private async insertImageBytes(bytes: Uint8Array, mimeType: string): Promise<void> {
+  private async insertImageBytes(
+    bytes: Uint8Array,
+    mimeType: string,
+    options: { fileName?: string; source: MdzipImageInsertSource }
+  ): Promise<void> {
     const editor = this.cmEditor;
     if (!editor) {
       return;
     }
     const selection = editor.state.selection.main;
+    const decision = await this.resolveImageInsertDecision(bytes, mimeType, options);
+    if (!decision) {
+      return;
+    }
     const result = await this.workspace?.pasteImage({
       bytes,
       mimeType,
       selectionStart: selection.from,
-      selectionEnd: selection.to
+      selectionEnd: selection.to,
+      markdownImage: (markdownPath) => formatImageInsertMarkdown(
+        markdownPath,
+        decision,
+        editor.state.doc.toString(),
+        selection.from,
+        selection.to
+      )
     });
     if (result && this.cmEditor) {
       this.render();
       this.cmEditor.dispatch({ selection: { anchor: result.cursor } });
       this.cmEditor.focus();
+    }
+  }
+
+  private async resolveImageInsertDecision(
+    bytes: Uint8Array,
+    mimeType: string,
+    options: { fileName?: string; source: MdzipImageInsertSource }
+  ): Promise<MdzipImageInsertDecision | null> {
+    const size = sniffImageSize(bytes, mimeType);
+    const request: MdzipImageInsertRequest = {
+      fileName: options.fileName || `pasted.${extensionForMime(mimeType)}`,
+      mimeType,
+      intrinsicWidth: size?.width,
+      intrinsicHeight: size?.height,
+      defaultAltText: 'Pasted image',
+      source: options.source
+    };
+    const handler = this.options.imageInsertHandler;
+    if (handler) {
+      try {
+        const handled = await handler(request);
+        if (handled !== undefined) {
+          return normalizeImageInsertDecision(handled);
+        }
+      } catch (error) {
+        this.options.onFailed?.(error);
+        return null;
+      }
+    }
+    const mode = this.options.imageInsertMode ?? 'markdown';
+    if (mode === 'ask') {
+      return this.openImageInsertDialog(request);
+    }
+    return normalizeImageInsertDecision({
+      mode: mode === 'html' ? 'html' : 'markdown',
+      altText: request.defaultAltText,
+      width: mode === 'html' ? request.intrinsicWidth : undefined,
+      height: mode === 'html' ? request.intrinsicHeight : undefined,
+      position: 'inline'
+    });
+  }
+
+  private openImageInsertDialog(request: MdzipImageInsertRequest): Promise<MdzipImageInsertDecision | null> {
+    return new Promise((resolve) => {
+      this.resolveImageInsertDialog(null);
+      this.imageInsertDialogState = { request, resolve };
+      this.render();
+      requestAnimationFrame(() => this.elImageInsertAltInput.focus());
+    });
+  }
+
+  private resolveImageInsertDialog(decision: MdzipImageInsertDecision | null): void {
+    const state = this.imageInsertDialogState;
+    if (!state) {
+      return;
+    }
+    this.imageInsertDialogState = null;
+    this.render();
+    state.resolve(normalizeImageInsertDecision(decision));
+  }
+
+  private readImageInsertDialogDecision(): MdzipImageInsertDecision {
+    const parseDimension = (value: string): number | undefined => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : undefined;
+    };
+    const request = this.imageInsertDialogState?.request;
+    const sizeMode = this.elImageInsertSizeModeSelect.value;
+    const sizeValue = parseDimension(this.elImageInsertSizeValueInput.value);
+    let width: number | undefined;
+    let height: number | undefined;
+    if (this.elImageInsertModeHtml.checked && sizeValue) {
+      if (sizeMode === 'width') {
+        width = sizeValue;
+      } else if (sizeMode === 'height') {
+        height = sizeValue;
+      } else if (sizeMode === 'percent' && request?.intrinsicWidth && request.intrinsicHeight) {
+        width = Math.max(1, Math.round(request.intrinsicWidth * sizeValue / 100));
+        height = Math.max(1, Math.round(request.intrinsicHeight * sizeValue / 100));
+      }
+    }
+    return {
+      mode: this.elImageInsertModeHtml.checked ? 'html' : 'markdown',
+      altText: this.elImageInsertAltInput.value,
+      width,
+      height,
+      position: this.elImageInsertPositionSelect.value as MdzipImagePosition
+    };
+  }
+
+  private updateImageInsertOptionControls(): void {
+    const htmlMode = this.elImageInsertModeHtml.checked;
+    const sizeDisabled = !htmlMode || this.elImageInsertSizeModeSelect.value === 'original';
+    this.elImageInsertSizeModeSelect.disabled = !htmlMode;
+    this.elImageInsertSizeValueInput.disabled = sizeDisabled;
+    this.elImageInsertPositionSelect.disabled = !htmlMode;
+    this.elImageInsertSizeModeSelect.closest('.image-insert-field')?.classList.toggle('field-disabled', !htmlMode);
+    this.elImageInsertSizeValueInput.closest('.image-insert-field')?.classList.toggle('field-disabled', sizeDisabled);
+    this.elImageInsertPositionSelect.closest('.image-insert-field')?.classList.toggle('field-disabled', !htmlMode);
+  }
+
+  private resetImageInsertSizeValue(): void {
+    const request = this.imageInsertDialogState?.request;
+    switch (this.elImageInsertSizeModeSelect.value) {
+      case 'width':
+        this.elImageInsertSizeValueInput.value = request?.intrinsicWidth ? String(request.intrinsicWidth) : '';
+        break;
+      case 'height':
+        this.elImageInsertSizeValueInput.value = request?.intrinsicHeight ? String(request.intrinsicHeight) : '';
+        break;
+      case 'percent':
+        this.elImageInsertSizeValueInput.value = '100';
+        break;
+      default:
+        this.elImageInsertSizeValueInput.value = '';
+        break;
     }
   }
 
@@ -3096,6 +3511,9 @@ export class MdzipWorkspaceView {
       case 'blockquote':
         this.prefixSelectedLines('> ', /^(\s*)>\s?/);
         break;
+      case 'insert-line-break':
+        this.insertLineBreak();
+        break;
       case 'link':
         this.insertMarkdownLink();
         break;
@@ -3115,6 +3533,7 @@ export class MdzipWorkspaceView {
       orderedList: formatting.orderedList,
       code: formatting.inlineCode || formatting.codeBlock,
       blockquote: formatting.blockquote,
+      lineBreak: formatting.lineBreak,
       link: formatting.link,
       image: formatting.image
     };
@@ -3197,6 +3616,21 @@ export class MdzipWorkspaceView {
     editor.dispatch({
       changes: { from: selection.from, to: selection.to, insert },
       selection: { anchor, head: anchor + urlPlaceholder.length },
+      scrollIntoView: true
+    });
+    editor.focus();
+  }
+
+  private insertLineBreak(): void {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    const insert = '<br>\n';
+    editor.dispatch({
+      changes: { from: selection.from, to: selection.to, insert },
+      selection: { anchor: selection.from + insert.length },
       scrollIntoView: true
     });
     editor.focus();
@@ -3735,7 +4169,7 @@ export class MdzipWorkspaceView {
   private async handleEditorImageDrop(file: File, x: number, y: number): Promise<void> {
     try {
       if (this.workspace?.sourceFormat === 'markdown') {
-        this.requestMdzConversion({ kind: 'image-file', file });
+        this.requestMdzConversion({ kind: 'image-file', file, source: 'drop' });
         return;
       }
       const editor = this.cmEditor;
@@ -3745,7 +4179,7 @@ export class MdzipWorkspaceView {
           editor.dispatch({ selection: { anchor: pos } });
         }
       }
-      await this.insertImageFile(file);
+      await this.insertImageFile(file, 'drop');
     } catch (error) {
       this.options.onFailed?.(error);
     }
@@ -3973,6 +4407,7 @@ function hasFormattingControls(policy: MdzipResolvedFormattingControlPolicy): bo
     || policy.inlineCode
     || policy.codeBlock
     || policy.blockquote
+    || policy.lineBreak
     || policy.link
     || policy.image;
 }
@@ -3993,6 +4428,8 @@ function markdownCommandFromToolbarFormat(format: string): MdzipEditorCommand | 
     case 'code-block':
     case 'link':
       return format;
+    case 'line-break':
+      return 'insert-line-break';
     case 'strike':
       return 'strikethrough';
     case 'code':
@@ -4020,6 +4457,89 @@ function imageMimeTypeFromFileName(fileName: string): string {
     default:
       return 'image/png';
   }
+}
+
+function normalizeImageInsertDecision(
+  decision: MdzipImageInsertDecision | null | undefined
+): MdzipImageInsertDecision | null {
+  if (!decision) {
+    return null;
+  }
+  const normalizeDimension = (value: number | undefined): number | undefined =>
+    value !== undefined && Number.isFinite(value) && value > 0
+      ? Math.round(value)
+      : undefined;
+  return {
+    mode: decision.mode === 'html' ? 'html' : 'markdown',
+    altText: decision.altText ?? '',
+    width: normalizeDimension(decision.width),
+    height: normalizeDimension(decision.height),
+    position: normalizeImagePosition(decision.position)
+  };
+}
+
+function normalizeImagePosition(position: MdzipImagePosition | undefined): MdzipImagePosition {
+  switch (position) {
+    case 'left':
+    case 'center':
+    case 'right':
+    case 'wrap-left':
+    case 'wrap-right':
+      return position;
+    default:
+      return 'inline';
+  }
+}
+
+function formatImageInsertMarkdown(
+  markdownPath: string,
+  decision: MdzipImageInsertDecision,
+  currentText = '',
+  selectionStart = 0,
+  selectionEnd = selectionStart
+): string {
+  if (decision.mode === 'html') {
+    const attrs = [
+      `src="${escapeHtml(markdownPath)}"`,
+      `alt="${escapeHtml(decision.altText)}"`
+    ];
+    if (decision.width) {
+      attrs.push(`width="${decision.width}"`);
+    }
+    if (decision.height) {
+      attrs.push(`height="${decision.height}"`);
+    }
+    if (decision.position === 'wrap-left' || decision.position === 'wrap-right') {
+      attrs.push(`align="${decision.position === 'wrap-left' ? 'left' : 'right'}"`);
+    }
+    const image = `<img ${attrs.join(' ')}>`;
+    if (decision.position === 'left' || decision.position === 'center' || decision.position === 'right') {
+      return padHtmlImageBlock(`<p align="${decision.position}">${image}</p>`, currentText, selectionStart, selectionEnd);
+    }
+    return padHtmlImageBlock(image, currentText, selectionStart, selectionEnd);
+  }
+  return `![${escapeMarkdownImageAlt(decision.altText)}](${markdownPath})`;
+}
+
+function padHtmlImageBlock(
+  html: string,
+  currentText: string,
+  selectionStart: number,
+  selectionEnd: number
+): string {
+  const before = currentText.slice(0, Math.max(0, selectionStart));
+  const after = currentText.slice(Math.max(selectionStart, selectionEnd));
+  const prefix = before.length === 0 || before.endsWith('\n\n')
+    ? ''
+    : before.endsWith('\n') ? '\n' : '\n\n';
+  const suffix = after.startsWith('\n\n')
+    ? ''
+    : after.startsWith('\n') ? '\n' : '\n\n';
+  return `${prefix}${html}${suffix}`;
+}
+
+function escapeMarkdownImageAlt(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/]/g, '\\]');
 }
 
 function formatMetadataValue(value: unknown): string {
@@ -4087,6 +4607,7 @@ const SHELL_HTML = `
             </div>
           </div>
           <button type="button" data-format="quote" data-format-control="blockquote" title="Blockquote" aria-label="Blockquote">${QUOTE_ICON_HTML}</button>
+          <button type="button" data-format="line-break" data-format-control="lineBreak" title="Line break" aria-label="Line break">${LINE_BREAK_ICON_HTML}</button>
         </div>
         <span class="edit-toolbar-divider" aria-hidden="true"></span>
         <div class="edit-toolbar-group">
@@ -4189,6 +4710,61 @@ const SHELL_HTML = `
       <div class="title-dialog-actions">
         <button type="button" data-action="cancel-conversion">Cancel</button>
         <button type="button" class="save-title" data-ref="conversion-confirm-btn">Convert</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="title-dialog-backdrop" data-ref="image-insert-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-image-insert-dialog-heading">
+    <div class="title-dialog image-insert-dialog">
+      <h3 id="mdzip-image-insert-dialog-heading">Insert Image</h3>
+      <p>Choose the Markdown inserted for this image.</p>
+      <fieldset class="image-insert-options">
+        <legend>Output</legend>
+        <label>
+          <input type="radio" name="mdzip-image-insert-mode" value="markdown"
+            data-ref="image-insert-mode-markdown" checked />
+          Markdown image
+        </label>
+        <label>
+          <input type="radio" name="mdzip-image-insert-mode" value="html"
+            data-ref="image-insert-mode-html" />
+          HTML &lt;img&gt; with sizing
+        </label>
+      </fieldset>
+      <label class="image-insert-field">
+        <span>Alt text</span>
+        <input type="text" data-ref="image-insert-alt" />
+      </label>
+      <div class="image-insert-grid">
+        <label class="image-insert-field">
+          <span>Size by</span>
+          <select data-ref="image-insert-size-mode">
+            <option value="original">Original size</option>
+            <option value="width" selected>Width</option>
+            <option value="height">Height</option>
+            <option value="percent">Percent</option>
+          </select>
+        </label>
+        <label class="image-insert-field">
+          <span>Value</span>
+          <input type="number" min="1" step="1" data-ref="image-insert-size-value" />
+        </label>
+      </div>
+      <label class="image-insert-field">
+        <span>Position</span>
+        <select data-ref="image-insert-position">
+          <option value="inline">Inline/default</option>
+          <option value="left">Left</option>
+          <option value="center">Center</option>
+          <option value="right">Right</option>
+          <option value="wrap-left">Wrap left</option>
+          <option value="wrap-right">Wrap right</option>
+        </select>
+      </label>
+      <div class="title-dialog-actions">
+        <button type="button" data-action="cancel-image-insert">Cancel</button>
+        <button type="button" class="save-title" data-ref="image-insert-confirm-btn">Insert</button>
       </div>
     </div>
   </div>

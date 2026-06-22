@@ -1,11 +1,33 @@
 # Changelog
 
-## [Unreleased]
+## [1.3.12] - 2026-06-19
 
 ### Added
 - `MdzipWorkspaceComponent.setColorScheme(scheme)` forwards to the live editor
   view so Angular hosts can retheme without recreating the workspace (issue
   #15).
+- `MdzipWorkspaceView` now accepts
+  `imageHydrationAnimation: 'auto' | 'initial' | 'off'` and exposes
+  `setImageHydrationAnimation()`, with matching Angular, React, and Vue
+  inputs/props. Live-editing hosts can keep the first-load progressive image
+  reveal while snapping images open on same-document edits (issue #19).
+- `MdzipWorkspaceView.setControls()` updates the live control policy without
+  rebuilding the workspace view. Line-number gutter changes are reconfigured in
+  the existing CodeMirror editor, preserving document text and selection; the
+  Angular, React, and Vue wrappers now route `controls` changes through this
+  in-place path (issue #23).
+- Image insertion can now be customized with `imageInsertHandler`, allowing
+  hosts to return Markdown, sized/aligned HTML, or `null` to cancel. The
+  built-in fallback also supports `imageInsertMode: 'markdown' | 'ask' |
+  'html'`, and the browser demo exposes the modes for testing (issue #21).
+- Added an `insert-line-break` editor command and toolbar control for inserting
+  explicit `<br>` hard breaks when authors want visible blank space in rendered
+  Markdown.
+- Added `toolbarDensity` and `contentDensity` options, matching wrapper
+  inputs/props, and stable `--mdzip-toolbar-*`, `--mdzip-format-*`,
+  `--mdzip-editor-content-padding`, and `--mdzip-preview-content-padding` CSS
+  variables so hosts can compact the embedded UI without private class
+  overrides (issue #20).
 
 ### Fixed
 - The Link toolbar command now selects only the inserted `url` placeholder, so
@@ -13,8 +35,15 @@
 - The package navigation tree pins the active entry point and `manifest.json`
   ahead of other root files, including archives whose asset names sort before
   `index.md` (issue #18).
-- Nested navigation guide lines now draw continuous ancestor rails instead of
-  disconnected per-row verticals at deeper folder levels (issue #16).
+- Navigation tree guide lines are now drawn as per-row indent guides (one cell
+  per ancestor depth) instead of container-spanning rails. This fixes rails
+  overshooting past an expanded last subfolder, padding-induced gaps between
+  rows, and connector overlap with the disclosure triangle; rails also align
+  under the parent folder icon at every depth (issue #16).
+- The browser demo now keeps the first-load preview image hydration animation
+  but snaps images open during same-document live edits, and includes a Line
+  numbers toggle that updates JS, Angular, React, and Vue tabs without reopening
+  the document.
 
 ## [1.3.11] - 2026-06-15
 

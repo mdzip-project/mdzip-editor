@@ -5,6 +5,7 @@ import { PACKAGE_INFO } from './package-info.js';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
+  MdzipContentDensity,
   MdzipColorScheme,
   MdzipConversionAction,
   MdzipConversionContext,
@@ -13,11 +14,15 @@ import type {
   MdzipEditorSnapshot,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
+  MdzipImageHydrationAnimation,
+  MdzipImageInsertHandler,
+  MdzipImageInsertMode,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
   MdzipNavigationMode,
   MdzipRemoveAssetOptions,
   MdzipSourceFormat,
+  MdzipToolbarDensity,
   MdzipWorkspaceChange,
   MdzipWorkspaceLayout,
   MdzipWorkspaceMode,
@@ -117,6 +122,11 @@ export interface MdzipWorkspaceProps {
   mode?: MdzipWorkspaceMode;
   sourceFormat?: MdzipSourceFormat;
   controls?: MdzipControlPreset | MdzipControlPolicy;
+  toolbarDensity?: MdzipToolbarDensity;
+  contentDensity?: MdzipContentDensity;
+  imageHydrationAnimation?: MdzipImageHydrationAnimation;
+  imageInsertMode?: MdzipImageInsertMode;
+  imageInsertHandler?: MdzipImageInsertHandler;
   initialLayout?: MdzipWorkspaceLayout;
   initialColorScheme?: MdzipColorScheme;
   navigationMode?: MdzipNavigationMode;
@@ -195,6 +205,11 @@ function MdzipWorkspace({
   mode = 'read-only',
   sourceFormat,
   controls = 'viewer',
+  toolbarDensity,
+  contentDensity,
+  imageHydrationAnimation,
+  imageInsertMode,
+  imageInsertHandler,
   initialLayout,
   initialColorScheme,
   navigationMode,
@@ -247,6 +262,7 @@ function MdzipWorkspace({
     onAssetsHydrated,
     onFailed,
     onConversionRequested,
+    imageInsertHandler,
   });
   callbacksRef.current = {
     onChanged,
@@ -264,10 +280,14 @@ function MdzipWorkspace({
     onAssetsHydrated,
     onFailed,
     onConversionRequested,
+    imageInsertHandler,
   };
 
   const contentRef = useRef({ bytes, workspace, mode, sourceFormat, fileName });
   contentRef.current = { bytes, workspace, mode, sourceFormat, fileName };
+
+  const controlsRef = useRef({ controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode });
+  controlsRef.current = { controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode };
 
   // Latest rendering props, read at view-create and apply time so prop
   // identity changes alone never rebuild the workspace view.
@@ -318,7 +338,11 @@ function MdzipWorkspace({
     if (!ref.current) return;
     const view = new MdzipWorkspaceView(ref.current, {
       libraries: [PACKAGE_INFO],
-      controls,
+      controls: controlsRef.current.controls,
+      toolbarDensity: controlsRef.current.toolbarDensity,
+      contentDensity: controlsRef.current.contentDensity,
+      imageHydrationAnimation: controlsRef.current.imageHydrationAnimation,
+      imageInsertMode: controlsRef.current.imageInsertMode,
       initialLayout,
       initialColorScheme,
       navigationMode,
@@ -341,6 +365,8 @@ function MdzipWorkspace({
       // hook at all, so the always-present delegate is behavior-preserving.
       onConversionRequested: (action, context) =>
         callbacksRef.current.onConversionRequested?.(action, context) ?? false,
+      imageInsertHandler: (request) =>
+        callbacksRef.current.imageInsertHandler?.(request),
       markdownRenderer: renderingRef.current.markdownRenderer,
       markdownExtensions: renderingRef.current.markdownExtensions,
       entryRenderers: composeEntryRenderers(
@@ -368,12 +394,31 @@ function MdzipWorkspace({
     }
     return () => { view.destroy(); viewRef.current = null; };
   }, [
-    controls,
     initialLayout,
     initialColorScheme,
     navigationMode,
     navigationButtonActive
   ]);
+
+  useEffect(() => {
+    viewRef.current?.setControls(controls);
+  }, [controls]);
+
+  useEffect(() => {
+    viewRef.current?.setDensityOptions({ toolbarDensity, contentDensity });
+  }, [toolbarDensity, contentDensity]);
+
+  useEffect(() => {
+    viewRef.current?.setImageHydrationAnimation(imageHydrationAnimation);
+  }, [imageHydrationAnimation]);
+
+  useEffect(() => {
+    viewRef.current?.setImageInsertOptions({
+      imageInsertMode,
+      imageInsertHandler: (request) =>
+        callbacksRef.current.imageInsertHandler?.(request),
+    });
+  }, [imageInsertMode, imageInsertHandler]);
 
   useEffect(() => {
     if (viewRef.current && workspace) {

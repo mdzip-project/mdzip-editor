@@ -22,6 +22,20 @@ import {
 
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+async function waitFor(assertion, attempts = 20) {
+  let lastError;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await flushMicrotasks();
+    }
+  }
+  throw lastError;
+}
+
 function renderContext(overrides = {}) {
   return {
     currentPath: 'index.md',
@@ -548,6 +562,115 @@ test('progressively hydrates archive images: text first, then sized swap-in', as
     assert.equal(image.getAttribute('width'), '1');
     assert.equal(image.getAttribute('height'), '1');
     assert.equal(slot.classList.contains('mdzip-image-open'), true, 'slot opens after resolve');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('progressive image hydration preserves legacy wrap alignment', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'viewer',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle(
+      '# Title\n\n<img src="images/logo.png" alt="Logo" align="left">Wrapped text.\n',
+      'Demo',
+      [{ archivePath: 'images/logo.png', fileBytes: PNG_1X1 }]
+    );
+    await view.open(bytes, { mode: 'read-only', fileName: 'demo.mdz' });
+
+    const image = container.querySelector('[data-ref="preview-content"] img');
+    assert.ok(image, 'image element is in the mounted preview');
+    const slot = image.parentElement;
+    assert.equal(slot.classList.contains('mdzip-image-slot'), true);
+    assert.equal(slot.classList.contains('mdzip-image-align-left'), true);
+
+    await view.whenRendered();
+    assert.match(image.getAttribute('src') ?? '', /^(data:image|blob:)/);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('image hydration animation can be disabled for live editing', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'viewer',
+    imageHydrationAnimation: 'off',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle(
+      '# Title\n\n![logo](images/logo.png)\n',
+      'Demo',
+      [{ archivePath: 'images/logo.png', fileBytes: PNG_1X1 }]
+    );
+    await view.open(bytes, { mode: 'read-only', fileName: 'demo.mdz' });
+
+    const image = container.querySelector('[data-ref="preview-content"] img');
+    assert.ok(image, 'image element is mounted immediately');
+    const slot = image.parentElement;
+    assert.equal(slot.classList.contains('mdzip-image-slot'), true);
+    assert.equal(slot.classList.contains('mdzip-image-open'), true, 'slot is opened immediately');
+    assert.equal(slot.classList.contains('mdzip-image-animation-off'), true);
+    assert.equal(image.classList.contains('mdzip-image-loading'), false, 'pulse class is not applied');
+
+    await view.whenRendered();
+    assert.match(image.getAttribute('src') ?? '', /^(data:image|blob:)/);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('image hydration animation can run only for initial document load', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'viewer',
+    imageHydrationAnimation: 'initial',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle(
+      '# Title\n\n![logo](images/logo.png)\n',
+      'Demo',
+      [{ archivePath: 'images/logo.png', fileBytes: PNG_1X1 }]
+    );
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+
+    await waitFor(() => {
+      assert.ok(container.querySelector('[data-ref="preview-content"] img'), 'image element is mounted on initial load');
+    });
+    const firstImage = container.querySelector('[data-ref="preview-content"] img');
+    const firstSlot = firstImage.parentElement;
+    assert.equal(firstImage.classList.contains('mdzip-image-loading'), true);
+    assert.equal(firstSlot.classList.contains('mdzip-image-open'), false, 'initial slot starts collapsed');
+    await view.whenRendered();
+
+    view.workspace.editText('# Title\n\n![logo](images/logo.png)\n\nTyping update');
+
+    await waitFor(() => {
+      const text = container.querySelector('[data-ref="preview-content"]')?.textContent ?? '';
+      assert.match(text, /Typing update/);
+    });
+
+    const editedImage = container.querySelector('[data-ref="preview-content"] img');
+    assert.ok(editedImage, 'image element remains in the edited preview');
+    const editedSlot = editedImage.parentElement;
+    assert.equal(editedSlot.classList.contains('mdzip-image-slot'), true);
+    assert.equal(editedSlot.classList.contains('mdzip-image-open'), true, 'edited slot opens immediately');
+    assert.equal(editedSlot.classList.contains('mdzip-image-animation-off'), true);
+    assert.equal(editedImage.classList.contains('mdzip-image-loading'), false, 'edit render does not pulse');
   } finally {
     view.destroy();
     container.remove();

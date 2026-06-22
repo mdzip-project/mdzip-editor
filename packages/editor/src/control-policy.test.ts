@@ -29,6 +29,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.orphanActions).toBe(false);
     expect(policy.fileActions).toBe(false);
     expect(policy.formatting.bold).toBe(false);
+    expect(policy.formatting.lineBreak).toBe(false);
   });
 
   it('resolves the standalone-editor preset (all controls, including save)', () => {
@@ -42,6 +43,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.orphanActions).toBe(true);
     expect(policy.fileActions).toBe(true);
     expect(policy.formatting.bold).toBe(true);
+    expect(policy.formatting.lineBreak).toBe(true);
     expect(policy.formatting.headings).toEqual([1, 2, 3, 4, 5, 6]);
   });
 

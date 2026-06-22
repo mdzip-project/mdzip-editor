@@ -5,14 +5,17 @@
 
 # mdzip-editor
 
-Reusable JavaScript, Angular, React, and Vue workspace packages for MDZip files.
+[![@mdzip/editor on npm](https://img.shields.io/npm/v/@mdzip/editor?logo=npm&label=%40mdzip%2Feditor)](https://www.npmjs.com/package/@mdzip/editor)
+[![license](https://img.shields.io/npm/l/@mdzip/editor)](LICENSE)
+
+Reusable JavaScript, Angular, React, and Vue workspace packages for Markdown and MDZip files.
 
 ## Packages
 
-* `@mdzip/editor` is the framework-independent workspace engine built on `@mdzip/core-js`.
-* `@mdzip/editor-ng` is the Angular component wrapper for the workspace engine.
-* `@mdzip/editor-react` is the React component wrapper.
-* `@mdzip/editor-vue` is the Vue 3 component wrapper.
+* [![npm](https://img.shields.io/npm/v/@mdzip/editor)](https://www.npmjs.com/package/@mdzip/editor) `@mdzip/editor` is the framework-independent workspace engine built on `@mdzip/core-js`.
+* [![npm](https://img.shields.io/npm/v/@mdzip/editor-ng)](https://www.npmjs.com/package/@mdzip/editor-ng) `@mdzip/editor-ng` is the Angular component wrapper for the workspace engine.
+* [![npm](https://img.shields.io/npm/v/@mdzip/editor-react)](https://www.npmjs.com/package/@mdzip/editor-react) `@mdzip/editor-react` is the React component wrapper.
+* [![npm](https://img.shields.io/npm/v/@mdzip/editor-vue)](https://www.npmjs.com/package/@mdzip/editor-vue) `@mdzip/editor-vue` is the Vue 3 component wrapper.
 * `demo` is a browser application with raw JS, Angular, React, and Vue tabs that proves the packages run outside VS Code.
 
 ## Development

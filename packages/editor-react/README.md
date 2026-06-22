@@ -5,6 +5,9 @@
 
 # @mdzip/editor-react
 
+[![npm](https://img.shields.io/npm/v/@mdzip/editor-react?logo=npm)](https://www.npmjs.com/package/@mdzip/editor-react)
+[![license](https://img.shields.io/npm/l/@mdzip/editor-react)](https://github.com/mdzip-project/mdzip-editor/blob/main/LICENSE)
+
 React component wrapper for the MDZip workspace editor.
 
 `@mdzip/editor-react` provides a `MdzipWorkspace` component that embeds the full MDZip workspace UI — document preview, editor, package navigator, and asset manager — as a native React component.
@@ -84,6 +87,9 @@ showUnchanged? }`) to opt any of them out.
 | `mode` | `MdzipWorkspaceMode` | `'read-only'` | `'read-only'` or `'editable'` |
 | `sourceFormat` | `MdzipSourceFormat` | — | Override format detection: `'mdz'` or `'markdown'` |
 | `controls` | `MdzipControlPreset \| MdzipControlPolicy` | `'viewer'` | `'preview'`, `'viewer'`, `'standalone-editor'`, `'hosted-editor'`, or a policy object |
+| `toolbarDensity` | `'comfortable' \| 'compact' \| 'dense'` | `'comfortable'` | Semantic sizing preset for built-in toolbar controls |
+| `contentDensity` | `'comfortable' \| 'compact'` | `'comfortable'` | Semantic padding preset for editor and preview content |
+| `imageHydrationAnimation` | `'auto' \| 'initial' \| 'off'` | `'auto'` | Control preview image reveal animation: every render, first render per document path, or never |
 | `initialLayout` | `MdzipWorkspaceLayout` | — | Starting layout: `'preview'`, `'editor'`, `'split'` |
 | `initialColorScheme` | `MdzipColorScheme` | — | `'light'` or `'dark'` |
 | `navigationMode` | `MdzipNavigationMode` | — | Package navigation mode |
@@ -94,9 +100,10 @@ showUnchanged? }`) to opt any of them out.
 | `renderEntry` | `(context) => ReactNode \| undefined` | — | Catch-all entry renderer: return a node to claim the selected entry, `undefined` to delegate |
 | `renderEntryPriority` | `number` | `0` | Matching priority of `renderEntry` relative to `entryRenderers` |
 
-Rendering prop changes apply in place — they never recreate the workspace
-view. See the `@mdzip/editor` Rendering Extensibility docs for the contracts
-and lifecycle rules.
+`controls`, density, `imageHydrationAnimation`, and rendering prop changes apply in
+place — they never recreate the workspace view. Line-number visibility changes
+preserve the current CodeMirror document and selection. See the `@mdzip/editor`
+Rendering Extensibility docs for the contracts and lifecycle rules.
 
 ### Native entry rendering
 
@@ -134,6 +141,13 @@ re-mount), and unmounts on selection change.
 | `onAssetsHydrated` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called once the mounted preview's images have loaded |
 | `onFailed` | `(error: unknown) => void` | Called on unrecoverable errors |
 | `onConversionRequested` | `(action: MdzipConversionAction) => boolean \| Promise<boolean>` | Host hook for the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog |
+
+## Image insertion
+
+Use `imageInsertMode="markdown"`, `"ask"`, or `"html"` for the built-in image
+markup flow. Pass `imageInsertHandler` for host-owned image UI; the handler can
+return Markdown or HTML sizing/alignment settings, return `null` to cancel, or
+return `undefined` to fall back to `imageInsertMode`.
 
 ## File management (nav pane)
 

@@ -77,6 +77,27 @@
     }
 
     .demo-controls input[type="file"] { display: none; }
+
+    .demo-controls select {
+      font: inherit;
+      font-size: 12px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    .demo-controls .check-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      user-select: none;
+    }
+
+    .demo-controls .check-control input {
+      margin: 0;
+    }
+
     .mode-label { font-size: 12px; font-weight: 500; color: #57606a; user-select: none; }
     #mode-desc { font-size: 12px; color: #57606a; white-space: nowrap; }
     #status { color: #57606a; font-size: 12px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -122,6 +143,19 @@
     <span id="mode-desc"></span>
 
     <div class="demo-controls">
+      <label class="check-control">
+        <input type="checkbox" id="line-numbers-toggle" checked />
+        Line numbers
+      </label>
+      <label>
+        Image insert
+        <select id="image-insert-mode">
+          <option value="markdown">Markdown</option>
+          <option value="ask">Ask</option>
+          <option value="html">HTML</option>
+          <option value="host-html">Host HTML</option>
+        </select>
+      </label>
       <label>Open .mdz or .md <input type="file" id="file-input" accept=".mdz,.md,.markdown" /></label>
       <span id="status">Loading sample...</span>
     </div>

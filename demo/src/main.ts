@@ -1,6 +1,7 @@
 import { initRaw } from './tabs/raw.js';
-import { PRESETS } from './tab-controls.js';
+import { imageInsertOptionsFromChoice, PRESETS, type DemoImageInsertChoice } from './tab-controls.js';
 import type { MdzipControlPreset } from 'mdzip-editor';
+import type { DemoControls } from './tab-controls.js';
 import type { TabController } from './tab-controller.js';
 
 type TabId = 'raw' | 'diff' | 'angular' | 'react' | 'vue';
@@ -9,6 +10,8 @@ let activeTab: TabId = 'raw';
 let currentBytes: Uint8Array | null = null;
 let currentFileName = 'sample.mdz';
 let currentControls: MdzipControlPreset = 'standalone-editor';
+let currentLineNumbers = true;
+let currentImageInsertChoice: DemoImageInsertChoice = 'markdown';
 
 const controllers = new Map<TabId, TabController>();
 const pendingControllers = new Map<TabId, Promise<TabController>>();
@@ -23,6 +26,25 @@ function updateModeUI(): void {
   });
   const preset = PRESETS.find(p => p.value === currentControls);
   document.getElementById('mode-desc')!.textContent = preset?.description ?? '';
+  const lineNumbersToggle = document.getElementById('line-numbers-toggle') as HTMLInputElement | null;
+  if (lineNumbersToggle) {
+    lineNumbersToggle.checked = currentLineNumbers;
+  }
+  const imageInsertSelect = document.getElementById('image-insert-mode') as HTMLSelectElement | null;
+  if (imageInsertSelect) {
+    imageInsertSelect.value = currentImageInsertChoice;
+  }
+}
+
+function currentControlPolicy(): DemoControls {
+  return {
+    preset: currentControls,
+    lineNumbers: currentLineNumbers,
+  };
+}
+
+function currentImageInsertOptions() {
+  return imageInsertOptionsFromChoice(currentImageInsertChoice);
 }
 
 function onSaved(bytes: Uint8Array, fileName?: string): void {
@@ -86,7 +108,7 @@ async function switchTab(newTab: TabId): Promise<void> {
   try {
     const ctrl = await getOrInitTab(newTab);
     if (currentBytes) {
-      ctrl.update(currentBytes, currentFileName, currentControls);
+      ctrl.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions());
       setStatus(`${newTab} - ${currentFileName}`);
     }
   } catch (err) {
@@ -99,7 +121,7 @@ async function loadBytes(bytes: Uint8Array, fileName: string): Promise<void> {
   currentBytes = bytes;
   currentFileName = fileName;
   if (controllers.has(activeTab)) {
-    controllers.get(activeTab)!.update(bytes, fileName, currentControls);
+    controllers.get(activeTab)!.update(bytes, fileName, currentControlPolicy(), currentImageInsertOptions());
   }
 }
 
@@ -114,9 +136,23 @@ document.querySelectorAll<HTMLElement>('#mode-group .tab-btn').forEach(btn => {
     currentControls = btn.dataset['preset'] as MdzipControlPreset;
     updateModeUI();
     if (currentBytes && controllers.has(activeTab)) {
-      controllers.get(activeTab)!.update(currentBytes, currentFileName, currentControls);
+      controllers.get(activeTab)!.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions());
     }
   });
+});
+
+document.getElementById('line-numbers-toggle')!.addEventListener('change', (event) => {
+  currentLineNumbers = (event.currentTarget as HTMLInputElement).checked;
+  updateModeUI();
+  controllers.get(activeTab)?.setControls(currentControlPolicy());
+});
+
+document.getElementById('image-insert-mode')!.addEventListener('change', (event) => {
+  currentImageInsertChoice = (event.currentTarget as HTMLSelectElement).value as DemoImageInsertChoice;
+  updateModeUI();
+  controllers.get(activeTab)?.setImageInsertOptions(currentImageInsertOptions());
+  const label = currentImageInsertChoice === 'host-html' ? 'host HTML hook' : currentImageInsertChoice;
+  setStatus(`Image insert: ${label}.`);
 });
 
 // File open

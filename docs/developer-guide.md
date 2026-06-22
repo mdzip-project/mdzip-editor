@@ -73,6 +73,7 @@ const controls = {
     orderedList: true,
     inlineCode: true,
     blockquote: true,
+    lineBreak: true,
     link: true
   },
   save: false,
@@ -101,6 +102,17 @@ For plain-markdown sources, the `onConversionRequested(action)` option lets a
 host take over the markdown→MDZ conversion flow (nav button, Insert Image, or
 image paste/drop): return or resolve `true` to suppress the built-in dialog.
 
+Image insertion can also be customized directly. `imageInsertMode` controls the
+built-in markup flow (`'markdown'`, `'html'`, or `'ask'`), while
+`imageInsertHandler(request)` lets a host return Markdown, sized/aligned HTML,
+`null` to cancel, or `undefined` to fall back to the built-in mode. The demo
+page includes an Image insert selector so the default, ask dialog, and host
+hook paths can be tested without writing a separate host app.
+The built-in dialog asks for width, height, or percent scaling and preserves
+aspect ratio instead of asking for width and height independently.
+The built-in HTML path uses portable `align` attributes for positioning because
+the default preview sanitizer strips inline `style` attributes.
+
 Broad boolean forms remain supported:
 
 ```ts
@@ -120,6 +132,42 @@ Its information button shows the source filename, format, displayed title,
 first Markdown heading, package timestamps, and entry point. The existing
 `title.visible` and `title.editable` settings control this strip and its
 click-to-edit title behavior.
+
+Controls can also be changed after construction with `view.setControls()`.
+The view updates its toolbar and layout policy in place; `lineNumbers` changes
+reconfigure the existing CodeMirror editor, preserving the current document and
+selection. Angular, React, and Vue wrapper `controls` changes use the same
+in-place path.
+
+Hosts that need a denser embedded surface can use semantic density options
+instead of private class overrides:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls,
+  toolbarDensity: 'compact', // 'comfortable' | 'compact' | 'dense'
+  contentDensity: 'compact'  // 'comfortable' | 'compact'
+});
+
+view.setDensityOptions({ toolbarDensity: 'dense', contentDensity: 'compact' });
+```
+
+The same settings are available as Angular inputs and React/Vue props. For
+exact sizing, set stable CSS variables on an ancestor of the workspace:
+
+```css
+.hosted-editor {
+  --mdzip-toolbar-button-size: 28px;
+  --mdzip-toolbar-compact-button-size: 26px;
+  --mdzip-toolbar-icon-size: 14px;
+  --mdzip-format-button-size: 26px;
+  --mdzip-format-icon-size: 14px;
+  --mdzip-toolbar-padding: 2px 8px;
+  --mdzip-toolbar-gap: 4px;
+  --mdzip-editor-content-padding: 16px 20px;
+  --mdzip-preview-content-padding: 16px 20px 24px;
+}
+```
 
 ## Raw Browser API
 
@@ -222,6 +270,31 @@ Use `navigationMode: 'host'` when the application supplies its own document and
 asset navigation. Use `navigationMode: 'none'` when neither the editor nor host
 should display package navigation.
 
+## Preview Lifecycle
+
+Use `onPreviewRendered`, `onAssetsHydrated`, or `whenRendered()` when a host
+needs to reveal a preview only after the current render is ready:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls: 'preview',
+  onPreviewRendered: (snapshot) => { /* preview HTML is mounted */ },
+  onAssetsHydrated: (snapshot) => { /* images are resolved */ }
+});
+
+await view.whenRendered();
+```
+
+Archive images hydrate progressively: preview text mounts first, image slots
+reserve space from sniffed dimensions, and resolved images are swapped in as
+their bytes arrive. In live-editing hosts where repeating that reveal on every
+keystroke is noisy, pass `imageHydrationAnimation: 'initial'` or update it
+later with `view.setImageHydrationAnimation('initial')`. The first render for a
+document path still animates, while same-document text edits snap image slots
+open immediately. Use `'off'` to disable the loading pulse and slide animation
+entirely. Angular, React, and Vue expose the same setting as
+`imageHydrationAnimation`.
+
 ## Custom Host Toolbars
 
 Control visibility and command availability are intentionally separate. A host
@@ -262,8 +335,8 @@ boldButton.disabled = !view.canExecuteCommand('bold');
 
 Supported commands are `bold`, `italic`, `strikethrough`, `paragraph`,
 `heading-1` through `heading-6`, `bullet-list`, `ordered-list`, `inline-code`,
-`code-block`, `blockquote`, `link`, and `insert-image`. Calling
-`insert-image` without a `File` opens the built-in image file picker.
+`code-block`, `blockquote`, `insert-line-break`, `link`, and `insert-image`.
+Calling `insert-image` without a `File` opens the built-in image file picker.
 
 ## Angular
 

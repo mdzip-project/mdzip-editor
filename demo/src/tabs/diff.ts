@@ -1,5 +1,5 @@
 import { MdzipDiffView } from 'mdzip-editor/diff-view';
-import type { MdzipControlPreset } from 'mdzip-editor';
+import type { DemoControls, DemoImageInsertOptions } from '../tab-controls.js';
 import type { TabController } from '../tab-controller.js';
 
 export async function initDiff(
@@ -12,7 +12,7 @@ export async function initDiff(
   let view: MdzipDiffView | null = null;
 
   return {
-    update(bytes: Uint8Array, fileName: string, _controls: MdzipControlPreset): void {
+    update(bytes: Uint8Array, fileName: string, _controls: DemoControls, _imageInsert: DemoImageInsertOptions): void {
       const options = {
         before: { bytes: baseBytes, label: 'sample.mdz' },
         after: { bytes, label: fileName },
@@ -24,6 +24,8 @@ export async function initDiff(
       }
       void view.open(options);
     },
+    setControls(_controls: DemoControls): void {},
+    setImageInsertOptions(_imageInsert: DemoImageInsertOptions): void {},
     markPersisted(): void {},
     destroy(): void {
       view?.destroy();

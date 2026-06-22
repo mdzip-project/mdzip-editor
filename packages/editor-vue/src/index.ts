@@ -21,6 +21,7 @@ import { PACKAGE_INFO } from './package-info.js';
 import type {
   MdzipControlPolicy,
   MdzipControlPreset,
+  MdzipContentDensity,
   MdzipColorScheme,
   MdzipConversionAction,
   MdzipConversionContext,
@@ -30,11 +31,15 @@ import type {
   MdzipEntryRenderer,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
+  MdzipImageHydrationAnimation,
+  MdzipImageInsertHandler,
+  MdzipImageInsertMode,
   MdzipWorkspaceLayout,
   MdzipWorkspaceMode,
   MdzipNavigationMode,
   MdzipRemoveAssetOptions,
   MdzipSourceFormat,
+  MdzipToolbarDensity,
   MdzWorkspace,
   MdzWorkspaceAsset,
   MdzipWorkspaceSnapshot,
@@ -113,6 +118,11 @@ export const MdzipWorkspace = defineComponent({
       type: [String, Object] as PropType<MdzipControlPreset | MdzipControlPolicy>,
       default: 'viewer'
     },
+    toolbarDensity: String as PropType<MdzipToolbarDensity>,
+    contentDensity: String as PropType<MdzipContentDensity>,
+    imageHydrationAnimation: String as PropType<MdzipImageHydrationAnimation>,
+    imageInsertMode: String as PropType<MdzipImageInsertMode>,
+    imageInsertHandler: Function as PropType<MdzipImageInsertHandler>,
     initialLayout: String as PropType<MdzipWorkspaceLayout>,
     initialColorScheme: String as PropType<MdzipColorScheme>,
     navigationMode: {
@@ -257,6 +267,10 @@ export const MdzipWorkspace = defineComponent({
       view = new MdzipWorkspaceView(hostRef.value, {
         libraries: [PACKAGE_INFO],
         controls: props.controls,
+        toolbarDensity: props.toolbarDensity,
+        contentDensity: props.contentDensity,
+        imageHydrationAnimation: props.imageHydrationAnimation,
+        imageInsertMode: props.imageInsertMode,
         initialLayout: props.initialLayout,
         initialColorScheme: props.initialColorScheme,
         navigationMode: props.navigationMode,
@@ -276,6 +290,7 @@ export const MdzipWorkspace = defineComponent({
         onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => emit('assetsHydrated', snapshot),
         onFailed: (e: unknown) => emit('failed', e),
         onConversionRequested: props.onConversionRequested,
+        imageInsertHandler: (request) => props.imageInsertHandler?.(request),
         markdownRenderer: props.markdownRenderer ?? undefined,
         markdownExtensions: props.markdownExtensions,
         entryRenderers: composedEntryRenderers(),
@@ -319,7 +334,6 @@ export const MdzipWorkspace = defineComponent({
     );
 
     watch([
-      () => props.controls,
       () => props.initialLayout,
       () => props.initialColorScheme,
       () => props.navigationMode,
@@ -327,6 +341,25 @@ export const MdzipWorkspace = defineComponent({
     ], () => {
       createView();
     }, { immediate: false });
+
+    watch(() => props.controls, (controls) => {
+      view?.setControls(controls);
+    });
+
+    watch([() => props.toolbarDensity, () => props.contentDensity], ([toolbarDensity, contentDensity]) => {
+      view?.setDensityOptions({ toolbarDensity, contentDensity });
+    });
+
+    watch(() => props.imageHydrationAnimation, (animation) => {
+      view?.setImageHydrationAnimation(animation);
+    });
+
+    watch([() => props.imageInsertMode, () => props.imageInsertHandler], ([mode]) => {
+      view?.setImageInsertOptions({
+        imageInsertMode: mode,
+        imageInsertHandler: (request) => props.imageInsertHandler?.(request),
+      });
+    });
 
     // Rendering config updates apply in place — never a view rebuild. Arrays
     // re-apply only when their name/id key changes; the renderer re-applies

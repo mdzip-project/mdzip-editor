@@ -14,6 +14,9 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly options: Record<string, unknown>;
     public readonly setRenderingOptions = vi.fn();
     public readonly setColorScheme = vi.fn();
+    public readonly setControls = vi.fn();
+    public readonly setDensityOptions = vi.fn();
+    public readonly setImageHydrationAnimation = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly destroy = vi.fn();
@@ -186,6 +189,32 @@ test('setColorScheme updates the live view without recreating it', () => {
 
   expect(viewInstances).toHaveLength(1);
   expect(view.setColorScheme).toHaveBeenCalledWith('dark');
+});
+
+test('controls, density, and image animation inputs update in place', () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.componentRef.setInput('controls', { preset: 'standalone-editor', lineNumbers: true });
+  fixture.componentRef.setInput('toolbarDensity', 'comfortable');
+  fixture.componentRef.setInput('contentDensity', 'comfortable');
+  fixture.componentRef.setInput('imageHydrationAnimation', 'auto');
+  fixture.detectChanges();
+  const view = latestView();
+
+  const nextControls = { preset: 'standalone-editor', lineNumbers: false } as const;
+  fixture.componentRef.setInput('controls', nextControls);
+  fixture.componentRef.setInput('toolbarDensity', 'dense');
+  fixture.componentRef.setInput('contentDensity', 'compact');
+  fixture.componentRef.setInput('imageHydrationAnimation', 'off');
+  fixture.detectChanges();
+
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setControls).toHaveBeenLastCalledWith(nextControls);
+  expect(view.setDensityOptions).toHaveBeenLastCalledWith({
+    toolbarDensity: 'dense',
+    contentDensity: 'compact'
+  });
+  expect(view.setImageHydrationAnimation).toHaveBeenLastCalledWith('off');
 });
 
 test('diff component updates one view and exposes navigation methods', async () => {
