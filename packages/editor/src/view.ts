@@ -17,8 +17,13 @@ import { tags } from '@lezer/highlight';
 import {
   Bold,
   ChevronDown,
+  ChevronRight,
+  ClipboardPaste,
+  ClipboardType,
   Code,
   Columns2,
+  Copy,
+  Eraser,
   Eye,
   File,
   FileBraces,
@@ -27,6 +32,12 @@ import {
   FolderOpen,
   Hash,
   Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
+  Highlighter,
   ImagePlus,
   Info,
   Italic,
@@ -38,11 +49,15 @@ import {
   Moon,
   PackagePlus,
   PanelLeft,
+  Pilcrow,
   Quote,
   Save,
+  Scissors,
+  SquareCode,
   SquarePen,
   Strikethrough,
   Sun,
+  TextSelect,
   ZoomIn
 } from 'lucide';
 import type { MdzWorkspace, MdzWorkspaceAsset } from '@mdzip/core-js';
@@ -136,6 +151,90 @@ const IMAGE_FORMAT_ICON_HTML = lucideIcon(ImagePlus, FORMAT_ICON_CLASS);
 const CHEVRON_ICON_HTML = lucideIcon(ChevronDown, 'format-chevron');
 const INFO_ICON_HTML = lucideIcon(Info, 'document-info-icon');
 
+// Leading icons for context-menu items (Obsidian-style icon column).
+const MENU_ICON_CLASS = 'nav-menu-icon';
+const MENU_CUT_ICON_HTML = lucideIcon(Scissors, MENU_ICON_CLASS);
+const MENU_COPY_ICON_HTML = lucideIcon(Copy, MENU_ICON_CLASS);
+const MENU_PASTE_ICON_HTML = lucideIcon(ClipboardPaste, MENU_ICON_CLASS);
+const MENU_PASTE_PLAIN_ICON_HTML = lucideIcon(ClipboardType, MENU_ICON_CLASS);
+const MENU_SELECT_ALL_ICON_HTML = lucideIcon(TextSelect, MENU_ICON_CLASS);
+const MENU_BOLD_ICON_HTML = lucideIcon(Bold, MENU_ICON_CLASS);
+const MENU_ITALIC_ICON_HTML = lucideIcon(Italic, MENU_ICON_CLASS);
+const MENU_STRIKE_ICON_HTML = lucideIcon(Strikethrough, MENU_ICON_CLASS);
+const MENU_CODE_ICON_HTML = lucideIcon(Code, MENU_ICON_CLASS);
+const MENU_CODE_BLOCK_ICON_HTML = lucideIcon(SquareCode, MENU_ICON_CLASS);
+const MENU_HIGHLIGHT_ICON_HTML = lucideIcon(Highlighter, MENU_ICON_CLASS);
+const MENU_BULLET_LIST_ICON_HTML = lucideIcon(List, MENU_ICON_CLASS);
+const MENU_ORDERED_LIST_ICON_HTML = lucideIcon(ListOrdered, MENU_ICON_CLASS);
+const MENU_QUOTE_ICON_HTML = lucideIcon(Quote, MENU_ICON_CLASS);
+const MENU_LINE_BREAK_ICON_HTML = lucideIcon(CornerDownLeft, MENU_ICON_CLASS);
+const MENU_IMAGE_ICON_HTML = lucideIcon(ImagePlus, MENU_ICON_CLASS);
+const MENU_LINK_ICON_HTML = lucideIcon(Link, MENU_ICON_CLASS);
+const MENU_CLEAR_FORMAT_ICON_HTML = lucideIcon(Eraser, MENU_ICON_CLASS);
+const MENU_HEADING_PARENT_ICON_HTML = lucideIcon(Heading1, MENU_ICON_CLASS);
+const MENU_PARAGRAPH_ICON_HTML = lucideIcon(Pilcrow, MENU_ICON_CLASS);
+const MENU_CHEVRON_ICON_HTML = lucideIcon(ChevronRight, 'nav-menu-chevron');
+const MENU_HEADING_ICON_HTML: Record<MdzipHeadingLevel, string> = {
+  1: lucideIcon(Heading1, MENU_ICON_CLASS),
+  2: lucideIcon(Heading2, MENU_ICON_CLASS),
+  3: lucideIcon(Heading3, MENU_ICON_CLASS),
+  4: lucideIcon(Heading4, MENU_ICON_CLASS),
+  5: lucideIcon(Heading5, MENU_ICON_CLASS),
+  6: lucideIcon(Heading6, MENU_ICON_CLASS)
+};
+const MENU_SEPARATOR_HTML = '<div class="nav-menu-separator" role="separator"></div>';
+// Matches the submenu `min-width` in the CSS; used to decide left/right flyout.
+const SUBMENU_ESTIMATED_WIDTH = 190;
+
+// Curated default for the Code Block submenu — a usable subset rather than the
+// full highlight.js language set. Hosts override via `codeBlockLanguages`.
+export const DEFAULT_CODE_BLOCK_LANGUAGES: readonly MdzipCodeBlockLanguage[] = [
+  { id: '', label: 'Plain Text' },
+  { id: 'typescript', label: 'TypeScript' },
+  { id: 'javascript', label: 'JavaScript' },
+  { id: 'tsx', label: 'TSX / JSX' },
+  { id: 'html', label: 'HTML' },
+  { id: 'css', label: 'CSS' },
+  { id: 'json', label: 'JSON' },
+  { id: 'python', label: 'Python' },
+  { id: 'csharp', label: 'C#' },
+  { id: 'java', label: 'Java' },
+  { id: 'cpp', label: 'C++' },
+  { id: 'go', label: 'Go' },
+  { id: 'rust', label: 'Rust' },
+  { id: 'sql', label: 'SQL' },
+  { id: 'bash', label: 'Shell' },
+  { id: 'yaml', label: 'YAML' },
+  { id: 'markdown', label: 'Markdown' }
+];
+
+// Recursively renders a context-menu item. An item carrying `submenu` becomes a
+// hover/focus flyout parent (no action of its own); everything else is an
+// actionable `[data-menu-action]` button handled by the shared click delegate.
+function renderContextMenuItem(item: MdzipNavMenuItem): string {
+  const icon = item.icon ?? '';
+  const label = `<span class="nav-menu-label">${escapeHtml(item.label)}</span>`;
+  if (item.submenu) {
+    const children = item.submenu
+      .map((child) => (child === null ? MENU_SEPARATOR_HTML : renderContextMenuItem(child)))
+      .join('');
+    return '<div class="nav-menu-submenu-wrap">'
+      + '<button type="button" role="menuitem" aria-haspopup="true" class="nav-menu-parent">'
+      + `${icon}${label}${MENU_CHEVRON_ICON_HTML}</button>`
+      + `<div class="nav-context-submenu" role="menu">${children}</div></div>`;
+  }
+  const shortcut = item.shortcut
+    ? `<span class="nav-menu-shortcut">${escapeHtml(item.shortcut)}</span>`
+    : '';
+  return `<button type="button" role="menuitem" data-menu-action="${escapeHtml(item.action)}">${icon}${label}${shortcut}</button>`;
+}
+
+function renderContextMenuItems(items: Array<MdzipNavMenuItem | null>): string {
+  return items
+    .map((item) => (item === null ? MENU_SEPARATOR_HTML : renderContextMenuItem(item)))
+    .join('');
+}
+
 export type MdzipWorkspaceLayout = 'preview' | 'source' | 'split';
 export type MdzipNavigationMode = 'editor' | 'host' | 'none';
 export type MdzipColorScheme = 'light' | 'dark';
@@ -173,6 +272,7 @@ export type MdzipEditorCommand =
   | 'bold'
   | 'italic'
   | 'strikethrough'
+  | 'highlight'
   | 'paragraph'
   | `heading-${MdzipHeadingLevel}`
   | 'bullet-list'
@@ -216,6 +316,12 @@ type MdzipNavMenuTarget =
 interface MdzipNavMenuItem {
   action: string;
   label: string;
+  /** Pre-rendered leading icon SVG (see `MENU_*_ICON_HTML`). */
+  icon?: string;
+  /** Right-aligned keyboard-shortcut hint (e.g. `Ctrl+X`). Only set for actions that actually have a binding. */
+  shortcut?: string;
+  /** When present, the item is a flyout parent rather than an action; null entries are separators. */
+  submenu?: Array<MdzipNavMenuItem | null>;
 }
 
 type MdzipNameDialogMode = 'new-file' | 'new-folder' | 'rename';
@@ -322,6 +428,14 @@ export interface MdzipWorkspaceSave {
   snapshot: MdzipWorkspaceSnapshot;
 }
 
+/** One entry in the Code Block submenu. */
+export interface MdzipCodeBlockLanguage {
+  /** Fence info string, e.g. `'typescript'`. Empty inserts a plain block. */
+  id: string;
+  /** Menu label, e.g. `'TypeScript'`. */
+  label: string;
+}
+
 export interface MdzipWorkspaceViewOptions {
   /**
    * Additional host or framework libraries to show in Document Information.
@@ -361,6 +475,12 @@ export interface MdzipWorkspaceViewOptions {
    * the insertion cleanly.
    */
   imageInsertHandler?: MdzipImageInsertHandler;
+  /**
+   * Languages offered in the context menu's Code Block submenu. Each entry's
+   * `id` becomes the fence info string (e.g. ```` ```ts ````); an empty `id`
+   * inserts a plain block. Defaults to {@link DEFAULT_CODE_BLOCK_LANGUAGES}.
+   */
+  codeBlockLanguages?: readonly MdzipCodeBlockLanguage[];
   initialLayout?: MdzipWorkspaceLayout;
   initialColorScheme?: MdzipColorScheme;
   navigationMode?: MdzipNavigationMode;
@@ -940,7 +1060,15 @@ export class MdzipWorkspaceView {
   private navPaneWidth = 280;
   private splitRatio = 0.5;
   private resizing = false;
-  private navMenuState: { target: MdzipNavMenuTarget; x: number; y: number } | null = null;
+  // Shared overlay menu state. One menu is open at a time, so a single field
+  // drives both the nav-pane file menu and the editor selection menu; `kind`
+  // selects which item-builder and action-handler run. The editor variant
+  // captures the selection range at open time because clicking a menu item can
+  // move focus/selection before the action reads it.
+  private contextMenuState:
+    | { kind: 'nav'; target: MdzipNavMenuTarget; x: number; y: number }
+    | { kind: 'editor'; from: number; to: number; x: number; y: number }
+    | null = null;
   private nameDialogState: {
     mode: MdzipNameDialogMode;
     dir: string;
@@ -1414,6 +1542,16 @@ export class MdzipWorkspaceView {
         this.elImageInput.click();
       }
       return true;
+    }
+    this.applyMarkdownFormat(command);
+    return true;
+  }
+
+  // Backs the editor's formatting keybindings (Mod-b/i/k/e). Returns false when
+  // the command can't run (read-only, non-markdown) so the key passes through.
+  private runFormatShortcut(command: Exclude<MdzipEditorCommand, 'insert-image'>): boolean {
+    if (!this.canExecuteCommand(command)) {
+      return false;
     }
     this.applyMarkdownFormat(command);
     return true;
@@ -2171,6 +2309,11 @@ export class MdzipWorkspaceView {
       extensions: [
         this.lineNumbersCompartment.of(this.controlPolicy.lineNumbers ? lineNumbers() : []),
         history(),
+        keymap.of([
+          { key: 'Mod-b', run: () => self.runFormatShortcut('bold') },
+          { key: 'Mod-i', run: () => self.runFormatShortcut('italic') },
+          { key: 'Mod-k', run: () => self.runFormatShortcut('link') }
+        ]),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
         markdown(),
         syntaxHighlighting(mdzipMarkdownHighlight),
@@ -2450,26 +2593,24 @@ export class MdzipWorkspaceView {
     }
     this.elMetadataDialog.hidden = !this.metadataDialogOpen;
 
-    if (this.navMenuState) {
-      const items = this.navMenuItems(this.navMenuState.target, snapshot);
+    if (this.contextMenuState) {
+      const items = this.contextMenuState.kind === 'nav'
+        ? this.navMenuItems(this.contextMenuState.target, snapshot)
+        : this.editorMenuItems(snapshot);
       if (items.length === 0) {
-        this.navMenuState = null;
+        this.contextMenuState = null;
       } else {
-        this.elNavMenu.innerHTML = items
-          .map((item) => item === null
-            ? '<div class="nav-menu-separator" role="separator"></div>'
-            : `<button type="button" role="menuitem" data-menu-action="${escapeHtml(item.action)}">${escapeHtml(item.label)}</button>`)
-          .join('');
+        this.elNavMenu.innerHTML = renderContextMenuItems(items);
         this.elNavMenu.hidden = false;
         const rect = this.elNavMenu.getBoundingClientRect();
         const win = this.elRoot.ownerDocument.defaultView ?? window;
-        const x = Math.max(4, Math.min(this.navMenuState.x, win.innerWidth - rect.width - 8));
-        const y = Math.max(4, Math.min(this.navMenuState.y, win.innerHeight - rect.height - 8));
+        const x = Math.max(4, Math.min(this.contextMenuState.x, win.innerWidth - rect.width - 8));
+        const y = Math.max(4, Math.min(this.contextMenuState.y, win.innerHeight - rect.height - 8));
         this.elNavMenu.style.left = `${x}px`;
         this.elNavMenu.style.top = `${y}px`;
       }
     }
-    if (!this.navMenuState) {
+    if (!this.contextMenuState) {
       this.elNavMenu.hidden = true;
     }
 
@@ -2528,9 +2669,9 @@ export class MdzipWorkspaceView {
 
     doc.addEventListener('click', () => {
       this.closeFormatMenus();
-      if (this.zoomOpen || this.navMenuState) {
+      if (this.zoomOpen || this.contextMenuState) {
         this.zoomOpen = false;
-        this.navMenuState = null;
+        this.contextMenuState = null;
         this.render();
       }
     });
@@ -2539,8 +2680,8 @@ export class MdzipWorkspaceView {
       if (e.key !== 'Escape') {
         return;
       }
-      if (this.navMenuState || this.deleteDialogState || this.nameDialogState) {
-        this.navMenuState = null;
+      if (this.contextMenuState || this.deleteDialogState || this.nameDialogState) {
+        this.contextMenuState = null;
         this.deleteDialogState = null;
         this.nameDialogState = null;
         this.render();
@@ -2822,9 +2963,67 @@ export class MdzipWorkspaceView {
     this.elNavMenu.addEventListener('click', (e) => {
       e.stopPropagation();
       const item = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-menu-action]');
-      if (item) {
-        void this.handleNavMenuAction(item.dataset['menuAction'] ?? '');
+      if (!item) {
+        return;
       }
+      const action = item.dataset['menuAction'] ?? '';
+      if (this.contextMenuState?.kind === 'editor') {
+        void this.handleEditorMenuAction(action);
+      } else {
+        void this.handleNavMenuAction(action);
+      }
+    });
+
+    // Flyout submenus open to the right and aligned with their parent by
+    // default; nudge them within the viewport. Runs on hover (when the submenu
+    // is already displayed, so it can be measured): flips left when it would
+    // overflow the right edge, and shifts up when a tall list (e.g. the code
+    // languages) would run off the bottom.
+    this.elNavMenu.addEventListener('pointerover', (e) => {
+      const wrap = (e.target as HTMLElement).closest<HTMLElement>('.nav-menu-submenu-wrap');
+      if (!wrap) {
+        return;
+      }
+      const submenu = wrap.querySelector<HTMLElement>('.nav-context-submenu');
+      if (!submenu) {
+        return;
+      }
+      const win = this.elRoot.ownerDocument.defaultView ?? window;
+      const margin = 8;
+      const rect = wrap.getBoundingClientRect();
+      const width = submenu.offsetWidth || SUBMENU_ESTIMATED_WIDTH;
+      wrap.classList.toggle('open-left', rect.right + width > win.innerWidth - margin);
+
+      // Vertical: clamp the flyout's top so its full height stays on-screen.
+      // `top` is relative to the parent row (CSS default is -5px).
+      const naturalTop = rect.top - 5;
+      const clampedTop = Math.max(
+        margin,
+        Math.min(naturalTop, win.innerHeight - margin - submenu.offsetHeight)
+      );
+      submenu.style.top = `${clampedTop - rect.top}px`;
+    });
+
+    this.elEditorHost.addEventListener('contextmenu', (e) => {
+      const snapshot = this.workspace?.snapshot();
+      if (!snapshot || !this.cmEditor) {
+        return;
+      }
+      const selection = this.cmEditor.state.selection.main;
+      this.contextMenuState = {
+        kind: 'editor',
+        from: selection.from,
+        to: selection.to,
+        x: e.clientX,
+        y: e.clientY
+      };
+      if (this.editorMenuItems(snapshot).length === 0) {
+        this.contextMenuState = null;
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      this.render();
     });
 
     this.elNameInput.addEventListener('input', () => {
@@ -3465,6 +3664,311 @@ export class MdzipWorkspaceView {
     }
   }
 
+  // Items for the editor selection menu; null entries render as separators.
+  // Reads the selection range captured when the menu opened (not the live
+  // selection) so the displayed actions match what the handlers will act on.
+  private editorMenuItems(snapshot: MdzipWorkspaceSnapshot): Array<MdzipNavMenuItem | null> {
+    const state = this.contextMenuState;
+    if (!this.cmEditor || state?.kind !== 'editor') {
+      return [];
+    }
+    const hasSelection = state.to > state.from;
+    const editable = snapshot.mode !== 'read-only' && snapshot.currentPathType === 'markdown';
+    const formatting = this.controlPolicy.formatting;
+
+    const groups: Array<Array<MdzipNavMenuItem>> = [];
+
+    const clipboard: MdzipNavMenuItem[] = [];
+    if (hasSelection) {
+      if (editable) {
+        clipboard.push({ action: 'editor-cut', label: 'Cut', icon: MENU_CUT_ICON_HTML, shortcut: this.editorShortcut('X') });
+      }
+      clipboard.push({ action: 'editor-copy', label: 'Copy', icon: MENU_COPY_ICON_HTML, shortcut: this.editorShortcut('C') });
+    }
+    if (editable) {
+      clipboard.push({ action: 'editor-paste', label: 'Paste', icon: MENU_PASTE_ICON_HTML, shortcut: this.editorShortcut('V') });
+      clipboard.push({ action: 'editor-paste-plain', label: 'Paste as Plain Text', icon: MENU_PASTE_PLAIN_ICON_HTML });
+    }
+    if (clipboard.length > 0) {
+      groups.push(clipboard);
+    }
+
+    // Formatting mirrors the toolbar's capabilities so the menu can stand in
+    // for it. Inline marks and block commands apply to the current line when
+    // there's no selection (same as the toolbar), so only Clear Formatting —
+    // which acts on a range — is gated on a selection.
+    const anyInline = formatting.bold || formatting.italic || formatting.strikethrough || formatting.inlineCode;
+    const anyBlock = formatting.headings.length > 0 || formatting.bulletList
+      || formatting.orderedList || formatting.blockquote || formatting.codeBlock || formatting.lineBreak;
+
+    if (editable && anyInline) {
+      const inline: MdzipNavMenuItem[] = [];
+      if (formatting.bold) {
+        inline.push({ action: 'bold', label: 'Bold', icon: MENU_BOLD_ICON_HTML, shortcut: this.editorShortcut('B') });
+      }
+      if (formatting.italic) {
+        inline.push({ action: 'italic', label: 'Italic', icon: MENU_ITALIC_ICON_HTML, shortcut: this.editorShortcut('I') });
+      }
+      if (formatting.strikethrough) {
+        inline.push({ action: 'strikethrough', label: 'Strikethrough', icon: MENU_STRIKE_ICON_HTML });
+      }
+      inline.push({ action: 'highlight', label: 'Highlight', icon: MENU_HIGHLIGHT_ICON_HTML });
+      if (formatting.inlineCode) {
+        inline.push({ action: 'inline-code', label: 'Inline Code', icon: MENU_CODE_ICON_HTML });
+      }
+      groups.push(inline);
+    }
+
+    if (editable && anyBlock) {
+      const block: MdzipNavMenuItem[] = [];
+      if (formatting.headings.length > 0) {
+        block.push({
+          action: '',
+          label: 'Heading',
+          icon: MENU_HEADING_PARENT_ICON_HTML,
+          submenu: [
+            { action: 'paragraph', label: 'Paragraph', icon: MENU_PARAGRAPH_ICON_HTML },
+            null,
+            ...formatting.headings.map((level) => ({
+              action: `heading-${level}`,
+              label: `Heading ${level}`,
+              icon: MENU_HEADING_ICON_HTML[level]
+            }))
+          ]
+        });
+      }
+      if (formatting.bulletList) {
+        block.push({ action: 'bullet-list', label: 'Bullet List', icon: MENU_BULLET_LIST_ICON_HTML });
+      }
+      if (formatting.orderedList) {
+        block.push({ action: 'ordered-list', label: 'Numbered List', icon: MENU_ORDERED_LIST_ICON_HTML });
+      }
+      if (formatting.blockquote) {
+        block.push({ action: 'blockquote', label: 'Blockquote', icon: MENU_QUOTE_ICON_HTML });
+      }
+      if (formatting.codeBlock) {
+        const languages = this.options.codeBlockLanguages ?? DEFAULT_CODE_BLOCK_LANGUAGES;
+        block.push({
+          action: '',
+          label: 'Code Block',
+          icon: MENU_CODE_BLOCK_ICON_HTML,
+          submenu: languages.map((lang) => ({
+            action: `code-block:${lang.id}`,
+            label: lang.label
+          }))
+        });
+      }
+      if (formatting.lineBreak) {
+        block.push({ action: 'insert-line-break', label: 'Line Break', icon: MENU_LINE_BREAK_ICON_HTML });
+      }
+      groups.push(block);
+    }
+
+    if (editable && (formatting.link || formatting.image)) {
+      const insert: MdzipNavMenuItem[] = [];
+      if (formatting.link) {
+        insert.push({ action: 'link', label: 'Link…', icon: MENU_LINK_ICON_HTML, shortcut: this.editorShortcut('K') });
+      }
+      if (formatting.image) {
+        insert.push({ action: 'insert-image', label: 'Insert Image…', icon: MENU_IMAGE_ICON_HTML });
+      }
+      groups.push(insert);
+    }
+
+    if (editable && hasSelection && (anyInline || anyBlock)) {
+      groups.push([{ action: 'editor-clear-format', label: 'Clear Formatting', icon: MENU_CLEAR_FORMAT_ICON_HTML }]);
+    }
+
+    groups.push([{ action: 'editor-select-all', label: 'Select All', icon: MENU_SELECT_ALL_ICON_HTML, shortcut: this.editorShortcut('A') }]);
+
+    return groups.flatMap((group, index) => (index === 0 ? group : [null, ...group]));
+  }
+
+  private async handleEditorMenuAction(action: string): Promise<void> {
+    const state = this.contextMenuState;
+    this.contextMenuState = null;
+    this.render();
+    const editor = this.cmEditor;
+    if (!editor || state?.kind !== 'editor') {
+      return;
+    }
+    // Clicking the menu may have moved focus and collapsed the selection, so
+    // restore the range captured when the menu opened before acting on it.
+    if (action !== 'editor-select-all') {
+      editor.dispatch({ selection: { anchor: state.from, head: state.to } });
+    }
+    // Code Block submenu items carry the chosen language as a suffix.
+    if (action.startsWith('code-block:')) {
+      this.insertCodeBlock(action.slice('code-block:'.length));
+      editor.focus();
+      return;
+    }
+    switch (action) {
+      case 'editor-cut':
+        await this.cutEditorSelection();
+        break;
+      case 'editor-copy':
+        await this.copyEditorSelection();
+        break;
+      case 'editor-paste':
+      case 'editor-paste-plain':
+        await this.pasteIntoEditor();
+        break;
+      case 'editor-clear-format':
+        this.clearSelectionFormatting();
+        editor.focus();
+        break;
+      case 'editor-select-all':
+        editor.dispatch({ selection: { anchor: 0, head: editor.state.doc.length } });
+        editor.focus();
+        break;
+      case 'insert-image':
+        await this.executeCommand('insert-image');
+        break;
+      case 'bold':
+      case 'italic':
+      case 'strikethrough':
+      case 'highlight':
+      case 'inline-code':
+      case 'blockquote':
+      case 'bullet-list':
+      case 'ordered-list':
+      case 'insert-line-break':
+      case 'link':
+      case 'paragraph':
+      case 'heading-1':
+      case 'heading-2':
+      case 'heading-3':
+      case 'heading-4':
+      case 'heading-5':
+      case 'heading-6':
+        this.applyMarkdownFormat(action);
+        editor.focus();
+        break;
+    }
+  }
+
+  // Inserts a fenced code block, carrying the chosen language as the fence info
+  // string. An empty language produces a plain ```` ``` ```` block.
+  private insertCodeBlock(language: string): void {
+    if (!this.canExecuteCommand('code-block')) {
+      return;
+    }
+    this.wrapSelection(`\`\`\`${language}\n`, '\n```', 'code');
+  }
+
+  // Strips common Markdown formatting from the selection: leading block markers
+  // (headings, blockquotes, list bullets) per line, then inline emphasis,
+  // highlight, and code spans. Heuristic by nature — it targets the markers the
+  // editor itself produces rather than parsing the full grammar.
+  private clearSelectionFormatting(): void {
+    const editor = this.cmEditor;
+    const snapshot = this.workspace?.snapshot();
+    if (!editor || !snapshot || snapshot.mode === 'read-only') {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    if (selection.empty) {
+      return;
+    }
+    const cleared = editor.state.sliceDoc(selection.from, selection.to)
+      .split('\n')
+      .map((line) => line
+        .replace(/^(\s*)#{1,6}\s+/, '$1')
+        .replace(/^(\s*)>\s?/, '$1')
+        .replace(/^(\s*)(?:[-*+]|\d+\.)\s+/, '$1'))
+      .join('\n')
+      .replace(/<\/?mark>/gi, '')
+      .replace(/(\*\*|__)(.*?)\1/g, '$2')
+      .replace(/(\*|_)(.*?)\1/g, '$2')
+      .replace(/~~(.*?)~~/g, '$1')
+      .replace(/==(.*?)==/g, '$1')
+      .replace(/`([^`]*)`/g, '$1');
+    editor.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: cleared },
+      selection: { anchor: selection.from, head: selection.from + cleared.length }
+    });
+  }
+
+  private editorClipboard(): Clipboard | undefined {
+    return this.elRoot.ownerDocument.defaultView?.navigator?.clipboard;
+  }
+
+  // Renders a single-letter shortcut for the host platform: ⌘X on macOS,
+  // Ctrl+X elsewhere. Only used for bindings that genuinely fire (the native
+  // clipboard keys and `defaultKeymap`'s select-all).
+  private editorShortcut(key: string): string {
+    const nav = this.elRoot.ownerDocument.defaultView?.navigator;
+    const platform = (nav as { userAgentData?: { platform?: string } } | undefined)?.userAgentData?.platform
+      ?? nav?.platform
+      ?? '';
+    return /mac|iphone|ipad|ipod/i.test(platform) ? `⌘${key}` : `Ctrl+${key}`;
+  }
+
+  private async copyEditorSelection(): Promise<void> {
+    const editor = this.cmEditor;
+    if (!editor) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    if (selection.empty) {
+      return;
+    }
+    try {
+      await this.editorClipboard()?.writeText(editor.state.sliceDoc(selection.from, selection.to));
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+    editor.focus();
+  }
+
+  private async cutEditorSelection(): Promise<void> {
+    const editor = this.cmEditor;
+    const snapshot = this.workspace?.snapshot();
+    if (!editor || !snapshot || snapshot.mode === 'read-only') {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    if (selection.empty) {
+      return;
+    }
+    try {
+      await this.editorClipboard()?.writeText(editor.state.sliceDoc(selection.from, selection.to));
+    } catch (error) {
+      this.options.onFailed?.(error);
+      return;
+    }
+    editor.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: '' },
+      selection: { anchor: selection.from }
+    });
+    editor.focus();
+  }
+
+  private async pasteIntoEditor(): Promise<void> {
+    const editor = this.cmEditor;
+    const snapshot = this.workspace?.snapshot();
+    if (!editor || !snapshot || snapshot.mode === 'read-only') {
+      return;
+    }
+    let text: string | undefined;
+    try {
+      text = await this.editorClipboard()?.readText();
+    } catch (error) {
+      this.options.onFailed?.(error);
+      return;
+    }
+    if (!text) {
+      return;
+    }
+    const selection = editor.state.selection.main;
+    editor.dispatch({
+      changes: { from: selection.from, to: selection.to, insert: text },
+      selection: { anchor: selection.from + text.length }
+    });
+    editor.focus();
+  }
+
   private applyMarkdownFormat(format: Exclude<MdzipEditorCommand, 'insert-image'>): void {
     const editor = this.cmEditor;
     const snapshot = this.workspace?.snapshot();
@@ -3481,6 +3985,9 @@ export class MdzipWorkspaceView {
         break;
       case 'strikethrough':
         this.wrapSelection('~~', '~~', 'strikethrough text');
+        break;
+      case 'highlight':
+        this.wrapSelection('<mark>', '</mark>', 'highlighted text');
         break;
       case 'paragraph':
         this.setSelectedLinePrefix('', /^(#{1,6})\s+/);
@@ -3850,7 +4357,7 @@ export class MdzipWorkspaceView {
     const bounds = (event.target as HTMLElement | null)?.getBoundingClientRect();
     const clientX = event instanceof MouseEvent ? event.clientX : (bounds?.left ?? 0);
     const clientY = event instanceof MouseEvent ? event.clientY : (bounds?.bottom ?? 0);
-    this.navMenuState = { target, x: clientX, y: clientY };
+    this.contextMenuState = { kind: 'nav', target, x: clientX, y: clientY };
     this.render();
   }
 
@@ -3916,10 +4423,10 @@ export class MdzipWorkspaceView {
   }
 
   private async handleNavMenuAction(action: string): Promise<void> {
-    const state = this.navMenuState;
-    this.navMenuState = null;
+    const state = this.contextMenuState;
+    this.contextMenuState = null;
     this.render();
-    if (!state) {
+    if (!state || state.kind !== 'nav') {
       return;
     }
     const target = state.target;

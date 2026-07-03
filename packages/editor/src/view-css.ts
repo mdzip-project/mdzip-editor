@@ -731,7 +731,9 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .nav-context-menu button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   min-height: 28px;
   padding: 4px 10px;
@@ -742,6 +744,63 @@ export const WORKSPACE_CSS = `
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.mdzip-root .nav-context-menu .nav-menu-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  opacity: 0.8;
+}
+
+.mdzip-root .nav-context-menu .nav-menu-label {
+  flex: 1 1 auto;
+}
+
+.mdzip-root .nav-context-menu .nav-menu-shortcut {
+  flex: 0 0 auto;
+  margin-left: 16px;
+  font-size: 0.85em;
+  opacity: 0.55;
+  font-variant-numeric: tabular-nums;
+}
+
+.mdzip-root .nav-context-menu .nav-menu-chevron {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-right: -2px;
+  opacity: 0.55;
+}
+
+.mdzip-root .nav-menu-submenu-wrap {
+  position: relative;
+}
+
+.mdzip-root .nav-context-submenu {
+  position: absolute;
+  left: 100%;
+  top: -5px;
+  display: none;
+  min-width: 190px;
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--mdzip-widget-border-color);
+  border-radius: 4px;
+  background: var(--mdzip-editor-background-color);
+  color: var(--mdzip-editor-foreground-color);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.mdzip-root .nav-menu-submenu-wrap.open-left > .nav-context-submenu {
+  left: auto;
+  right: 100%;
+}
+
+.mdzip-root .nav-menu-submenu-wrap:hover > .nav-context-submenu,
+.mdzip-root .nav-menu-submenu-wrap:focus-within > .nav-context-submenu {
+  display: block;
 }
 
 .mdzip-root .nav-context-menu button:hover,

@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.13] - 2026-07-02
+
+### Added
+- Right-click context menu in the editor pane, mirroring the toolbar's
+  capabilities: clipboard actions (Cut, Copy, Paste, Paste as Plain Text),
+  inline and block formatting (including a Heading submenu and a new
+  Highlight command that wraps the selection in `<mark>`), a Code Block
+  submenu for inserting a fenced block with a chosen language, Clear
+  Formatting, and Select All. The Code Block language list is customizable via
+  the new `codeBlockLanguages` option (`MdzipWorkspaceViewOptions`), with a
+  curated default set.
+- New `Mod-b` / `Mod-i` / `Mod-k` editor keybindings for Bold, Italic, and
+  Link, matching the toolbar and context-menu commands.
+
+### Changed
+- The nav-pane file menu and the new editor selection menu now share one
+  overlay-menu implementation (icons, keyboard-shortcut hints, and flyout
+  submenus), keeping their look and interaction consistent.
+
 ## [1.3.12] - 2026-06-19
 
 ### Added

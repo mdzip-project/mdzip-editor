@@ -7,6 +7,9 @@ coverage/
 *.tgz
 *.log
 
+# Personal working notes, not part of the library.
+design/notes.mdz
+
 # Generated package outputs belong in dist/, not source directories.
 packages/editor/src/**/*.js
 packages/editor/src/**/*.d.ts
