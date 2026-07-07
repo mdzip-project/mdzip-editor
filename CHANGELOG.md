@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.15] - 2026-07-06
+
+### Added
+- Find/replace search, available in every host with no per-framework wiring
+  needed. New `search` control-policy flag (on by default for Viewer/
+  Standalone/Hosted, off for Preview), a toolbar button plus the standard
+  Mod-F shortcut, and public `openSearch()`/`closeSearch()` API. Works in
+  read-only (Viewer) documents, and auto-switches out of preview-only
+  layout so the panel has somewhere to render.
+
 ## [1.3.14] - 2026-07-06
 
 ### Fixed
