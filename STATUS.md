@@ -1,5 +1,5 @@
 Status: idle
-Last: Committed fix for raw HTML <img src> orphan detection (#24), core-js bumped to 1.3.3
+Last: Published 1.3.15 (find/replace search, plus #24-#28 fixes) to npm
 
 <!-- Dashboard reads these two lines.
      Status: idle | in-progress | awaiting-test | ready-to-commit | blocked
