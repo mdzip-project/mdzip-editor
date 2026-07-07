@@ -1158,8 +1158,7 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .preview-content table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
   border-collapse: collapse;
   border-spacing: 0;
 }
@@ -1183,7 +1182,31 @@ export const WORKSPACE_CSS = `
   white-space: nowrap;
 }
 
-.mdzip-root .preview-content td:last-child {
+/* Markdown table alignment (left/center/right column syntax) survives as the
+   align attribute on th/td, but that's a presentational HTML hint — the plain
+   text-align: left above is a real stylesheet rule and would otherwise always
+   win regardless of column position. Right/center-aligned cells are also
+   typically short, fixed values (numbers, totals) that read better holding
+   their line, unlike left-aligned prose columns, which should wrap to fit
+   the pane. */
+.mdzip-root .preview-content th[align="left"],
+.mdzip-root .preview-content td[align="left"] {
+  text-align: left;
+}
+
+.mdzip-root .preview-content th[align="center"],
+.mdzip-root .preview-content td[align="center"] {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mdzip-root .preview-content th[align="right"],
+.mdzip-root .preview-content td[align="right"] {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mdzip-root .preview-content td:last-child:not([align="center"]):not([align="right"]) {
   min-width: 220px;
   max-width: 320px;
 }
