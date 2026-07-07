@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.3.14] - 2026-07-06
+
+### Fixed
+- Orphan asset analysis now recognizes raw HTML `<img src>` references, not
+  just Markdown `![]()` syntax, so images embedded via raw HTML are no
+  longer misreported as orphaned. (#24)
+- The muted `<br>` marker styling now applies to raw HTML tags generally,
+  so authors can visually distinguish raw HTML from Markdown prose. (#25)
+- Markdown table alignment (`:---`, `:---:`, `---:`) is now honored in the
+  preview; a plain `text-align: left` rule previously always won regardless
+  of column alignment. Tables no longer force horizontal scroll just
+  because of one long prose cell. (#26)
+- Mermaid diagrams that fail to parse no longer leave stray error SVG/DOM
+  behind on the host page. (#27)
+- Raw HTML `<img>` `height`/`width`/`align` attributes are now honored in
+  the preview, including for images that skip archive hydration
+  (external/data/fragment sources). (#28)
+
 ## [1.3.13] - 2026-07-02
 
 ### Added
