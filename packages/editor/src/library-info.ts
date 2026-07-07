@@ -8,7 +8,7 @@ export const MDZIP_RUNTIME_LIBRARIES = [
   },
   {
     "name": "@mdzip/core-js",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "repositoryUrl": "https://github.com/mdzip-project/mdzip-core-js",
     "description": "MDZip archive reading, writing, and validation."
   },

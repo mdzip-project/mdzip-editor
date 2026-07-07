@@ -374,6 +374,40 @@ test('keeps remaining orphaned indicators after removing one orphaned asset', as
   );
 });
 
+test('live orphan estimate recognizes raw HTML <img> tag references while typing', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Doc\n', 'Doc', [
+    { archivePath: 'images/a.png', fileBytes: PNG_1X1 },
+    { archivePath: 'images/b.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  // No ensureOrphanedAssetsAnalyzed() here: this exercises the synchronous
+  // per-keystroke estimate (editText -> computeLiveOrphanedPaths), not the
+  // async full-archive scan.
+  workspace.editText('# Doc\n<img src="images/a.png">\n![b](images/b.png)\n');
+  assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths, []);
+
+  workspace.editText('# Doc\n<img src="images/a.png">\n');
+  assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths, ['images/b.png']);
+});
+
+test('async full-archive orphan scan (via @mdzip/core-js) recognizes raw HTML <img> tag references', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle(
+    '# Doc\n<img src="images/a.png">\n',
+    'Doc',
+    [
+      { archivePath: 'images/a.png', fileBytes: PNG_1X1 },
+      { archivePath: 'images/b.png', fileBytes: PNG_1X1 }
+    ]
+  );
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  // This drives findOrphanedAssetPathsInArchive -> @mdzip/core-js's
+  // findOrphanedAssets, distinct from the editor's own live estimate above.
+  await workspace.ensureOrphanedAssetsAnalyzed();
+  assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths, ['images/b.png']);
+});
+
 test('latest [bytes] wins when two openArchive calls resolve out of order', async () => {
   // Force the FIRST (superseded) parse to resolve AFTER the second so the stale
   // result, if not guarded by a generation token, would overwrite the latest

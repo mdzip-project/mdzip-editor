@@ -1028,21 +1028,37 @@ export class MdzipWorkspaceService {
   }
 }
 
-// Extract all image archive paths referenced in markdown text.
+// Matches raw HTML <img src="..."> tags, which markdown's ![]() syntax doesn't
+// cover but authors use for sizing/alignment control markdown can't express.
+const HTML_IMG_SRC_RE = /<img\b[^>]*\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))[^>]*>/gi;
+
+// Extract all image archive paths referenced in markdown text, from both
+// markdown ![]() syntax and raw HTML <img src> tags.
 // Handles relative paths by resolving against baseDir (the directory of the current file).
 function referencedImagePaths(markdown: string, baseDir: string): Set<string> {
   const refs = new Set<string>();
-  const regex = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(markdown)) !== null) {
-    const raw = (match[1] ?? '').replace(/^<|>$/g, '').split(/[?#]/)[0] ?? '';
-    const decoded = decodeURIComponent(raw);
+  const addRawRef = (raw: string) => {
+    const cleaned = raw.replace(/^<|>$/g, '').split(/[?#]/)[0] ?? '';
+    const decoded = decodeURIComponent(cleaned);
     // Store both the raw form and the baseDir-resolved form so either lookup hits.
     refs.add(decoded);
     refs.add(decoded.replace(/^\.\//, ''));
     const resolved = decoded.startsWith('/') ? decoded.slice(1) : `${baseDir}${decoded.replace(/^\.\//, '')}`;
     refs.add(resolved);
+  };
+
+  const mdRegex = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+  let match: RegExpExecArray | null;
+  while ((match = mdRegex.exec(markdown)) !== null) {
+    addRawRef(match[1] ?? '');
   }
+
+  const htmlRegex = new RegExp(HTML_IMG_SRC_RE.source, 'gi');
+  while ((match = htmlRegex.exec(markdown)) !== null) {
+    const raw = match[1] ?? match[2] ?? match[3];
+    if (raw) addRawRef(raw);
+  }
+
   return refs;
 }
 
