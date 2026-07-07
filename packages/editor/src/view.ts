@@ -1,6 +1,7 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { closeSearchPanel, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState } from '@codemirror/state';
 import {
   Decoration,
@@ -53,6 +54,7 @@ import {
   Quote,
   Save,
   Scissors,
+  Search,
   SquareCode,
   SquarePen,
   Strikethrough,
@@ -133,6 +135,7 @@ const CONVERT_TO_MDZ_ICON_HTML = lucideIcon(PackagePlus, `${TOOLBAR_ICON_CLASS} 
 const PREVIEW_ICON_HTML = lucideIcon(Eye, TOOLBAR_ICON_CLASS);
 const SPLIT_ICON_HTML = lucideIcon(Columns2, TOOLBAR_ICON_CLASS);
 const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
+const SEARCH_ICON_HTML = lucideIcon(Search, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
 const DARK_THEME_ICON_HTML = lucideIcon(Moon, TOOLBAR_ICON_CLASS);
 const LIGHT_THEME_ICON_HTML = lucideIcon(Sun, TOOLBAR_ICON_CLASS);
@@ -375,6 +378,8 @@ export interface MdzipControlPolicy {
   orphanActions?: boolean;
   /** Enables nav-pane file management (create, rename, delete, move, …). */
   fileActions?: boolean;
+  /** Enables the find/replace toolbar button and Mod-f shortcut. */
+  search?: boolean;
 }
 
 export interface MdzipResolvedTitleControlPolicy {
@@ -416,6 +421,7 @@ export interface MdzipResolvedControlPolicy {
   colorScheme: boolean;
   orphanActions: boolean;
   fileActions: boolean;
+  search: boolean;
 }
 
 export interface MdzipWorkspaceChange {
@@ -613,7 +619,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     zoom: false,
     colorScheme: false,
     orphanActions: false,
-    fileActions: false
+    fileActions: false,
+    search: false
   },
   viewer: {
     preset: 'viewer',
@@ -627,7 +634,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     zoom: true,
     colorScheme: true,
     orphanActions: false,
-    fileActions: false
+    fileActions: false,
+    search: true
   },
   'standalone-editor': {
     preset: 'standalone-editor',
@@ -641,7 +649,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     zoom: true,
     colorScheme: true,
     orphanActions: true,
-    fileActions: true
+    fileActions: true,
+    search: true
   },
   'hosted-editor': {
     preset: 'hosted-editor',
@@ -655,7 +664,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     zoom: true,
     colorScheme: true,
     orphanActions: true,
-    fileActions: true
+    fileActions: true,
+    search: true
   }
 };
 
@@ -825,6 +835,73 @@ const mdzipEditorTheme = EditorView.theme({
   '.mdzip-hard-break-marker': {
     color: 'var(--mdzip-muted-foreground-color)',
     opacity: '0.65',
+  },
+  '.cm-panels': {
+    background: 'var(--mdzip-widget-background-color)',
+    color: 'var(--mdzip-editor-foreground-color)',
+    zIndex: '2',
+  },
+  '.cm-panels.cm-panels-top': {
+    borderBottom: '1px solid var(--mdzip-border-color)',
+  },
+  '.cm-search': {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 14px',
+    fontSize: '13px',
+  },
+  // CodeMirror separates the find and replace rows with a bare <br>; in a
+  // flex container that collapses to zero width instead of breaking the
+  // line, so force it to take the full row.
+  '.cm-search br': {
+    flexBasis: '100%',
+    height: '0',
+  },
+  '.cm-search label': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    color: 'var(--mdzip-muted-foreground-color)',
+  },
+  '.cm-search input[type="checkbox"]': {
+    width: '14px',
+    height: '14px',
+    accentColor: 'var(--mdzip-accent-color)',
+  },
+  '.cm-textfield': {
+    background: 'var(--mdzip-editor-background-color)',
+    color: 'var(--mdzip-editor-foreground-color)',
+    border: '1px solid var(--mdzip-border-color)',
+    borderRadius: '5px',
+    padding: '5px 9px',
+    fontSize: 'inherit',
+    width: '220px',
+  },
+  '.cm-textfield:focus-visible': {
+    outline: '1px solid var(--mdzip-focus-outline-color)',
+    outlineOffset: '-1px',
+  },
+  '.cm-button': {
+    background: 'var(--mdzip-widget-background-color)',
+    backgroundImage: 'none',
+    color: 'var(--mdzip-control-foreground-color)',
+    border: '1px solid var(--mdzip-border-color)',
+    borderRadius: '5px',
+    padding: '5px 12px',
+    fontSize: 'inherit',
+    cursor: 'pointer',
+  },
+  '.cm-button:hover': {
+    background: 'var(--mdzip-control-hover-background-color)',
+  },
+  '.cm-searchMatch': {
+    backgroundColor: 'rgba(255, 214, 0, 0.35)',
+  },
+  '.cm-searchMatch-selected': {
+    backgroundColor: 'var(--mdzip-accent-color)',
+    color: 'var(--mdzip-accent-foreground-color)',
   },
 });
 
@@ -1152,6 +1229,7 @@ export class MdzipWorkspaceView {
   private cmEditor: EditorView | null = null;
   private readonly readOnlyCompartment = new Compartment();
   private readonly lineNumbersCompartment = new Compartment();
+  private readonly searchCompartment = new Compartment();
   private updatingCm = false;
   private syncing = false;
 
@@ -1197,6 +1275,7 @@ export class MdzipWorkspaceView {
   private readonly elSourceBtn: HTMLButtonElement;
   private readonly elSourceIcon: HTMLElement;
   private readonly elSaveBtn: HTMLButtonElement;
+  private readonly elSearchBtn: HTMLButtonElement;
   private readonly elZoomBtn: HTMLButtonElement;
   private readonly elThemeControls: HTMLElement;
   private readonly elDarkThemeBtn: HTMLButtonElement;
@@ -1289,6 +1368,7 @@ export class MdzipWorkspaceView {
     this.elSourceBtn = q('[data-ref="source-btn"]');
     this.elSourceIcon = q('[data-ref="source-icon"]');
     this.elSaveBtn = q('[data-ref="save-btn"]');
+    this.elSearchBtn = q('[data-ref="search-btn"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
     this.elThemeControls = q('[data-ref="theme-controls"]');
     this.elDarkThemeBtn = q('[data-ref="dark-theme-btn"]');
@@ -1614,6 +1694,42 @@ export class MdzipWorkspaceView {
     return true;
   }
 
+  /**
+   * Opens CodeMirror's find/replace panel for the current document. Unlike
+   * {@link executeCommand}, this works in read-only (Viewer) hosts too —
+   * searching doesn't require edit access, only a visible source pane. If
+   * the current layout is preview-only, switches to split/source first so
+   * the panel has somewhere to render.
+   */
+  public async openSearch(): Promise<boolean> {
+    if (!this.controlPolicy.search) {
+      return false;
+    }
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot || snapshot.currentPathType !== 'markdown') {
+      return false;
+    }
+    if (this.layout === 'preview') {
+      const nextLayout = this.controlPolicy.layout.split
+        ? 'split'
+        : this.controlPolicy.layout.source ? 'source' : null;
+      if (!nextLayout) {
+        return false;
+      }
+      await this.setLayout(nextLayout);
+    }
+    const editor = await this.ensureCmEditor(true);
+    if (!editor) {
+      return false;
+    }
+    editor.focus();
+    return openSearchPanel(editor);
+  }
+
+  public closeSearch(): boolean {
+    return this.cmEditor ? closeSearchPanel(this.cmEditor) : false;
+  }
+
   public async convertToMdz(): Promise<boolean> {
     if (!this.workspace || this.workspace.mode === 'read-only') {
       return false;
@@ -1692,11 +1808,22 @@ export class MdzipWorkspaceView {
   public setControls(controls: MdzipControlPreset | MdzipControlPolicy | undefined): void {
     const next = resolveMdzipControlPolicy(controls);
     const lineNumbersChanged = next.lineNumbers !== this.controlPolicy.lineNumbers;
+    const searchChanged = next.search !== this.controlPolicy.search;
     this.controlPolicy = next;
     if (lineNumbersChanged && this.cmEditor) {
       this.cmEditor.dispatch({
         effects: this.lineNumbersCompartment.reconfigure(
           next.lineNumbers ? lineNumbers() : []
+        )
+      });
+    }
+    if (searchChanged && this.cmEditor) {
+      if (!next.search) {
+        closeSearchPanel(this.cmEditor);
+      }
+      this.cmEditor.dispatch({
+        effects: this.searchCompartment.reconfigure(
+          next.search ? [search({ top: true }), keymap.of(searchKeymap)] : []
         )
       });
     }
@@ -2370,6 +2497,7 @@ export class MdzipWorkspaceView {
       doc: initialText,
       extensions: [
         this.lineNumbersCompartment.of(this.controlPolicy.lineNumbers ? lineNumbers() : []),
+        this.searchCompartment.of(this.controlPolicy.search ? [search({ top: true }), keymap.of(searchKeymap)] : []),
         history(),
         keymap.of([
           { key: 'Mod-b', run: () => self.runFormatShortcut('bold') },
@@ -2485,25 +2613,29 @@ export class MdzipWorkspaceView {
     const showSaveControl = this.controlPolicy.save && snapshot.mode !== 'read-only';
     const showZoomControl = this.controlPolicy.zoom;
     const showColorSchemeControl = this.controlPolicy.colorScheme;
+    const showSearchControl = this.controlPolicy.search
+      && canShowSource && snapshot.currentPathType === 'markdown';
     const showEditControls = canEdit
       && snapshot.currentPathType === 'markdown'
       && this.layout !== 'preview'
       && hasFormattingControls(this.controlPolicy.formatting);
     const showToolbar = this.controlPolicy.toolbar
-      && (showNavigationControl || showLayoutControls
-        || showSaveControl || showZoomControl || showColorSchemeControl || showEditControls);
+      && (showNavigationControl || showLayoutControls || showSaveControl
+        || showZoomControl || showColorSchemeControl || showSearchControl || showEditControls);
 
     this.elDocumentStrip.hidden = !showTitleControl;
     this.elToolbar.hidden = !showToolbar;
     this.elToolbarLeft.hidden = !showNavigationControl;
     this.elEditToolbar.hidden = !showEditControls;
     this.elLayoutControls.hidden = !showLayoutControls;
-    this.elToolbarControls.hidden = !showSaveControl && !showZoomControl && !showColorSchemeControl;
+    this.elToolbarControls.hidden = !showSaveControl && !showZoomControl
+      && !showColorSchemeControl && !showSearchControl;
     this.elNavBtn.hidden = !showNavigationControl;
     this.elPreviewBtn.hidden = !this.controlPolicy.layout.preview;
     this.elSplitBtn.hidden = !this.controlPolicy.layout.split;
     this.elSourceBtn.hidden = !this.controlPolicy.layout.source;
     this.elSaveBtn.hidden = !showSaveControl;
+    this.elSearchBtn.hidden = !showSearchControl;
     this.elZoomBtn.hidden = !showZoomControl;
     this.elThemeControls.hidden = !showColorSchemeControl;
 
@@ -2801,6 +2933,10 @@ export class MdzipWorkspaceView {
 
     this.elSaveBtn.addEventListener('click', () => {
       if (this.controlPolicy.save) { void this.save(); }
+    });
+
+    this.elSearchBtn.addEventListener('click', () => {
+      void this.openSearch();
     });
 
     this.elZoomBtn.addEventListener('click', (e) => {
@@ -5205,6 +5341,9 @@ const SHELL_HTML = `
     </div>
 
     <div class="toolbar-controls" data-ref="toolbar-controls">
+      <button type="button" class="icon-toggle" data-ref="search-btn" title="Find/replace (Mod-F)" aria-label="Find/replace">
+        ${SEARCH_ICON_HTML}
+      </button>
       <button type="button" class="icon-toggle" data-ref="save-btn" title="Save" aria-label="Save">
         ${SAVE_ICON_HTML}
       </button>

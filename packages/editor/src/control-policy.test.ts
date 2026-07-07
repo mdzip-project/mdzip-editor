@@ -14,6 +14,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.colorScheme).toBe(false);
     expect(policy.orphanActions).toBe(false);
     expect(policy.fileActions).toBe(false);
+    expect(policy.search).toBe(false);
     expect(policy.formatting.headings).toEqual([]);
   });
 
@@ -28,6 +29,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.colorScheme).toBe(true);
     expect(policy.orphanActions).toBe(false);
     expect(policy.fileActions).toBe(false);
+    expect(policy.search).toBe(true);
     expect(policy.formatting.bold).toBe(false);
     expect(policy.formatting.lineBreak).toBe(false);
   });
@@ -42,6 +44,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.zoom).toBe(true);
     expect(policy.orphanActions).toBe(true);
     expect(policy.fileActions).toBe(true);
+    expect(policy.search).toBe(true);
     expect(policy.formatting.bold).toBe(true);
     expect(policy.formatting.lineBreak).toBe(true);
     expect(policy.formatting.headings).toEqual([1, 2, 3, 4, 5, 6]);
@@ -53,6 +56,13 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.toolbar).toBe(true);
     expect(policy.title).toEqual({ visible: true, editable: true });
     expect(policy.fileActions).toBe(true);
+    expect(policy.search).toBe(true);
+  });
+
+  it('can disable search independently of other controls', () => {
+    const policy = resolveMdzipControlPolicy({ preset: 'standalone-editor', search: false });
+    expect(policy.search).toBe(false);
+    expect(policy.save).toBe(true);
   });
 
   it('defaults to standalone-editor when no controls are provided', () => {

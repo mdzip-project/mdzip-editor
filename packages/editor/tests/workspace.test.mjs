@@ -971,7 +971,8 @@ test('resolves control policy presets for common host scenarios', () => {
     zoom: true,
     colorScheme: true,
     orphanActions: false,
-    fileActions: false
+    fileActions: false,
+    search: true
   });
 
   assert.equal(resolveMdzipControlPolicy('standalone-editor').save, true);
