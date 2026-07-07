@@ -68,6 +68,27 @@ function mermaidErrorMessage(error: unknown): string {
   return `Mermaid diagram error: ${detail}`;
 }
 
+// Mermaid measures diagram layout via a real attached DOM element, so an
+// invalid diagram can leave its own error SVG/DOM behind directly on
+// `document.body` (not the detached template this extension renders into) —
+// surfacing as persistent "Syntax error in text" art in the host page.
+// `suppressErrorRendering` (mermaid >=10.3) stops most of that at the source;
+// this sweeps any body children mermaid added during a render attempt as a
+// defensive backstop, since it survives failure modes suppressErrorRendering
+// doesn't cover.
+async function withBodyCleanup<T>(doc: Document, run: () => Promise<T>): Promise<T> {
+  const before = new Set(Array.from(doc.body.children));
+  try {
+    return await run();
+  } finally {
+    for (const child of Array.from(doc.body.children)) {
+      if (!before.has(child)) {
+        child.remove();
+      }
+    }
+  }
+}
+
 /**
  * A markdown render extension that renders fenced ` ```mermaid ` code blocks to
  * inline SVG in the preview.
@@ -117,7 +138,10 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
         // self-consistent with the policy without re-allowing HTML in labels.
         htmlLabels: false,
         flowchart: { htmlLabels: false },
-        theme: resolveTheme(options.theme ?? 'auto', context.colorScheme)
+        theme: resolveTheme(options.theme ?? 'auto', context.colorScheme),
+        // Stops mermaid from injecting its own error diagram into the DOM on
+        // failure; this extension renders its own error block instead.
+        suppressErrorRendering: true
       });
 
       for (const code of blocks) {
@@ -128,7 +152,7 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
         const source = code.textContent ?? '';
         const container = doc.createElement('div');
         try {
-          const { svg } = await mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source);
+          const { svg } = await withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
           container.className = 'mdzip-mermaid';
           container.innerHTML = sanitizeMdzipHtml(svg, [MERMAID_SANITIZE]);
         } catch (error) {

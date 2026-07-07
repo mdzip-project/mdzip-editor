@@ -31,6 +31,11 @@ function fakeMermaid() {
       state.calls += 1;
       state.sources.push(text);
       if (text.includes('BAD')) {
+        // Real mermaid can leave its own error SVG attached to document.body
+        // when a diagram fails to parse; simulate that leak here.
+        const stray = globalThis.document.createElement('div');
+        stray.className = 'mermaid-stray-error';
+        globalThis.document.body.appendChild(stray);
         throw new Error('Parse error on line 1');
       }
       return { svg: MERMAID_SVG.replace('viewBox', `id="${id}" viewBox`) };
@@ -100,6 +105,32 @@ test('an invalid diagram renders an inline error instead of breaking the preview
   assert.match(html, /Mermaid diagram error: Parse error on line 1/);
   assert.doesNotMatch(html, /<svg/);
   assert.match(html, /After/, 'content after a bad diagram still renders');
+});
+
+test('initializes mermaid with suppressErrorRendering to contain failures', async () => {
+  const { api, state } = fakeMermaid();
+  await new MdzipRenderingService(defaultSafeMarkdownRenderer, [
+    mdzipMermaidExtension({ loadMermaid: async () => api })
+  ]).renderMarkdown('```mermaid\ngraph TD; A-->B;\n```\n', renderContext());
+
+  assert.equal(state.config.suppressErrorRendering, true);
+});
+
+test('sweeps stray body DOM a failed diagram render leaves behind', async () => {
+  const { api } = fakeMermaid();
+  const bodyChildrenBefore = globalThis.document.body.children.length;
+
+  const html = await new MdzipRenderingService(defaultSafeMarkdownRenderer, [
+    mdzipMermaidExtension({ loadMermaid: async () => api })
+  ]).renderMarkdown('```mermaid\nBAD SYNTAX\n```\n', renderContext());
+
+  assert.match(html, /class="mdzip-mermaid-error"/);
+  assert.equal(
+    globalThis.document.body.children.length,
+    bodyChildrenBefore,
+    'no stray mermaid error DOM should persist on document.body'
+  );
+  assert.equal(globalThis.document.querySelector('.mermaid-stray-error'), null);
 });
 
 test('non-mermaid content is untouched and mermaid is never loaded', async () => {
