@@ -1,6 +1,11 @@
 import { MdzipWorkspaceView } from 'mdzip-editor';
+import { MdzipDiffView } from 'mdzip-editor/diff-view';
+import { mdzipMermaidExtension } from 'mdzip-editor/mermaid';
 import { modeFromControls, type DemoControls, type DemoImageInsertOptions } from '../tab-controls.js';
 import type { TabController } from '../tab-controller.js';
+import { loadDiffBaseBytes } from '../diff-sample.js';
+
+const mermaidExtension = mdzipMermaidExtension();
 
 export function initRaw(
   container: HTMLElement,
@@ -11,22 +16,51 @@ export function initRaw(
   let currentControls: DemoControls = 'standalone-editor';
   let currentImageInsert: DemoImageInsertOptions = { mode: 'markdown' };
   let currentFileName = 'document.mdz';
+  let diffMode = false;
 
-  const makeView = () => new MdzipWorkspaceView(container, {
-    controls: currentControls,
-    imageHydrationAnimation: 'initial',
-    imageInsertMode: currentImageInsert.mode,
-    imageInsertHandler: currentImageInsert.handler,
-    onSaved: (bytes, snapshot) => { onSaved(bytes, snapshot.fileName); view.markPersisted(); },
-    onFailed,
-  });
+  let workspaceView: MdzipWorkspaceView | null = null;
+  let diffView: MdzipDiffView | null = null;
 
-  let view = makeView();
-
-  function updateView() {
-    view.setControls(currentControls);
-    view.open(currentBytes, { mode: modeFromControls(currentControls), fileName: currentFileName });
+  function renderWorkspace(): void {
+    container.replaceChildren();
+    workspaceView = new MdzipWorkspaceView(container, {
+      controls: currentControls,
+      imageHydrationAnimation: 'initial',
+      imageInsertMode: currentImageInsert.mode,
+      imageInsertHandler: currentImageInsert.handler,
+      markdownExtensions: [mermaidExtension],
+      onSaved: (bytes, snapshot) => { onSaved(bytes, snapshot.fileName); workspaceView?.markPersisted(); },
+      onFailed,
+    });
+    workspaceView.open(currentBytes, { mode: modeFromControls(currentControls), fileName: currentFileName });
   }
+
+  async function renderDiff(): Promise<void> {
+    const baseBytes = await loadDiffBaseBytes();
+    if (!diffMode) return;
+    container.replaceChildren();
+    diffView = new MdzipDiffView(container, {
+      before: { bytes: baseBytes, label: 'sample.mdz' },
+      after: { bytes: currentBytes, label: currentFileName },
+      showUnchanged: true,
+      onFailed,
+    });
+  }
+
+  function destroyActive(): void {
+    workspaceView?.destroy();
+    workspaceView = null;
+    diffView?.destroy();
+    diffView = null;
+  }
+
+  function render(): void {
+    destroyActive();
+    if (diffMode) void renderDiff();
+    else renderWorkspace();
+  }
+
+  render();
 
   return {
     update: (bytes, fileName, controls, imageInsert) => {
@@ -34,22 +68,27 @@ export function initRaw(
       currentFileName = fileName;
       currentControls = controls;
       currentImageInsert = imageInsert;
-      view.destroy();
-      view = makeView();
-      updateView();
+      render();
     },
     setControls: (controls) => {
       currentControls = controls;
-      view.setControls(controls);
+      if (!diffMode) workspaceView?.setControls(controls);
     },
     setImageInsertOptions: (imageInsert) => {
       currentImageInsert = imageInsert;
-      view.setImageInsertOptions({
-        imageInsertMode: imageInsert.mode,
-        imageInsertHandler: imageInsert.handler,
-      });
+      if (!diffMode) {
+        workspaceView?.setImageInsertOptions({
+          imageInsertMode: imageInsert.mode,
+          imageInsertHandler: imageInsert.handler,
+        });
+      }
     },
-    markPersisted: () => view.markPersisted(),
-    destroy: () => view.destroy(),
+    setDiffMode: (enabled) => {
+      if (diffMode === enabled) return;
+      diffMode = enabled;
+      render();
+    },
+    markPersisted: () => workspaceView?.markPersisted(),
+    destroy: () => destroyActive(),
   };
 }

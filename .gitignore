@@ -14,3 +14,8 @@ design/notes.mdz
 packages/editor/src/**/*.js
 packages/editor/src/**/*.d.ts
 packages/editor/src/**/*.map
+
+# Demo sample content belongs to mdzip.org (the site), not this library.
+# mdzip.org's build-demo.mjs copies its own editor-demo/samples/ here before
+# building — see demo/src/sample-files.ts.
+demo/src/assets/*

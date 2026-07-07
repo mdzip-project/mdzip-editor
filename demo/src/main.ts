@@ -3,8 +3,12 @@ import { imageInsertOptionsFromChoice, PRESETS, type DemoImageInsertChoice } fro
 import type { MdzipControlPreset } from 'mdzip-editor';
 import type { DemoControls } from './tab-controls.js';
 import type { TabController } from './tab-controller.js';
+import { SAMPLE_FILES } from './sample-files.js';
 
-type TabId = 'raw' | 'diff' | 'angular' | 'react' | 'vue';
+const CHOOSE_FILE = '__choose_file__';
+const CUSTOM_FILE = '__custom_file__';
+
+type TabId = 'raw' | 'angular' | 'react' | 'vue';
 
 let activeTab: TabId = 'raw';
 let currentBytes: Uint8Array | null = null;
@@ -12,6 +16,7 @@ let currentFileName = 'sample.mdz';
 let currentControls: MdzipControlPreset = 'standalone-editor';
 let currentLineNumbers = true;
 let currentImageInsertChoice: DemoImageInsertChoice = 'markdown';
+let diffMode = false;
 
 const controllers = new Map<TabId, TabController>();
 const pendingControllers = new Map<TabId, Promise<TabController>>();
@@ -22,10 +27,12 @@ function setStatus(msg: string): void {
 
 function updateModeUI(): void {
   document.querySelectorAll<HTMLElement>('#mode-group .tab-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset['preset'] === currentControls);
+    const preset = btn.dataset['preset'];
+    btn.classList.toggle('active', diffMode ? preset === 'diff' : preset === currentControls);
   });
-  const preset = PRESETS.find(p => p.value === currentControls);
-  document.getElementById('mode-desc')!.textContent = preset?.description ?? '';
+  document.getElementById('mode-desc')!.textContent = diffMode
+    ? "Compare against a fixed sample using this framework's own Diff component"
+    : (PRESETS.find(p => p.value === currentControls)?.description ?? '');
   const lineNumbersToggle = document.getElementById('line-numbers-toggle') as HTMLInputElement | null;
   if (lineNumbersToggle) {
     lineNumbersToggle.checked = currentLineNumbers;
@@ -67,10 +74,6 @@ async function getOrInitTab(tabId: TabId): Promise<TabController> {
     switch (tabId) {
       case 'raw':
         return initRaw(container, onSaved, onFailed);
-      case 'diff': {
-        const { initDiff } = await import('./tabs/diff.js');
-        return initDiff(container, onFailed);
-      }
       case 'react': {
         const { initReact } = await import('./tabs/react.js');
         return initReact(container, onSaved, onFailed);
@@ -98,15 +101,13 @@ async function getOrInitTab(tabId: TabId): Promise<TabController> {
 }
 
 async function switchTab(newTab: TabId): Promise<void> {
-  document.querySelectorAll<HTMLElement>('.tab-btn[data-tab]').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset['tab'] === newTab);
-  });
   document.querySelectorAll<HTMLElement>('.tab-panel').forEach(panel => {
     panel.classList.toggle('active', panel.id === `tab-${newTab}`);
   });
   activeTab = newTab;
   try {
     const ctrl = await getOrInitTab(newTab);
+    ctrl.setDiffMode(diffMode);
     if (currentBytes) {
       ctrl.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions());
       setStatus(`${newTab} - ${currentFileName}`);
@@ -125,16 +126,27 @@ async function loadBytes(bytes: Uint8Array, fileName: string): Promise<void> {
   }
 }
 
-// Framework tab buttons
-document.querySelectorAll<HTMLElement>('.tab-btn[data-tab]').forEach(btn => {
-  btn.addEventListener('click', () => void switchTab(btn.dataset['tab'] as TabId));
+// Framework radio buttons
+document.querySelectorAll<HTMLInputElement>('input[name="framework"]').forEach(radio => {
+  radio.addEventListener('change', () => {
+    if (radio.checked) void switchTab(radio.value as TabId);
+  });
 });
 
-// Mode buttons
+// Mode buttons — Diff is just another mode, mutually exclusive with the
+// workspace presets; it applies to whichever framework tab is active, and to
+// each newly-created tab (see switchTab), so it composes with any of them.
 document.querySelectorAll<HTMLElement>('#mode-group .tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    currentControls = btn.dataset['preset'] as MdzipControlPreset;
+    const preset = btn.dataset['preset']!;
+    if (preset === 'diff') {
+      diffMode = true;
+    } else {
+      diffMode = false;
+      currentControls = preset as MdzipControlPreset;
+    }
     updateModeUI();
+    controllers.get(activeTab)?.setDiffMode(diffMode);
     if (currentBytes && controllers.has(activeTab)) {
       controllers.get(activeTab)!.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions());
     }
@@ -155,13 +167,76 @@ document.getElementById('image-insert-mode')!.addEventListener('change', (event)
   setStatus(`Image insert: ${label}.`);
 });
 
-// File open
-document.getElementById('file-input')!.addEventListener('change', async (e) => {
+// Sample-file dropdown, populated from the designated ./assets samples
+// folder at build time (see sample-files.ts), plus a final "Choose file..."
+// option that falls back to the hidden native file input.
+const sampleSelect = document.getElementById('sample-select') as HTMLSelectElement;
+const fileInput = document.getElementById('file-input') as HTMLInputElement;
+let lastRealSelectValue = '';
+let customOption: HTMLOptionElement | null = null;
+
+function populateSampleSelect(): void {
+  for (const sample of SAMPLE_FILES) {
+    const option = document.createElement('option');
+    option.value = sample.url;
+    option.textContent = sample.label;
+    sampleSelect.appendChild(option);
+  }
+  const chooseFileOption = document.createElement('option');
+  chooseFileOption.value = CHOOSE_FILE;
+  chooseFileOption.textContent = 'Choose file...';
+  sampleSelect.appendChild(chooseFileOption);
+}
+
+function markCustomFileLoaded(fileName: string): void {
+  if (!customOption) {
+    customOption = document.createElement('option');
+    customOption.value = CUSTOM_FILE;
+    sampleSelect.insertBefore(customOption, sampleSelect.querySelector(`option[value="${CHOOSE_FILE}"]`));
+  }
+  customOption.textContent = fileName;
+  sampleSelect.value = CUSTOM_FILE;
+  lastRealSelectValue = CUSTOM_FILE;
+}
+
+async function loadSampleUrl(url: string, label: string): Promise<void> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to load ${label}: ${res.status}`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  await loadBytes(bytes, label);
+  setStatus(`Loaded ${label}.`);
+}
+
+populateSampleSelect();
+
+sampleSelect.addEventListener('change', () => {
+  const { value } = sampleSelect;
+  if (value === CHOOSE_FILE) {
+    fileInput.click();
+    return;
+  }
+  lastRealSelectValue = value;
+  const sample = SAMPLE_FILES.find((f) => f.url === value);
+  void loadSampleUrl(value, sample?.label ?? value).catch(onFailed);
+});
+
+// Most browsers fire 'cancel' (not 'change') when the native file dialog is
+// dismissed without a selection — revert to whatever was actually loaded.
+fileInput.addEventListener('cancel', () => {
+  sampleSelect.value = lastRealSelectValue;
+});
+
+fileInput.addEventListener('change', async (e) => {
   const file = (e.target as HTMLInputElement).files?.[0];
-  if (!file) return;
+  if (!file) {
+    sampleSelect.value = lastRealSelectValue;
+    return;
+  }
   const bytes = new Uint8Array(await file.arrayBuffer());
   await loadBytes(bytes, file.name);
   setStatus(`Opened ${file.name}.`);
+  markCustomFileLoaded(file.name);
+  fileInput.value = '';
 });
 
 
@@ -175,14 +250,16 @@ function downloadBytes(bytes: Uint8Array, fileName: string): void {
 async function init(): Promise<void> {
   updateModeUI();
   await switchTab('raw');
-  try {
-    const res = await fetch('./assets/developer-guide.mdz');
-    if (!res.ok) throw new Error(`Failed to load developer guide: ${res.status}`);
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    await loadBytes(bytes, 'developer-guide.mdz');
-    setStatus('Loaded developer-guide.mdz - try the JS, Angular, React and Vue tabs.');
-  } catch (err) {
-    onFailed(err);
+  const initial = SAMPLE_FILES.find((f) => f.label === 'developer-guide.mdz') ?? SAMPLE_FILES[0];
+  if (initial) {
+    try {
+      await loadSampleUrl(initial.url, initial.label);
+      sampleSelect.value = initial.url;
+      lastRealSelectValue = initial.url;
+      setStatus(`Loaded ${initial.label} - try the JS, Angular, React and Vue tabs, or the Diff mode.`);
+    } catch (err) {
+      onFailed(err);
+    }
   }
   if (window.parent !== window) {
     window.parent.postMessage({ type: 'mdzip-demo-ready' }, '*');
@@ -199,6 +276,7 @@ window.addEventListener('message', (event: MessageEvent) => {
     try {
       await loadBytes(rawBytes, fileName);
       setStatus(`Opened ${fileName}.`);
+      markCustomFileLoaded(fileName);
     } catch (err) {
       onFailed(err);
     }

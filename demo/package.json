@@ -11,7 +11,8 @@
     "@mdzip/editor-ng": "file:../packages/editor-ng",
     "@mdzip/editor-react": "file:../packages/editor-react",
     "@mdzip/editor-vue": "file:../packages/editor-vue",
-    "mdzip-editor": "file:../packages/editor"
+    "mdzip-editor": "file:../packages/editor",
+    "mermaid": "^11.0.0"
   },
   "devDependencies": {
     "@analogjs/vite-plugin-angular": "^1.14.0",
