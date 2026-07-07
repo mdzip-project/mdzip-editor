@@ -598,6 +598,67 @@ test('progressive image hydration preserves legacy wrap alignment', async () => 
   }
 });
 
+test('progressive image hydration honors raw HTML width/height attributes', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'viewer',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle(
+      '# Title\n\n<img src="images/logo.png" alt="Logo" height="300" align="right">\n',
+      'Demo',
+      [{ archivePath: 'images/logo.png', fileBytes: PNG_1X1 }]
+    );
+    await view.open(bytes, { mode: 'read-only', fileName: 'demo.mdz' });
+
+    const image = container.querySelector('[data-ref="preview-content"] img');
+    assert.ok(image, 'image element is in the mounted preview');
+    assert.equal(image.style.height, '300px', 'explicit height attribute survives the preview\'s height:auto rule');
+    assert.equal(image.style.width, '', 'width is left to scale from the aspect ratio when only height is given');
+    const slot = image.parentElement;
+    assert.equal(slot.classList.contains('mdzip-image-align-right'), true);
+
+    await view.whenRendered();
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('raw HTML image alignment applies even for images that skip archive hydration', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'viewer',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle(
+      '# Title\n\n<img src="https://example.com/logo.png" alt="Logo" align="left" width="180">\n',
+      'Demo',
+      []
+    );
+    await view.open(bytes, { mode: 'read-only', fileName: 'demo.mdz' });
+
+    const image = container.querySelector('[data-ref="preview-content"] img');
+    assert.ok(image, 'external image is in the mounted preview');
+    assert.equal(image.classList.contains('mdzip-image-left'), true);
+    assert.equal(image.style.width, '180px');
+    assert.equal(
+      image.parentElement.classList.contains('mdzip-image-slot'),
+      false,
+      'external images are not wrapped in a hydration slot'
+    );
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
 test('image hydration animation can be disabled for live editing', async () => {
   const container = document.createElement('div');
   document.body.appendChild(container);

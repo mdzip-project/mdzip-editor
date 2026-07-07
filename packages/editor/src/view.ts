@@ -864,6 +864,32 @@ const hardBreakMarkerHighlight = ViewPlugin.fromClass(class {
   decorations: value => value.decorations
 });
 
+// Matches raw HTML tags other than <br> (which hardBreakMarkerMatcher already
+// covers) so authors can visually distinguish raw HTML from Markdown prose.
+// Excludes autolinks like <https://example.com> — those have no space before
+// '>' and no closing '/', so the tag-name-only branch requires the char after
+// the name to be '>' directly, which a URL's ':' never satisfies.
+const htmlTagMarkerMatcher = new MatchDecorator({
+  regexp: /<\/?(?!br\b)[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?\/?>/gi,
+  decoration: Decoration.mark({ class: 'mdzip-hard-break-marker' })
+});
+
+const htmlTagMarkerHighlight = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = htmlTagMarkerMatcher.createDeco(view);
+  }
+
+  update(update: ViewUpdate): void {
+    if (update.docChanged || update.viewportChanged) {
+      this.decorations = htmlTagMarkerMatcher.updateDeco(update, this.decorations);
+    }
+  }
+}, {
+  decorations: value => value.decorations
+});
+
 function injectStyles(doc: Document): void {
   const existing = doc.querySelector<HTMLStyleElement>(`style[${STYLE_ATTR}]`);
   if (existing) {
@@ -1031,6 +1057,37 @@ interface MdzipPreviewMemo {
   pathType: MdzipPathType;
   text: string;
   colorScheme: MdzipColorScheme;
+}
+
+// Browsers apply raw HTML width/height attributes as presentational sizing
+// hints, but the preview's `img { height: auto }` rule (for responsive
+// scaling) overrides that hint via the normal CSS cascade — so an author's
+// `<img height="300">` was silently ignored. Re-applying numeric, unitless
+// width/height attributes as inline pixel styles restores that sizing
+// without touching an author-supplied inline style.
+function applyRawHtmlImageSizeAttributes(image: HTMLImageElement): void {
+  const width = image.getAttribute('width');
+  if (width && /^\d+$/.test(width) && !image.style.width) {
+    image.style.width = `${width}px`;
+  }
+  const height = image.getAttribute('height');
+  if (height && /^\d+$/.test(height) && !image.style.height) {
+    image.style.height = `${height}px`;
+  }
+}
+
+// Maps the legacy raw HTML `align="left"|"right"` attribute (or the editor's
+// own wrap classes) to a layout direction, for images that skip archive
+// hydration — external, data, and fragment sources — and so never get a slot.
+function rawHtmlImageAlignClass(image: HTMLImageElement): 'mdzip-image-left' | 'mdzip-image-right' | null {
+  const align = image.getAttribute('align')?.toLowerCase();
+  if (align === 'left' || image.classList.contains('mdzip-image-wrap-left')) {
+    return 'mdzip-image-left';
+  }
+  if (align === 'right' || image.classList.contains('mdzip-image-wrap-right')) {
+    return 'mdzip-image-right';
+  }
+  return null;
 }
 
 export class MdzipWorkspaceView {
@@ -1885,9 +1942,14 @@ export class MdzipWorkspaceView {
     const document = this.elPreviewContent.ownerDocument;
     const pending: { image: HTMLImageElement; slot: HTMLElement; source: string }[] = [];
     for (const image of Array.from(this.elPreviewContent.querySelectorAll('img'))) {
+      applyRawHtmlImageSizeAttributes(image);
       const source = image.getAttribute('src');
       // Leave external, protocol-relative, data, and fragment URLs untouched.
       if (!source || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(source)) {
+        const alignClass = rawHtmlImageAlignClass(image);
+        if (alignClass) {
+          image.classList.add(alignClass);
+        }
         continue;
       }
       // Drop the archive-relative src so the browser does not fetch the bad
@@ -1902,10 +1964,10 @@ export class MdzipWorkspaceView {
       slot.className = animateImageHydration
         ? 'mdzip-image-slot'
         : 'mdzip-image-slot mdzip-image-open mdzip-image-animation-off';
-      const align = image.getAttribute('align')?.toLowerCase();
-      if (align === 'left' || image.classList.contains('mdzip-image-wrap-left')) {
+      const alignClass = rawHtmlImageAlignClass(image);
+      if (alignClass === 'mdzip-image-left') {
         slot.classList.add('mdzip-image-align-left');
-      } else if (align === 'right' || image.classList.contains('mdzip-image-wrap-right')) {
+      } else if (alignClass === 'mdzip-image-right') {
         slot.classList.add('mdzip-image-align-right');
       }
       image.parentNode?.insertBefore(slot, image);
@@ -2318,6 +2380,7 @@ export class MdzipWorkspaceView {
         markdown(),
         syntaxHighlighting(mdzipMarkdownHighlight),
         hardBreakMarkerHighlight,
+        htmlTagMarkerHighlight,
         EditorView.lineWrapping,
         dropCursor(),
         mdzipEditorTheme,
