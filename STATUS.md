@@ -1,5 +1,5 @@
-Status: awaiting-test
-Last: Packed 1.3.13 local tarballs; studio + vscode wired to them (file: refs) for context-menu testing
+Status: idle
+Last: Committed fix for raw HTML <img src> orphan detection (#24), core-js bumped to 1.3.3
 
 <!-- Dashboard reads these two lines.
      Status: idle | in-progress | awaiting-test | ready-to-commit | blocked
