@@ -181,11 +181,28 @@ function populateSampleSelect(): void {
     option.value = sample.url;
     option.textContent = sample.label;
     sampleSelect.appendChild(option);
+    void annotateSampleSize(option, sample.url, sample.label);
   }
   const chooseFileOption = document.createElement('option');
   chooseFileOption.value = CHOOSE_FILE;
   chooseFileOption.textContent = 'Choose file...';
   sampleSelect.appendChild(chooseFileOption);
+}
+
+// Best-effort: a HEAD request only reads headers, not the sample body, so
+// this doesn't defeat the fetch-on-select loading in loadSampleUrl(). Large
+// samples get their size appended to the label so picking one isn't a
+// surprise multi-hundred-MB download.
+async function annotateSampleSize(option: HTMLOptionElement, url: string, label: string): Promise<void> {
+  try {
+    const res = await fetch(url, { method: 'HEAD' });
+    const len = res.headers.get('content-length');
+    if (!len) return;
+    const mb = Number(len) / (1024 * 1024);
+    if (mb >= 1) option.textContent = `${label} (${mb.toFixed(0)} MB)`;
+  } catch {
+    // Best-effort only — leave the label as-is on failure.
+  }
 }
 
 function markCustomFileLoaded(fileName: string): void {
