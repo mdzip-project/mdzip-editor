@@ -913,7 +913,7 @@ const mdzipMarkdownHighlight = HighlightStyle.define([
   { tag: tags.emphasis, color: '#008b8b', fontStyle: 'italic' },
   { tag: tags.strikethrough, color: '#57606a', textDecoration: 'line-through' },
   { tag: tags.link, color: '#0969da' },
-  { tag: tags.url, color: '#0969da' },
+  { tag: tags.url, color: '#6e7781' },
   { tag: tags.monospace, color: '#8a8f00' },
   { tag: tags.quote, color: '#7a5c00' },
   { tag: tags.contentSeparator, color: '#6a9955' },
