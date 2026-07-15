@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.18] - 2026-07-15
+
+### Fixed
+- The split-layout scroll-sync fix in 1.3.17 was insufficient on
+  Firefox/Linux: it deferred clearing the re-entrancy guard to the next
+  `requestAnimationFrame`, assuming the echoed `scroll` event from a
+  programmatic `scrollTop` write would arrive within one frame. That held on
+  Chromium but not on Firefox/Linux, where the echo arrived later, slipped
+  past the guard, and caused a large scroll-position swing rather than a
+  stable sync. Replaced the timing assumption with a value comparison: each
+  sync direction records the exact value it wrote to the other pane's
+  `scrollTop` and ignores an incoming `scroll` event within 2px of that
+  value, recognizing it as its own echo regardless of how long it took to
+  arrive.
+
 ## [1.3.17] - 2026-07-15
 
 ### Fixed
