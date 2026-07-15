@@ -1,6 +1,6 @@
 {
   "name": "@mdzip/editor",
-  "version": "1.3.16",
+  "version": "1.3.17",
   "description": "Framework-independent MDZip workspace engine.",
   "license": "Apache-2.0",
   "repository": {

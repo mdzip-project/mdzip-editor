@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.17] - 2026-07-15
+
+### Fixed
+- Split-layout scroll sync between the source editor and preview could drift
+  upward over time with no further user input. The `syncing` re-entrancy
+  guard was cleared synchronously right after setting `scrollTop`, but the
+  browser dispatches the resulting echo `scroll` event asynchronously — the
+  echo arrived after the guard was already clear, triggered a sync back in
+  the other direction, and small rounding differences between the two panes'
+  scroll ratios compounded with each round trip. The guard now clears on the
+  next animation frame instead, after the echo has had its chance to fire.
+
 ## [1.3.16] - 2026-07-14
 
 ### Added
