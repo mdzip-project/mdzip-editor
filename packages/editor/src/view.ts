@@ -1256,6 +1256,11 @@ export class MdzipWorkspaceView {
   private readonly searchCompartment = new Compartment();
   private updatingCm = false;
   private syncing = false;
+  // Last value this class itself wrote to each pane's scrollTop, used to
+  // recognize and ignore the echoed 'scroll' event that write produces (see
+  // syncScrollFromPreview/syncScrollToPreview).
+  private lastSyncedEditorScrollTop: number | null = null;
+  private lastSyncedPreviewScrollTop: number | null = null;
 
   private markdownRenderer?: MdzipMarkdownRenderer;
   private markdownExtensions: readonly MdzipMarkdownRenderExtension[] = [];
@@ -5246,38 +5251,54 @@ export class MdzipWorkspaceView {
     if (this.syncing || !this.cmEditor || this.layout !== 'split') {
       return;
     }
+    const currentTop = this.elPreviewPane.scrollTop;
+    // Recognize this event as the echo of our own prior write (from
+    // syncScrollToPreview) by comparing values instead of racing timing.
+    // Setting scrollTop fires the target's own 'scroll' event
+    // asynchronously, and how many frames later varies by platform — an
+    // earlier version of this guard cleared a `syncing` flag on the next
+    // requestAnimationFrame, which covered Chromium's timing but arrived too
+    // early on Firefox/Linux, let the echo through, and re-triggered a sync
+    // back in the other direction, compounding into visible drift. Comparing
+    // against the exact value we last wrote to this exact property makes the
+    // check independent of how long the echo takes to arrive.
+    if (this.lastSyncedPreviewScrollTop !== null && Math.abs(currentTop - this.lastSyncedPreviewScrollTop) < 2) {
+      return;
+    }
     this.syncing = true;
     const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
-    const scrollRatio = previewHeight > 0 ? this.elPreviewPane.scrollTop / previewHeight : 0;
+    const scrollRatio = previewHeight > 0 ? currentTop / previewHeight : 0;
     const cmScroller = this.cmEditor.dom.querySelector('.cm-scroller');
     if (cmScroller) {
       const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
-      cmScroller.scrollTop = scrollRatio * editorHeight;
+      const target = scrollRatio * editorHeight;
+      this.lastSyncedEditorScrollTop = target;
+      cmScroller.scrollTop = target;
     }
-    // Programmatically setting scrollTop fires the target's own 'scroll'
-    // event asynchronously (not inline with this assignment), so clearing
-    // the guard synchronously here doesn't actually suppress that echo — it
-    // arrives after `syncing` is already back to false, triggers a sync back
-    // in the other direction, and small rounding differences between the two
-    // panes' scroll ratios compound with each round trip. Clearing on the
-    // next frame keeps the guard up until the echo has had its chance to fire.
-    requestAnimationFrame(() => { this.syncing = false; });
+    this.syncing = false;
   }
 
   private syncScrollToPreview(): void {
     if (this.syncing || !this.cmEditor || this.layout !== 'split') {
       return;
     }
-    this.syncing = true;
     const cmScroller = this.cmEditor.dom.querySelector('.cm-scroller');
-    if (cmScroller) {
-      const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
-      const scrollRatio = editorHeight > 0 ? cmScroller.scrollTop / editorHeight : 0;
-      const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
-      this.elPreviewPane.scrollTop = scrollRatio * previewHeight;
+    if (!cmScroller) {
+      return;
     }
-    // See syncScrollFromPreview: deferred for the same reason.
-    requestAnimationFrame(() => { this.syncing = false; });
+    const currentTop = cmScroller.scrollTop;
+    // See syncScrollFromPreview: same echo-recognition approach, mirrored.
+    if (this.lastSyncedEditorScrollTop !== null && Math.abs(currentTop - this.lastSyncedEditorScrollTop) < 2) {
+      return;
+    }
+    this.syncing = true;
+    const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
+    const scrollRatio = editorHeight > 0 ? currentTop / editorHeight : 0;
+    const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
+    const target = scrollRatio * previewHeight;
+    this.lastSyncedPreviewScrollTop = target;
+    this.elPreviewPane.scrollTop = target;
+    this.syncing = false;
   }
 }
 
