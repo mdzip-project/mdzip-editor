@@ -5254,7 +5254,14 @@ export class MdzipWorkspaceView {
       const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
       cmScroller.scrollTop = scrollRatio * editorHeight;
     }
-    this.syncing = false;
+    // Programmatically setting scrollTop fires the target's own 'scroll'
+    // event asynchronously (not inline with this assignment), so clearing
+    // the guard synchronously here doesn't actually suppress that echo — it
+    // arrives after `syncing` is already back to false, triggers a sync back
+    // in the other direction, and small rounding differences between the two
+    // panes' scroll ratios compound with each round trip. Clearing on the
+    // next frame keeps the guard up until the echo has had its chance to fire.
+    requestAnimationFrame(() => { this.syncing = false; });
   }
 
   private syncScrollToPreview(): void {
@@ -5269,7 +5276,8 @@ export class MdzipWorkspaceView {
       const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
       this.elPreviewPane.scrollTop = scrollRatio * previewHeight;
     }
-    this.syncing = false;
+    // See syncScrollFromPreview: deferred for the same reason.
+    requestAnimationFrame(() => { this.syncing = false; });
   }
 }
 
