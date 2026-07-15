@@ -15,6 +15,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.orphanActions).toBe(false);
     expect(policy.fileActions).toBe(false);
     expect(policy.search).toBe(false);
+    expect(policy.codeBlockTools).toBe(true);
     expect(policy.formatting.headings).toEqual([]);
   });
 
@@ -30,6 +31,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.orphanActions).toBe(false);
     expect(policy.fileActions).toBe(false);
     expect(policy.search).toBe(true);
+    expect(policy.codeBlockTools).toBe(true);
     expect(policy.formatting.bold).toBe(false);
     expect(policy.formatting.lineBreak).toBe(false);
   });
@@ -45,6 +47,7 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.orphanActions).toBe(true);
     expect(policy.fileActions).toBe(true);
     expect(policy.search).toBe(true);
+    expect(policy.codeBlockTools).toBe(true);
     expect(policy.formatting.bold).toBe(true);
     expect(policy.formatting.lineBreak).toBe(true);
     expect(policy.formatting.headings).toEqual([1, 2, 3, 4, 5, 6]);
@@ -57,12 +60,19 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.title).toEqual({ visible: true, editable: true });
     expect(policy.fileActions).toBe(true);
     expect(policy.search).toBe(true);
+    expect(policy.codeBlockTools).toBe(true);
   });
 
   it('can disable search independently of other controls', () => {
     const policy = resolveMdzipControlPolicy({ preset: 'standalone-editor', search: false });
     expect(policy.search).toBe(false);
     expect(policy.save).toBe(true);
+  });
+
+  it('can disable codeBlockTools independently of other controls', () => {
+    const policy = resolveMdzipControlPolicy({ preset: 'viewer', codeBlockTools: false });
+    expect(policy.codeBlockTools).toBe(false);
+    expect(policy.search).toBe(true);
   });
 
   it('defaults to standalone-editor when no controls are provided', () => {

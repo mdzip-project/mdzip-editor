@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.16] - 2026-07-14
+
+### Added
+- Built-in code-block chrome in the preview: a language-name header and a
+  copy-to-clipboard button on every block, plus a collapse/expand toggle on
+  blocks long enough for it to do anything visible (>15 lines; auto-collapsed
+  past 25). New `codeBlockTools` control-policy flag, on by default for every
+  preset (including Preview). Not a `markdownExtensions` entry — every
+  consumer gets it automatically with no wiring. (#29)
+
 ## [1.3.15] - 2026-07-06
 
 ### Added

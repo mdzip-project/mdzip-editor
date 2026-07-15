@@ -17,6 +17,7 @@ import {
 import { tags } from '@lezer/highlight';
 import {
   Bold,
+  Check,
   ChevronDown,
   ChevronRight,
   ClipboardPaste,
@@ -153,6 +154,16 @@ const LINK_ICON_HTML = lucideIcon(Link, FORMAT_ICON_CLASS);
 const IMAGE_FORMAT_ICON_HTML = lucideIcon(ImagePlus, FORMAT_ICON_CLASS);
 const CHEVRON_ICON_HTML = lucideIcon(ChevronDown, 'format-chevron');
 const INFO_ICON_HTML = lucideIcon(Info, 'document-info-icon');
+const CODE_BLOCK_ICON_CLASS = 'mdzip-code-block-icon';
+const CODE_BLOCK_COPY_ICON_HTML = lucideIcon(Copy, CODE_BLOCK_ICON_CLASS);
+const CODE_BLOCK_COPIED_ICON_HTML = lucideIcon(Check, CODE_BLOCK_ICON_CLASS);
+const CODE_BLOCK_COLLAPSE_ICON_HTML = lucideIcon(ChevronDown, CODE_BLOCK_ICON_CLASS);
+// Below this, collapsing (240px / ~12 visible lines) would have no visible
+// effect, so the collapse button isn't shown at all rather than appearing to
+// do nothing when clicked.
+const CODE_BLOCK_COLLAPSIBLE_MIN_LINES = 15;
+// Blocks taller than this start collapsed; still manually expandable either way.
+const CODE_BLOCK_AUTO_COLLAPSE_LINES = 25;
 
 // Leading icons for context-menu items (Obsidian-style icon column).
 const MENU_ICON_CLASS = 'nav-menu-icon';
@@ -380,6 +391,14 @@ export interface MdzipControlPolicy {
   fileActions?: boolean;
   /** Enables the find/replace toolbar button and Mod-f shortcut. */
   search?: boolean;
+  /**
+   * Enables the preview's per-block code chrome: a language-name header, a
+   * copy-to-clipboard button, and (on long enough blocks) a collapse/expand
+   * toggle. Distinct from `formatting.codeBlock`, which gates the *editor*
+   * toolbar's insert-code-block control — this gates rendering affordances
+   * on already-rendered preview code blocks.
+   */
+  codeBlockTools?: boolean;
 }
 
 export interface MdzipResolvedTitleControlPolicy {
@@ -422,6 +441,7 @@ export interface MdzipResolvedControlPolicy {
   orphanActions: boolean;
   fileActions: boolean;
   search: boolean;
+  codeBlockTools: boolean;
 }
 
 export interface MdzipWorkspaceChange {
@@ -620,7 +640,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     colorScheme: false,
     orphanActions: false,
     fileActions: false,
-    search: false
+    search: false,
+    codeBlockTools: true
   },
   viewer: {
     preset: 'viewer',
@@ -635,7 +656,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     colorScheme: true,
     orphanActions: false,
     fileActions: false,
-    search: true
+    search: true,
+    codeBlockTools: true
   },
   'standalone-editor': {
     preset: 'standalone-editor',
@@ -650,7 +672,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     colorScheme: true,
     orphanActions: true,
     fileActions: true,
-    search: true
+    search: true,
+    codeBlockTools: true
   },
   'hosted-editor': {
     preset: 'hosted-editor',
@@ -665,7 +688,8 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     colorScheme: true,
     orphanActions: true,
     fileActions: true,
-    search: true
+    search: true,
+    codeBlockTools: true
   }
 };
 
@@ -2046,6 +2070,10 @@ export class MdzipWorkspaceView {
   ): void {
     this.elPreviewContent.innerHTML = html;
     this.mountPreviewExtensions(context, generation);
+    const codeBlockHandle = this.mountCodeBlockControls();
+    if (codeBlockHandle) {
+      this.previewHandles.push(codeBlockHandle);
+    }
     // No archive images to resolve on this path: the preview is ready now.
     this.firePreviewRendered(snapshot, generation);
     this.fireAssetsHydrated(snapshot, generation);
@@ -2103,6 +2131,10 @@ export class MdzipWorkspaceView {
     }
 
     this.mountPreviewExtensions(context, generation);
+    const codeBlockHandle = this.mountCodeBlockControls();
+    if (codeBlockHandle) {
+      this.previewHandles.push(codeBlockHandle);
+    }
     this.firePreviewRendered(snapshot, generation);
 
     if (!session || pending.length === 0) {
@@ -2256,6 +2288,148 @@ export class MdzipWorkspaceView {
         this.options.onFailed?.(error);
       }
     }
+  }
+
+  /**
+   * Built-in preview affordances for rendered code blocks: a language-name
+   * header, a copy-to-clipboard button, and (on long enough blocks) a
+   * collapse/expand toggle. Gated by `controlPolicy.codeBlockTools`.
+   *
+   * Deliberately not a `markdownExtensions` entry (unlike the Mermaid
+   * extension) — every consumer gets this automatically, gated by policy
+   * rather than opt-in wiring. Runs after `mountPreviewExtensions` so any
+   * extension-provided `pre > code` blocks already exist in the DOM. See #29.
+   */
+  private mountCodeBlockControls(): MdzipRenderHandle | null {
+    if (!this.controlPolicy.codeBlockTools) {
+      return null;
+    }
+    const codeEls = Array.from(this.elPreviewContent.querySelectorAll<HTMLElement>('pre > code'));
+    if (codeEls.length === 0) {
+      return null;
+    }
+
+    const doc = this.elPreviewContent.ownerDocument;
+    // Resolve AbortController from the document's own realm, not the ambient
+    // global: addEventListener's `signal` option is validated against the
+    // listener target's realm, so a controller from a different realm (e.g.
+    // Node's global AbortController against a jsdom-hosted element in a
+    // server-side/test environment) fails that check even though both are
+    // spec-compliant AbortControllers.
+    const AbortControllerCtor = doc.defaultView?.AbortController ?? AbortController;
+    const controller = new AbortControllerCtor();
+
+    for (const code of codeEls) {
+      const pre = code.parentElement;
+      if (pre) {
+        this.enhanceCodeBlock(pre, code, doc, controller.signal);
+      }
+    }
+
+    return { destroy: () => controller.abort() };
+  }
+
+  /**
+   * Wraps one `pre > code` block with a header (language label + action
+   * buttons) and a collapsible body, in place. `pre` itself is relocated
+   * (not cloned) into the new structure, so existing references to it and
+   * its `code` child stay valid.
+   */
+  private enhanceCodeBlock(
+    pre: HTMLElement,
+    code: HTMLElement,
+    doc: Document,
+    signal: AbortSignal
+  ): void {
+    const language = /language-([\w-]+)/.exec(code.className)?.[1] ?? '';
+
+    const wrapper = doc.createElement('div');
+    wrapper.className = 'mdzip-code-block';
+
+    const header = doc.createElement('div');
+    header.className = 'mdzip-code-block-header';
+
+    const label = doc.createElement('span');
+    label.className = 'mdzip-code-block-lang';
+    label.textContent = language || 'text';
+    header.appendChild(label);
+
+    const actions = doc.createElement('div');
+    actions.className = 'mdzip-code-block-actions';
+    header.appendChild(actions);
+
+    const body = doc.createElement('div');
+    body.className = 'mdzip-code-block-body';
+
+    pre.replaceWith(wrapper);
+    wrapper.append(header, body);
+    body.appendChild(pre);
+
+    // Collapse toggle: only shown when the block has enough lines that
+    // collapsing is actually visible — the collapsed body still shows ~12
+    // lines (240px, see .mdzip-code-block-collapsed in view-css.ts), so a
+    // button that collapses a block shorter than that would visibly do
+    // nothing, which is more confusing than not offering it at all. Blocks
+    // past the longer auto-collapse threshold start pre-collapsed; anything
+    // between the two thresholds is collapsible but starts open.
+    const lineCount = (code.textContent ?? '').split('\n').length;
+    if (lineCount > CODE_BLOCK_COLLAPSIBLE_MIN_LINES) {
+      if (lineCount > CODE_BLOCK_AUTO_COLLAPSE_LINES) {
+        wrapper.classList.add('mdzip-code-block-collapsed');
+      }
+      const collapseBtn = doc.createElement('button');
+      collapseBtn.type = 'button';
+      collapseBtn.className = 'mdzip-code-block-btn';
+      collapseBtn.innerHTML = CODE_BLOCK_COLLAPSE_ICON_HTML;
+      const syncCollapseLabel = (): void => {
+        const collapsed = wrapper.classList.contains('mdzip-code-block-collapsed');
+        collapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+        collapseBtn.setAttribute('aria-label', collapsed ? 'Expand code block' : 'Collapse code block');
+      };
+      syncCollapseLabel();
+      collapseBtn.title = 'Collapse/expand';
+      collapseBtn.addEventListener('click', () => {
+        wrapper.classList.toggle('mdzip-code-block-collapsed');
+        syncCollapseLabel();
+      }, { signal });
+      actions.appendChild(collapseBtn);
+    }
+
+    // Copy button: icon swaps to a confirmation state for a beat, then reverts.
+    // The revert timer is cleared on unmount so it never touches a stale button
+    // after the preview re-renders.
+    const copyBtn = doc.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'mdzip-code-block-btn';
+    copyBtn.innerHTML = CODE_BLOCK_COPY_ICON_HTML;
+    copyBtn.setAttribute('aria-label', 'Copy code');
+    copyBtn.title = 'Copy code';
+    // Re-check clipboard availability at click time rather than capturing it
+    // once at mount: a host can grant/attach clipboard access after the
+    // preview first renders, and this way there is nothing to keep in sync.
+    let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+    copyBtn.addEventListener('click', () => {
+      const clip = doc.defaultView?.navigator.clipboard;
+      if (!clip) {
+        return;
+      }
+      void clip.writeText(code.textContent ?? '').then(() => {
+        copyBtn.innerHTML = CODE_BLOCK_COPIED_ICON_HTML;
+        copyBtn.classList.add('mdzip-code-block-btn-copied');
+        copyBtn.setAttribute('aria-label', 'Copied');
+        clearTimeout(copiedTimer);
+        copiedTimer = setTimeout(() => {
+          copyBtn.innerHTML = CODE_BLOCK_COPY_ICON_HTML;
+          copyBtn.classList.remove('mdzip-code-block-btn-copied');
+          copyBtn.setAttribute('aria-label', 'Copy code');
+        }, 1500);
+      }).catch(() => {
+        // Write can fail (permissions, insecure context); leave the button
+        // as-is rather than showing a false confirmation.
+      });
+    }, { signal });
+    signal.addEventListener('abort', () => clearTimeout(copiedTimer), { once: true });
+    actions.appendChild(copyBtn);
   }
 
   private firePreviewRendered(snapshot: MdzipWorkspaceSnapshot, generation: number): void {

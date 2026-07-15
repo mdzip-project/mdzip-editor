@@ -1143,6 +1143,107 @@ export const WORKSPACE_CSS = `
   padding: 0;
 }
 
+/* Built-in code-block chrome (#29): the wrapper owns the outer border/radius
+   that .preview-content pre normally draws on itself, so the header sits
+   flush above it with no double border. */
+.mdzip-root .preview-content .mdzip-code-block {
+  margin: 1em 0;
+  border: 1px solid var(--mdzip-border-color);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.mdzip-root .preview-content .mdzip-code-block pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+}
+
+.mdzip-root .preview-content .mdzip-code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 6px 3px 12px;
+  background: var(--mdzip-widget-background-color);
+  border-bottom: 1px solid var(--mdzip-border-color);
+}
+
+.mdzip-root .preview-content .mdzip-code-block-lang {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.75em;
+  color: var(--mdzip-muted-foreground-color);
+}
+
+.mdzip-root .preview-content .mdzip-code-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mdzip-root .preview-content .mdzip-code-block-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--mdzip-muted-foreground-color);
+  cursor: pointer;
+}
+
+.mdzip-root .preview-content .mdzip-code-block-btn:hover {
+  background: var(--mdzip-control-hover-background-color);
+  color: var(--mdzip-control-foreground-color);
+}
+
+.mdzip-root .preview-content .mdzip-code-block-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mdzip-root .preview-content .mdzip-code-block-btn:disabled:hover {
+  background: none;
+}
+
+.mdzip-root .preview-content .mdzip-code-block-btn-copied {
+  color: var(--mdzip-accent-color);
+}
+
+.mdzip-root .preview-content .mdzip-code-block-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Chevron points "forward" (collapsed) vs down (expanded), driven by the
+   same aria-expanded state assistive tech reads — no separate visual-only
+   state to keep in sync. */
+.mdzip-root .preview-content .mdzip-code-block-btn[aria-expanded="false"] .mdzip-code-block-icon {
+  transform: rotate(-90deg);
+}
+
+.mdzip-root .preview-content .mdzip-code-block-body {
+  position: relative;
+  transition: max-height 0.2s ease-out;
+}
+
+.mdzip-root .preview-content .mdzip-code-block-collapsed .mdzip-code-block-body {
+  max-height: 240px;
+  overflow: hidden;
+}
+
+.mdzip-root .preview-content .mdzip-code-block-collapsed .mdzip-code-block-body::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 48px;
+  background: linear-gradient(to bottom, transparent, var(--mdzip-code-background-color));
+  pointer-events: none;
+}
+
 .mdzip-root .preview-content blockquote {
   border-left: 4px solid var(--mdzip-link-color);
   margin: 1em 0;
@@ -1285,6 +1386,9 @@ export const WORKSPACE_CSS = `
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .mdzip-root .preview-content .mdzip-code-block-body {
+    transition: none;
+  }
   .mdzip-root .preview-content .mdzip-image-slot {
     transition: none;
   }
