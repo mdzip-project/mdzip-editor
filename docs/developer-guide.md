@@ -80,7 +80,8 @@ const controls = {
   zoom: true,
   colorScheme: true,
   orphanActions: false,
-  fileActions: false
+  fileActions: false,
+  codeBlockTools: true
 } as const;
 ```
 
@@ -93,6 +94,15 @@ onto the pane). Copy and Download are non-mutating and stay available whenever
 the menu is shown, including read-only mode. Dragging a tree file onto the
 editor surface inserts a markdown link/embed at the pointer and only requires
 an editable workspace, not `fileActions`.
+
+`codeBlockTools` (default `true` in every preset, including `preview`) adds
+chrome to rendered code blocks in the preview: a language-name header and a
+copy-to-clipboard button on every block, plus a collapse/expand toggle on
+blocks long enough for collapsing to have a visible effect (more than 15
+lines; blocks past 25 lines start collapsed). This is built into the core
+rendering path, not a `markdownExtensions` entry — every consumer gets it
+automatically with no extra wiring. Distinct from `formatting.codeBlock`,
+which gates the *editor* toolbar's insert-code-block control.
 
 The same operations are exposed programmatically on the view and the framework
 wrappers: `removeFile()`, `renameFile()` (also moves; rewrites markdown

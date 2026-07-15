@@ -36,3 +36,7 @@ The context menu's mutating items and drag-and-drop are gated by the `fileAction
 **`onConversionRequested` hook (since 1.3.0)**
 
 Hosts intercept the markdown→MDZ conversion flow by returning/resolving `true` from `onConversionRequested(action)`. This replaces the old capture-phase paste workaround in VS Code-style hosts. A rejecting hook reports to `onFailed` and falls back to the built-in dialog.
+
+**Preview code-block chrome (since 1.3.16)**
+
+Rendered code blocks get a language header, a copy button, and (past 15 lines) a collapse toggle, gated by the `codeBlockTools` control-policy flag (default `true` everywhere, including `preview`). This is wired into `mountPreviewHtml`/`mountProgressivePreview` directly, not a `markdownExtensions` entry — don't confuse it with `formatting.codeBlock`, which is the unrelated editor-toolbar insert-code-block control.
