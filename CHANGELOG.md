@@ -16,6 +16,16 @@
   .mdz" decision UI both `mdzip-studio` and `mdzip-vscode` were about to
   build independently. (#34)
 
+### Fixed
+- `setControls()` didn't apply a `codeBlockTools` change to an already-open
+  document. The chrome (language header, copy button, collapse toggle) is
+  only attached when the preview HTML actually re-mounts, which is gated by
+  a memo that skips re-rendering when nothing document-facing (path/text/
+  colorScheme) changed — `setControls()` updated the policy but never busted
+  that memo, unlike `setImageHydrationAnimation`, which already resets it
+  correctly for its own preview-affecting option. `codeBlockTools` toggles
+  now reset the memo too, so the change is reflected immediately.
+
 ## [1.3.19] - 2026-07-21
 
 ### Added
