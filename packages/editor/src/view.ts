@@ -56,6 +56,7 @@ import {
   Save,
   Scissors,
   Search,
+  SpellCheck,
   SquareCode,
   SquarePen,
   Strikethrough,
@@ -172,6 +173,7 @@ const MENU_COPY_ICON_HTML = lucideIcon(Copy, MENU_ICON_CLASS);
 const MENU_PASTE_ICON_HTML = lucideIcon(ClipboardPaste, MENU_ICON_CLASS);
 const MENU_PASTE_PLAIN_ICON_HTML = lucideIcon(ClipboardType, MENU_ICON_CLASS);
 const MENU_SELECT_ALL_ICON_HTML = lucideIcon(TextSelect, MENU_ICON_CLASS);
+const MENU_SPELLCHECK_ICON_HTML = lucideIcon(SpellCheck, MENU_ICON_CLASS);
 const MENU_BOLD_ICON_HTML = lucideIcon(Bold, MENU_ICON_CLASS);
 const MENU_ITALIC_ICON_HTML = lucideIcon(Italic, MENU_ICON_CLASS);
 const MENU_STRIKE_ICON_HTML = lucideIcon(Strikethrough, MENU_ICON_CLASS);
@@ -240,7 +242,8 @@ function renderContextMenuItem(item: MdzipNavMenuItem): string {
   const shortcut = item.shortcut
     ? `<span class="nav-menu-shortcut">${escapeHtml(item.shortcut)}</span>`
     : '';
-  return `<button type="button" role="menuitem" data-menu-action="${escapeHtml(item.action)}">${icon}${label}${shortcut}</button>`;
+  const disabledAttrs = item.disabled ? ' disabled aria-disabled="true"' : '';
+  return `<button type="button" role="menuitem" data-menu-action="${escapeHtml(item.action)}"${disabledAttrs}>${icon}${label}${shortcut}</button>`;
 }
 
 function renderContextMenuItems(items: Array<MdzipNavMenuItem | null>): string {
@@ -332,8 +335,14 @@ interface MdzipNavMenuItem {
   label: string;
   /** Pre-rendered leading icon SVG (see `MENU_*_ICON_HTML`). */
   icon?: string;
-  /** Right-aligned keyboard-shortcut hint (e.g. `Ctrl+X`). Only set for actions that actually have a binding. */
+  /**
+   * Right-aligned hint text (e.g. `Ctrl+X`). Usually a bound keyboard
+   * shortcut, but also used on `disabled` rows to point at browser-native
+   * behavior we deliberately don't intercept (e.g. `Shift+Right-Click`).
+   */
   shortcut?: string;
+  /** Renders as a non-interactive row — informational, no click action. */
+  disabled?: boolean;
   /** When present, the item is a flyout parent rather than an action; null entries are separators. */
   submenu?: Array<MdzipNavMenuItem | null>;
 }
@@ -356,6 +365,12 @@ export interface MdzipLayoutControlPolicy {
   enabled?: boolean;
   source?: boolean;
   split?: boolean;
+  preview?: boolean;
+}
+
+export interface MdzipContextMenuControlPolicy {
+  enabled?: boolean;
+  editor?: boolean;
   preview?: boolean;
 }
 
@@ -382,6 +397,8 @@ export interface MdzipControlPolicy {
   title?: boolean | MdzipTitleControlPolicy;
   layout?: boolean | MdzipLayoutControlPolicy;
   formatting?: boolean | MdzipFormattingControlPolicy;
+  /** Right-click context menus for the source editor and rendered preview. */
+  contextMenu?: boolean | MdzipContextMenuControlPolicy;
   lineNumbers?: boolean;
   save?: boolean;
   zoom?: boolean;
@@ -412,6 +429,11 @@ export interface MdzipResolvedLayoutControlPolicy {
   preview: boolean;
 }
 
+export interface MdzipResolvedContextMenuControlPolicy {
+  editor: boolean;
+  preview: boolean;
+}
+
 export interface MdzipResolvedFormattingControlPolicy {
   bold: boolean;
   italic: boolean;
@@ -434,6 +456,7 @@ export interface MdzipResolvedControlPolicy {
   title: MdzipResolvedTitleControlPolicy;
   layout: MdzipResolvedLayoutControlPolicy;
   formatting: MdzipResolvedFormattingControlPolicy;
+  contextMenu: MdzipResolvedContextMenuControlPolicy;
   lineNumbers: boolean;
   save: boolean;
   zoom: boolean;
@@ -597,6 +620,10 @@ const ALL_LAYOUT_CONTROLS: MdzipResolvedLayoutControlPolicy = {
   split: true,
   preview: true
 };
+const ALL_CONTEXT_MENU_CONTROLS: MdzipResolvedContextMenuControlPolicy = {
+  editor: true,
+  preview: true
+};
 const ALL_FORMATTING_CONTROLS: MdzipResolvedFormattingControlPolicy = {
   bold: true,
   italic: true,
@@ -634,6 +661,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     title: { visible: false, editable: false },
     layout: { source: false, split: false, preview: false },
     formatting: { ...NO_FORMATTING_CONTROLS },
+    contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: false,
     save: false,
     zoom: false,
@@ -650,6 +678,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     title: { visible: true, editable: false },
     layout: { ...ALL_LAYOUT_CONTROLS },
     formatting: { ...NO_FORMATTING_CONTROLS },
+    contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
     save: false,
     zoom: true,
@@ -666,6 +695,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     title: { visible: true, editable: true },
     layout: { ...ALL_LAYOUT_CONTROLS },
     formatting: { ...ALL_FORMATTING_CONTROLS },
+    contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
     save: true,
     zoom: true,
@@ -682,6 +712,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     title: { visible: true, editable: true },
     layout: { ...ALL_LAYOUT_CONTROLS },
     formatting: { ...ALL_FORMATTING_CONTROLS },
+    contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
     save: false,
     zoom: true,
@@ -721,7 +752,8 @@ export function resolveMdzipControlPolicy(
     preset,
     title: resolveTitleControls(base.title, controls.title),
     layout: resolveLayoutControls(base.layout, controls.layout),
-    formatting: resolveFormattingControls(base.formatting, controls.formatting)
+    formatting: resolveFormattingControls(base.formatting, controls.formatting),
+    contextMenu: resolveContextMenuControls(base.contextMenu, controls.contextMenu)
   };
 }
 
@@ -740,7 +772,8 @@ function cloneResolvedControlPolicy(policy: MdzipResolvedControlPolicy): MdzipRe
     formatting: {
       ...policy.formatting,
       headings: [...policy.formatting.headings]
-    }
+    },
+    contextMenu: { ...policy.contextMenu }
   };
 }
 
@@ -769,6 +802,25 @@ function resolveLayoutControls(
     ? { source: false, split: false, preview: false }
     : enabled === true
       ? { ...ALL_LAYOUT_CONTROLS }
+      : base;
+  return { ...resolvedBase, ...controls };
+}
+
+function resolveContextMenuControls(
+  base: MdzipResolvedContextMenuControlPolicy,
+  override: boolean | MdzipContextMenuControlPolicy | undefined
+): MdzipResolvedContextMenuControlPolicy {
+  if (typeof override === 'boolean') {
+    return { editor: override, preview: override };
+  }
+  if (!override) {
+    return { ...base };
+  }
+  const { enabled, ...controls } = override;
+  const resolvedBase = enabled === false
+    ? { editor: false, preview: false }
+    : enabled === true
+      ? { ...ALL_CONTEXT_MENU_CONTROLS }
       : base;
   return { ...resolvedBase, ...controls };
 }
@@ -972,7 +1024,10 @@ const hardBreakMarkerHighlight = ViewPlugin.fromClass(class {
 // the name to be '>' directly, which a URL's ':' never satisfies.
 const htmlTagMarkerMatcher = new MatchDecorator({
   regexp: /<\/?(?!br\b)[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?\/?>/gi,
-  decoration: Decoration.mark({ class: 'mdzip-hard-break-marker' })
+  // spellcheck="false" on the wrapping span opts this range out of the
+  // container-wide spellcheck attribute — tag/attribute names (img, src,
+  // align, citation, ...) aren't prose and shouldn't get underlined.
+  decoration: Decoration.mark({ class: 'mdzip-hard-break-marker', attributes: { spellcheck: 'false' } })
 });
 
 const htmlTagMarkerHighlight = ViewPlugin.fromClass(class {
@@ -1226,6 +1281,7 @@ export class MdzipWorkspaceView {
   private contextMenuState:
     | { kind: 'nav'; target: MdzipNavMenuTarget; x: number; y: number }
     | { kind: 'editor'; from: number; to: number; x: number; y: number }
+    | { kind: 'preview'; text: string; x: number; y: number }
     | null = null;
   private nameDialogState: {
     mode: MdzipNameDialogMode;
@@ -2690,6 +2746,9 @@ export class MdzipWorkspaceView {
         htmlTagMarkerHighlight,
         EditorView.lineWrapping,
         dropCursor(),
+        // Content is contenteditable, but browsers don't agree on a default
+        // for unconfigured spellcheck there — set it explicitly (#33).
+        EditorView.contentAttributes.of({ spellcheck: 'true' }),
         mdzipEditorTheme,
         this.readOnlyCompartment.of(EditorState.readOnly.of(mode === 'read-only')),
         EditorView.updateListener.of((update) => {
@@ -2970,7 +3029,9 @@ export class MdzipWorkspaceView {
     if (this.contextMenuState) {
       const items = this.contextMenuState.kind === 'nav'
         ? this.navMenuItems(this.contextMenuState.target, snapshot)
-        : this.editorMenuItems(snapshot);
+        : this.contextMenuState.kind === 'editor'
+          ? this.editorMenuItems(snapshot)
+          : this.previewMenuItems();
       if (items.length === 0) {
         this.contextMenuState = null;
       } else {
@@ -3060,6 +3121,22 @@ export class MdzipWorkspaceView {
         this.nameDialogState = null;
         this.render();
       }
+    });
+
+    // Ctrl/Cmd+A normally selects the whole page, which in split layout grabs
+    // both panes' text at once. Scope it to the rendered content instead when
+    // focus is inside the preview pane (see the mousedown handler below for
+    // how it gets there); the source editor keeps its own defaultKeymap
+    // binding since CodeMirror's content root sits outside this element.
+    doc.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() !== 'a' || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
+        return;
+      }
+      if (!doc.activeElement || !this.elPreviewPane.contains(doc.activeElement)) {
+        return;
+      }
+      e.preventDefault();
+      this.selectAllPreviewContent();
     });
 
     this.elNavBtn.addEventListener('click', () => {
@@ -3347,6 +3424,8 @@ export class MdzipWorkspaceView {
       const action = item.dataset['menuAction'] ?? '';
       if (this.contextMenuState?.kind === 'editor') {
         void this.handleEditorMenuAction(action);
+      } else if (this.contextMenuState?.kind === 'preview') {
+        this.handlePreviewMenuAction(action);
       } else {
         void this.handleNavMenuAction(action);
       }
@@ -3383,6 +3462,9 @@ export class MdzipWorkspaceView {
     });
 
     this.elEditorHost.addEventListener('contextmenu', (e) => {
+      if (!this.controlPolicy.contextMenu.editor) {
+        return;
+      }
       const snapshot = this.workspace?.snapshot();
       if (!snapshot || !this.cmEditor) {
         return;
@@ -3396,6 +3478,28 @@ export class MdzipWorkspaceView {
         y: e.clientY
       };
       if (this.editorMenuItems(snapshot).length === 0) {
+        this.contextMenuState = null;
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      this.render();
+    });
+
+    this.elPreviewPane.addEventListener('contextmenu', (e) => {
+      if (!this.controlPolicy.contextMenu.preview) {
+        return;
+      }
+      // Captured now, not read live in the click handler: clicking the menu
+      // button collapses the browser selection before the action runs (same
+      // reason the editor menu captures its CodeMirror range up front).
+      const domSelection = this.elPreviewPane.ownerDocument.defaultView?.getSelection();
+      const text = domSelection && !domSelection.isCollapsed
+        && this.elPreviewContent.contains(domSelection.anchorNode)
+        ? domSelection.toString()
+        : '';
+      this.contextMenuState = { kind: 'preview', text, x: e.clientX, y: e.clientY };
+      if (this.previewMenuItems().length === 0) {
         this.contextMenuState = null;
         return;
       }
@@ -3453,6 +3557,12 @@ export class MdzipWorkspaceView {
     });
 
     this.elPreviewPane.addEventListener('scroll', () => this.syncScrollFromPreview());
+    // Gives the pane logical focus on click so a subsequent Ctrl/Cmd+A (below)
+    // can be scoped to it. tabindex="-1" keeps it out of Tab order; this is
+    // the only way it becomes focused.
+    this.elPreviewPane.addEventListener('mousedown', () => {
+      this.elPreviewPane.focus({ preventScroll: true });
+    });
     this.elPreviewPane.addEventListener('click', (event) => {
       const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
       const snapshot = this.workspace?.snapshot();
@@ -4159,6 +4269,20 @@ export class MdzipWorkspaceView {
 
     groups.push([{ action: 'editor-select-all', label: 'Select All', icon: MENU_SELECT_ALL_ICON_HTML, shortcut: this.editorShortcut('A') }]);
 
+    // This menu replaces the browser's native one, which is the only place
+    // spelling suggestions live — there's no API to read the browser's
+    // dictionary suggestions into a custom menu. Point at the escape hatch
+    // instead of silently dropping the feature.
+    if (editable) {
+      groups.push([{
+        action: 'editor-spelling-suggestions-hint',
+        label: 'Spelling Suggestions',
+        icon: MENU_SPELLCHECK_ICON_HTML,
+        shortcut: 'Shift+Right-Click',
+        disabled: true
+      }]);
+    }
+
     return groups.flatMap((group, index) => (index === 0 ? group : [null, ...group]));
   }
 
@@ -4224,6 +4348,75 @@ export class MdzipWorkspaceView {
         editor.focus();
         break;
     }
+  }
+
+  // Items for the rendered-preview selection menu. Taking over `contextmenu`
+  // to offer Select All also suppresses the browser's native menu — which is
+  // the only thing that was otherwise offering Copy on a right-click — so
+  // Copy has to be reinstated explicitly whenever there's a selection.
+  private previewMenuItems(): Array<MdzipNavMenuItem | null> {
+    const state = this.contextMenuState;
+    if (state?.kind !== 'preview' || !this.elPreviewContent.textContent?.trim()) {
+      return [];
+    }
+    const items: Array<MdzipNavMenuItem | null> = [];
+    if (state.text) {
+      items.push({ action: 'preview-copy', label: 'Copy', icon: MENU_COPY_ICON_HTML, shortcut: this.editorShortcut('C') });
+      items.push(null);
+    }
+    items.push({
+      action: 'preview-select-all',
+      label: 'Select All',
+      icon: MENU_SELECT_ALL_ICON_HTML,
+      shortcut: this.editorShortcut('A')
+    });
+    return items;
+  }
+
+  private handlePreviewMenuAction(action: string): void {
+    const state = this.contextMenuState;
+    this.contextMenuState = null;
+    this.render();
+    if (state?.kind !== 'preview') {
+      return;
+    }
+    switch (action) {
+      case 'preview-select-all':
+        this.selectAllPreviewContent();
+        break;
+      case 'preview-copy':
+        void this.copyPreviewSelection(state.text);
+        break;
+    }
+  }
+
+  private async copyPreviewSelection(text: string): Promise<void> {
+    if (!text) {
+      return;
+    }
+    try {
+      await this.editorClipboard()?.writeText(text);
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  // Selects the full rendered content of the preview pane, scoped to that
+  // pane rather than the whole page (native Ctrl+A / right-click Select All
+  // would otherwise grab the source editor's text too in split layout).
+  private selectAllPreviewContent(): void {
+    const doc = this.elPreviewContent.ownerDocument;
+    const selection = doc.defaultView?.getSelection();
+    if (!selection) {
+      return;
+    }
+    // Focus before selecting: focusing the pane after building the range
+    // collapses the selection right back out.
+    this.elPreviewPane.focus({ preventScroll: true });
+    const range = doc.createRange();
+    range.selectNodeContents(this.elPreviewContent);
+    selection.removeAllRanges();
+    selection.addRange(range);
   }
 
   // Inserts a fenced code block, carrying the chosen language as the fence info
@@ -5587,7 +5780,7 @@ const SHELL_HTML = `
       </section>
       <div class="split-resizer" data-ref="split-resizer"
         role="separator" aria-orientation="vertical" aria-label="Resize split panes"></div>
-      <section class="pane preview-pane" data-ref="preview-pane">
+      <section class="pane preview-pane" data-ref="preview-pane" tabindex="-1">
         <article class="preview-content" data-ref="preview-content"></article>
       </section>
       <section class="pane entry-pane" data-ref="entry-pane"></section>

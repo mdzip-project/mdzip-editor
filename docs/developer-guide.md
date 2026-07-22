@@ -81,7 +81,11 @@ const controls = {
   colorScheme: true,
   orphanActions: false,
   fileActions: false,
-  codeBlockTools: true
+  codeBlockTools: true,
+  contextMenu: {
+    editor: true,
+    preview: false
+  }
 } as const;
 ```
 
@@ -103,6 +107,16 @@ lines; blocks past 25 lines start collapsed). This is built into the core
 rendering path, not a `markdownExtensions` entry — every consumer gets it
 automatically with no extra wiring. Distinct from `formatting.codeBlock`,
 which gates the *editor* toolbar's insert-code-block control.
+
+`contextMenu` (both `editor` and `preview` default `true` in every preset)
+gates the right-click menus on the source editor (Cut/Copy/Paste, formatting,
+Select All) and the rendered preview (Copy when there's a selection, Select
+All). Set either to `false` to fall back to the browser's native context menu
+for that pane instead — useful for hosts that want their own right-click
+behavior (e.g. a native OS menu in an Electron/Tauri shell). This only gates
+the menus themselves: Ctrl/Cmd+A keyboard scoping (source editor via
+CodeMirror's own binding, preview via a scoped selection) keeps working
+either way.
 
 The same operations are exposed programmatically on the view and the framework
 wrappers: `removeFile()`, `renameFile()` (also moves; rewrites markdown

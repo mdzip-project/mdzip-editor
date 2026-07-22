@@ -349,3 +349,86 @@ test('non-mac platforms render Ctrl-style shortcut hints', async () => {
     cleanup();
   }
 });
+
+test('the CodeMirror content DOM opts into native spellcheck', async () => {
+  const { editorHost, cleanup } = await mountMarkdownEditor();
+  try {
+    const content = editorHost.querySelector('.cm-content');
+    assert.equal(content?.getAttribute('spellcheck'), 'true');
+  } finally {
+    cleanup();
+  }
+});
+
+test('raw HTML tag markers opt out of spellcheck (tag/attribute names are not prose)', async () => {
+  const { editorHost, cleanup } = await mountMarkdownEditor({
+    source: 'plain body text <mark>highlighted</mark> and <citation src="1,2,4"></citation>\n'
+  });
+  try {
+    const tagMarkers = editorHost.querySelectorAll('.mdzip-hard-break-marker');
+    assert.ok(tagMarkers.length > 0, 'at least one tag marker is rendered');
+    for (const marker of tagMarkers) {
+      assert.equal(marker.getAttribute('spellcheck'), 'false');
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test('editable documents get a disabled Spelling Suggestions hint pointing at Shift+Right-Click', async () => {
+  const { editorHost, menu, cleanup } = await mountMarkdownEditor();
+  try {
+    openContextMenu(editorHost);
+
+    const hint = menu.querySelector('[data-menu-action="editor-spelling-suggestions-hint"]');
+    assert.ok(hint, 'hint row is present');
+    assert.equal(hint.disabled, true);
+    assert.equal(hint.getAttribute('aria-disabled'), 'true');
+    assert.equal(hint.querySelector('.nav-menu-shortcut')?.textContent, 'Shift+Right-Click');
+  } finally {
+    cleanup();
+  }
+});
+
+test('read-only documents omit the Spelling Suggestions hint (native spellcheck never runs there)', async () => {
+  const { editorHost, menu, cleanup } = await mountMarkdownEditor({ mode: 'read-only' });
+  try {
+    openContextMenu(editorHost);
+    assert.equal(menu.querySelector('[data-menu-action="editor-spelling-suggestions-hint"]'), null);
+  } finally {
+    cleanup();
+  }
+});
+
+test('the Spelling Suggestions hint is inert if somehow clicked', async () => {
+  const { view, editorHost, menu, cleanup } = await mountMarkdownEditor({ source: 'plain body text\n' });
+  try {
+    selectRange(view, 0, 5);
+    openContextMenu(editorHost);
+    const hint = menu.querySelector('[data-menu-action="editor-spelling-suggestions-hint"]');
+    hint.disabled = false; // bypass the native disabled guard to prove the handler itself is a no-op
+    clickMenuAction(menu, 'editor-spelling-suggestions-hint');
+
+    assert.equal(docText(view), 'plain body text\n');
+    assert.equal(menu.hidden, true, 'menu still closes');
+  } finally {
+    cleanup();
+  }
+});
+
+test('contextMenu.editor: false falls through to the native menu', async () => {
+  const { editorHost, menu, cleanup } = await mountMarkdownEditor({
+    options: { controls: { preset: 'standalone-editor', contextMenu: { editor: false } } }
+  });
+  try {
+    const event = new window.MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, clientX: 40, clientY: 40
+    });
+    editorHost.dispatchEvent(event);
+
+    assert.equal(menu.hidden, true, 'our menu stays closed');
+    assert.equal(event.defaultPrevented, false, 'the native menu is left alone');
+  } finally {
+    cleanup();
+  }
+});

@@ -966,6 +966,7 @@ test('resolves control policy presets for common host scenarios', () => {
       link: false,
       image: false
     },
+    contextMenu: { editor: true, preview: true },
     lineNumbers: true,
     save: false,
     zoom: true,

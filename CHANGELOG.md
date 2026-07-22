@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.3.19] - 2026-07-21
+
+### Added
+- "Select All" for the rendered preview pane. Right-clicking the preview now
+  opens a small context menu (matching the source editor's) with a Select
+  All item, and Ctrl/Cmd+A scopes to the preview's rendered content instead
+  of the whole page when focus is inside it — split layout previously had no
+  way to select just the rendered side without also grabbing the source
+  editor's text. The same menu offers Copy whenever there's an existing
+  selection, since taking over the right-click menu for Select All also
+  suppresses the browser's native Copy entry. New `contextMenu` control-policy
+  flag (`{ editor, preview }`, both default `true`) lets hosts opt out of
+  either custom menu independently and fall back to the browser's native one
+  — matches the granular shape `layout` already uses. Ctrl/Cmd+A scoping is
+  unaffected by this flag; it only gates the right-click menus themselves.
+- Native spell check in the source editor. The CodeMirror content DOM is
+  `contenteditable`, but nothing previously set `spellcheck` on it, leaving
+  the underline behavior up to each browser's unconfigured default; now set
+  explicitly via `EditorView.contentAttributes.of({ spellcheck: 'true' })`.
+  (#33)
+- Raw HTML tags in the source (`<img ...>`, `<mark>`, `<citation ...>`, ...)
+  no longer get spellcheck-underlined. Piggybacks `spellcheck="false"` onto
+  the existing `htmlTagMarkerMatcher` decoration that already dims raw HTML
+  visually — tag and attribute names aren't prose.
+- Editor context menu: a disabled "Spelling Suggestions" row pointing at
+  "Shift+Right-Click". There's no API to read the browser's own spellcheck
+  suggestions into a custom menu, so right-clicking a misspelled word only
+  ever showed our Cut/Copy/Paste/formatting menu with no way to fix the
+  typo — the hint surfaces the escape hatch (Shift+right-click bypasses a
+  page's `contextmenu` handling in Chrome/Firefox) instead of silently
+  dropping the feature. New `MdzipNavMenuItem.disabled` renders a
+  non-interactive, dimmed row for cases like this.
+
 ## [1.3.18] - 2026-07-15
 
 ### Fixed

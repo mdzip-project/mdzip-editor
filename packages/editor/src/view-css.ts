@@ -809,6 +809,16 @@ export const WORKSPACE_CSS = `
   background: var(--mdzip-hover-background-color);
 }
 
+.mdzip-root .nav-context-menu button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mdzip-root .nav-context-menu button:disabled:hover,
+.mdzip-root .nav-context-menu button:disabled:focus-visible {
+  background: transparent;
+}
+
 .mdzip-root .nav-menu-separator {
   height: 1px;
   margin: 4px 6px;
@@ -889,6 +899,10 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root .preview-pane {
   overflow: auto;
+}
+
+.mdzip-root .preview-pane:focus {
+  outline: none;
 }
 
 .mdzip-root .entry-pane {

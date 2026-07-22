@@ -131,4 +131,32 @@ describe('resolveMdzipControlPolicy', () => {
     expect(policy.navigation).toBe(false);
     expect(policy.save).toBe(true);
   });
+
+  it('defaults both context menus on for every preset', () => {
+    for (const preset of ['preview', 'viewer', 'standalone-editor', 'hosted-editor']) {
+      expect(resolveMdzipControlPolicy(preset).contextMenu).toEqual({ editor: true, preview: true });
+    }
+  });
+
+  it('can disable both context menus with a boolean override', () => {
+    const policy = resolveMdzipControlPolicy({ preset: 'standalone-editor', contextMenu: false });
+    expect(policy.contextMenu).toEqual({ editor: false, preview: false });
+    expect(policy.save).toBe(true);
+  });
+
+  it('can disable the preview context menu independently of the editor one', () => {
+    const policy = resolveMdzipControlPolicy({
+      preset: 'standalone-editor',
+      contextMenu: { preview: false }
+    });
+    expect(policy.contextMenu).toEqual({ editor: true, preview: false });
+  });
+
+  it('resolves granular contextMenu overrides against the enabled flag', () => {
+    const policy = resolveMdzipControlPolicy({
+      preset: 'standalone-editor',
+      contextMenu: { enabled: false, editor: true }
+    });
+    expect(policy.contextMenu).toEqual({ editor: true, preview: false });
+  });
 });
