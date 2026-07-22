@@ -156,3 +156,37 @@ test('codeBlockTools: false leaves plain pre/code untouched', async () => {
     cleanup();
   }
 });
+
+test('toggling codeBlockTools off via setControls() strips existing chrome without a document change', async () => {
+  const { view, previewContent, cleanup } = await mountPreview(SHORT_TS_DOC, { controls: 'viewer' });
+  try {
+    assert.ok(previewContent.querySelector('.mdzip-code-block'), 'chrome present before the toggle');
+
+    // No document/path/colorScheme change here — only the control policy
+    // changes. Regression test for the memo not being busted (view.ts
+    // setControls()), which used to leave the stale wrapper in place.
+    view.setControls({ preset: 'viewer', codeBlockTools: false });
+    await view.whenRendered();
+
+    assert.equal(previewContent.querySelector('.mdzip-code-block'), null, 'chrome is removed once the policy flips off');
+    assert.ok(previewContent.querySelector('pre > code.language-typescript'), 'plain code block remains');
+  } finally {
+    cleanup();
+  }
+});
+
+test('toggling codeBlockTools back on via setControls() re-adds chrome without a document change', async () => {
+  const { view, previewContent, cleanup } = await mountPreview(SHORT_TS_DOC, {
+    controls: { preset: 'viewer', codeBlockTools: false }
+  });
+  try {
+    assert.equal(previewContent.querySelector('.mdzip-code-block'), null, 'chrome absent before the toggle');
+
+    view.setControls({ preset: 'viewer', codeBlockTools: true });
+    await view.whenRendered();
+
+    assert.ok(previewContent.querySelector('.mdzip-code-block'), 'chrome appears once the policy flips on');
+  } finally {
+    cleanup();
+  }
+});

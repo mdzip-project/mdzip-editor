@@ -173,6 +173,47 @@ export async function buildNewArchiveBytesWithTitle(
   return bytes;
 }
 
+export function isMarkdownArchivePath(path: string): boolean {
+  return MdzArchiveCore.isMarkdownFile(path);
+}
+
+// Manifest-spec entry-point resolution (index.md -> sole root markdown ->
+// null) first, falling back to alphabetical when nothing is unambiguous.
+export function resolveMarkdownEntryPoint(markdownPaths: readonly string[]): string {
+  return MdzPackagerCore.resolveEntryPoint([...markdownPaths])
+    ?? [...markdownPaths].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))[0]
+    ?? 'index.md';
+}
+
+export interface PackFilesOptions {
+  mode: 'document' | 'project';
+  entryPoint: string;
+  title: string;
+}
+
+export async function buildPackedArchiveBytes(
+  files: readonly { path: string; bytes: Uint8Array }[],
+  options: PackFilesOptions
+): Promise<Uint8Array> {
+  const inputs = files.map((f) => ({ path: f.path, data: f.bytes }));
+  const hasEntry = inputs.some((f) => f.path.toLowerCase() === options.entryPoint.toLowerCase());
+  if (!hasEntry) {
+    inputs.push({ path: options.entryPoint, data: new TextEncoder().encode('') });
+  }
+  const result = await MdzPackagerCore.buildArchive(inputs, options.title, {
+    createIndex: false,
+    mapFiles: false,
+    // DEFAULT_FILTERS is md+images only; a host-collected file list can
+    // legitimately include other attachment types (PDFs, etc.), so include
+    // everything — matches buildWorkspace's own filters for the same reason.
+    filters: ['**/*', '*'],
+    mode: options.mode,
+    entryPoint: options.entryPoint,
+    title: options.title
+  });
+  return blobToBytes(result.blob);
+}
+
 export async function updateManifestTitleInArchive(
   existingBytes: Uint8Array,
   newTitle: string

@@ -1683,6 +1683,46 @@ export const WORKSPACE_CSS = `
   color: var(--mdzip-muted-foreground-color);
 }
 
+.mdzip-root .pack-files-dialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.mdzip-root .pack-files-options {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--mdzip-widget-border-color);
+  border-radius: 4px;
+}
+
+.mdzip-root .pack-files-options legend {
+  padding: 0 4px;
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mdzip-root .pack-files-options label,
+.mdzip-root .pack-files-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.mdzip-root .pack-files-options label {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.mdzip-root .pack-files-options input {
+  width: auto;
+}
+
+.mdzip-root .pack-files-field {
+  margin-top: 8px;
+}
+
 .mdzip-root .metadata-dialog dl {
   margin: 12px 0 0;
 }

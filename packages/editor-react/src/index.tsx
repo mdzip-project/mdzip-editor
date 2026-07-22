@@ -17,6 +17,10 @@ import type {
   MdzipImageHydrationAnimation,
   MdzipImageInsertHandler,
   MdzipImageInsertMode,
+  MdzipPackFilesContext,
+  MdzipPackFilesInput,
+  MdzipPackFilesRequest,
+  MdzipPackFilesResult,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
   MdzipNavigationMode,
@@ -156,6 +160,14 @@ export interface MdzipWorkspaceProps {
     context: MdzipConversionContext
   ) => boolean | Promise<boolean>;
   /**
+   * Host hook for the folder→.mdz packing decision surfaced by
+   * `packFilesAsWorkspace()`. Same return contract as `onConversionRequested`.
+   */
+  onPackRequested?: (
+    request: MdzipPackFilesRequest,
+    context: MdzipPackFilesContext
+  ) => boolean | Promise<boolean>;
+  /**
    * Custom markdown renderer. Keep the reference stable (module scope or
    * useMemo): identity changes apply via a cheap preview re-render, never a
    * workspace rebuild.
@@ -195,6 +207,10 @@ export interface MdzipWorkspaceHandle {
   setCoverImage(archivePath: string | null): Promise<boolean>;
   listAssets(): MdzWorkspaceAsset[];
   focus(): void;
+  packFilesAsWorkspace(
+    files: readonly MdzipPackFilesInput[],
+    options?: { title?: string; fileName?: string }
+  ): Promise<MdzipPackFilesResult | null>;
 }
 
 export const MdzipWorkspace = forwardRef<MdzipWorkspaceHandle, MdzipWorkspaceProps>(
@@ -229,6 +245,7 @@ function MdzipWorkspace({
   onAssetsHydrated,
   onFailed,
   onConversionRequested,
+  onPackRequested,
   markdownRenderer,
   markdownExtensions,
   entryRenderers,
@@ -262,6 +279,7 @@ function MdzipWorkspace({
     onAssetsHydrated,
     onFailed,
     onConversionRequested,
+    onPackRequested,
     imageInsertHandler,
   });
   callbacksRef.current = {
@@ -280,6 +298,7 @@ function MdzipWorkspace({
     onAssetsHydrated,
     onFailed,
     onConversionRequested,
+    onPackRequested,
     imageInsertHandler,
   };
 
@@ -329,7 +348,9 @@ function MdzipWorkspace({
     setCoverImage: (archivePath) =>
       viewRef.current?.setCoverImage(archivePath) ?? Promise.resolve(false),
     listAssets: () => viewRef.current?.listAssets() ?? [],
-    focus: () => viewRef.current?.focus()
+    focus: () => viewRef.current?.focus(),
+    packFilesAsWorkspace: (files, options) =>
+      viewRef.current?.packFilesAsWorkspace(files, options) ?? Promise.resolve(null)
   }), []);
 
   const firstCreateRef = useRef(true);
@@ -365,6 +386,8 @@ function MdzipWorkspace({
       // hook at all, so the always-present delegate is behavior-preserving.
       onConversionRequested: (action, context) =>
         callbacksRef.current.onConversionRequested?.(action, context) ?? false,
+      onPackRequested: (request, context) =>
+        callbacksRef.current.onPackRequested?.(request, context) ?? false,
       imageInsertHandler: (request) =>
         callbacksRef.current.imageInsertHandler?.(request),
       markdownRenderer: renderingRef.current.markdownRenderer,

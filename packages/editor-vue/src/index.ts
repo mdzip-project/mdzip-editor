@@ -34,6 +34,10 @@ import type {
   MdzipImageHydrationAnimation,
   MdzipImageInsertHandler,
   MdzipImageInsertMode,
+  MdzipPackFilesContext,
+  MdzipPackFilesInput,
+  MdzipPackFilesRequest,
+  MdzipPackFilesResult,
   MdzipWorkspaceLayout,
   MdzipWorkspaceMode,
   MdzipNavigationMode,
@@ -104,6 +108,10 @@ export interface MdzipWorkspaceExposed {
   setCoverImage(archivePath: string | null): Promise<boolean>;
   listAssets(): MdzWorkspaceAsset[];
   focus(): void;
+  packFilesAsWorkspace(
+    files: readonly MdzipPackFilesInput[],
+    options?: { title?: string; fileName?: string }
+  ): Promise<MdzipPackFilesResult | null>;
 }
 
 export const MdzipWorkspace = defineComponent({
@@ -139,6 +147,17 @@ export const MdzipWorkspace = defineComponent({
       type: Function as PropType<(
         action: MdzipConversionAction,
         context: MdzipConversionContext
+      ) => boolean | Promise<boolean>>,
+      default: undefined
+    },
+    /**
+     * Host hook for the folder→.mdz packing decision surfaced by
+     * `packFilesAsWorkspace()`. Same return contract as `onConversionRequested`.
+     */
+    onPackRequested: {
+      type: Function as PropType<(
+        request: MdzipPackFilesRequest,
+        context: MdzipPackFilesContext
       ) => boolean | Promise<boolean>>,
       default: undefined
     },
@@ -258,7 +277,9 @@ export const MdzipWorkspace = defineComponent({
       setCoverImage: (archivePath: string | null) =>
         view?.setCoverImage(archivePath) ?? Promise.resolve(false),
       listAssets: () => view?.listAssets() ?? [],
-      focus: () => view?.focus()
+      focus: () => view?.focus(),
+      packFilesAsWorkspace: (files, options) =>
+        view?.packFilesAsWorkspace(files, options) ?? Promise.resolve(null)
     } satisfies MdzipWorkspaceExposed);
 
     const createView = (): void => {
@@ -290,6 +311,7 @@ export const MdzipWorkspace = defineComponent({
         onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => emit('assetsHydrated', snapshot),
         onFailed: (e: unknown) => emit('failed', e),
         onConversionRequested: props.onConversionRequested,
+        onPackRequested: props.onPackRequested,
         imageInsertHandler: (request) => props.imageInsertHandler?.(request),
         markdownRenderer: props.markdownRenderer ?? undefined,
         markdownExtensions: props.markdownExtensions,

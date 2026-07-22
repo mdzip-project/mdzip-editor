@@ -1,5 +1,5 @@
 import { initRaw } from './tabs/raw.js';
-import { imageInsertOptionsFromChoice, PRESETS, type DemoImageInsertChoice } from './tab-controls.js';
+import { DENSITY_PRESETS, imageInsertOptionsFromChoice, PRESETS, type DemoDensityChoice, type DemoImageInsertChoice } from './tab-controls.js';
 import type { MdzipControlPreset } from 'mdzip-editor';
 import type { DemoControls } from './tab-controls.js';
 import type { TabController } from './tab-controller.js';
@@ -16,6 +16,9 @@ let currentFileName = 'sample.mdz';
 let currentControls: MdzipControlPreset = 'standalone-editor';
 let currentLineNumbers = true;
 let currentImageInsertChoice: DemoImageInsertChoice = 'markdown';
+let currentDensityChoice: DemoDensityChoice = 'comfortable';
+let currentContextMenuEnabled = true;
+let currentCodeBlockTools = true;
 let diffMode = false;
 
 const controllers = new Map<TabId, TabController>();
@@ -41,17 +44,35 @@ function updateModeUI(): void {
   if (imageInsertSelect) {
     imageInsertSelect.value = currentImageInsertChoice;
   }
+  const densitySelect = document.getElementById('density-mode') as HTMLSelectElement | null;
+  if (densitySelect) {
+    densitySelect.value = currentDensityChoice;
+  }
+  const contextMenuToggle = document.getElementById('context-menu-toggle') as HTMLInputElement | null;
+  if (contextMenuToggle) {
+    contextMenuToggle.checked = currentContextMenuEnabled;
+  }
+  const codeBlockToolsToggle = document.getElementById('code-block-tools-toggle') as HTMLInputElement | null;
+  if (codeBlockToolsToggle) {
+    codeBlockToolsToggle.checked = currentCodeBlockTools;
+  }
 }
 
 function currentControlPolicy(): DemoControls {
   return {
     preset: currentControls,
     lineNumbers: currentLineNumbers,
+    contextMenu: currentContextMenuEnabled,
+    codeBlockTools: currentCodeBlockTools,
   };
 }
 
 function currentImageInsertOptions() {
   return imageInsertOptionsFromChoice(currentImageInsertChoice);
+}
+
+function currentDensity() {
+  return DENSITY_PRESETS[currentDensityChoice];
 }
 
 function onSaved(bytes: Uint8Array, fileName?: string): void {
@@ -109,7 +130,7 @@ async function switchTab(newTab: TabId): Promise<void> {
     const ctrl = await getOrInitTab(newTab);
     ctrl.setDiffMode(diffMode);
     if (currentBytes) {
-      ctrl.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions());
+      ctrl.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions(), currentDensity());
       setStatus(`${newTab} - ${currentFileName}`);
     }
   } catch (err) {
@@ -122,7 +143,7 @@ async function loadBytes(bytes: Uint8Array, fileName: string): Promise<void> {
   currentBytes = bytes;
   currentFileName = fileName;
   if (controllers.has(activeTab)) {
-    controllers.get(activeTab)!.update(bytes, fileName, currentControlPolicy(), currentImageInsertOptions());
+    controllers.get(activeTab)!.update(bytes, fileName, currentControlPolicy(), currentImageInsertOptions(), currentDensity());
   }
 }
 
@@ -148,7 +169,7 @@ document.querySelectorAll<HTMLElement>('#mode-group .tab-btn').forEach(btn => {
     updateModeUI();
     controllers.get(activeTab)?.setDiffMode(diffMode);
     if (currentBytes && controllers.has(activeTab)) {
-      controllers.get(activeTab)!.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions());
+      controllers.get(activeTab)!.update(currentBytes, currentFileName, currentControlPolicy(), currentImageInsertOptions(), currentDensity());
     }
   });
 });
@@ -165,6 +186,65 @@ document.getElementById('image-insert-mode')!.addEventListener('change', (event)
   controllers.get(activeTab)?.setImageInsertOptions(currentImageInsertOptions());
   const label = currentImageInsertChoice === 'host-html' ? 'host HTML hook' : currentImageInsertChoice;
   setStatus(`Image insert: ${label}.`);
+});
+
+document.getElementById('density-mode')!.addEventListener('change', (event) => {
+  currentDensityChoice = (event.currentTarget as HTMLSelectElement).value as DemoDensityChoice;
+  updateModeUI();
+  controllers.get(activeTab)?.setDensity(currentDensity());
+  setStatus(`Density: ${currentDensityChoice}.`);
+});
+
+document.getElementById('context-menu-toggle')!.addEventListener('change', (event) => {
+  currentContextMenuEnabled = (event.currentTarget as HTMLInputElement).checked;
+  updateModeUI();
+  controllers.get(activeTab)?.setControls(currentControlPolicy());
+  setStatus(`Context menu: ${currentContextMenuEnabled ? 'on' : 'off'}.`);
+});
+
+document.getElementById('code-block-tools-toggle')!.addEventListener('change', (event) => {
+  currentCodeBlockTools = (event.currentTarget as HTMLInputElement).checked;
+  updateModeUI();
+  controllers.get(activeTab)?.setControls(currentControlPolicy());
+  setStatus(`Code block tools: ${currentCodeBlockTools ? 'on' : 'off'}.`);
+});
+
+// Toolbar popovers (File, Settings) — generic toggle/outside-click/Escape
+// behavior only. Everything inside each panel (sample-select, file-input,
+// pack-folder-btn, line-numbers-toggle, image-insert-mode) keeps its
+// existing id-based wiring below unchanged; only its DOM location moved.
+const toolbarMenus = [
+  { trigger: document.getElementById('file-menu-btn') as HTMLButtonElement, panel: document.getElementById('file-menu-panel') as HTMLElement },
+  { trigger: document.getElementById('settings-menu-btn') as HTMLButtonElement, panel: document.getElementById('settings-menu-panel') as HTMLElement },
+];
+
+function closeAllMenus(): void {
+  for (const { trigger, panel } of toolbarMenus) {
+    panel.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+  }
+}
+
+for (const { trigger, panel } of toolbarMenus) {
+  trigger.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const opening = panel.hidden;
+    closeAllMenus();
+    if (opening) {
+      panel.hidden = false;
+      trigger.setAttribute('aria-expanded', 'true');
+    }
+  });
+}
+
+document.addEventListener('click', (event) => {
+  if (!(event.target as HTMLElement).closest('.toolbar-menu')) {
+    closeAllMenus();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeAllMenus();
 });
 
 // Sample-file dropdown, populated from the designated ./assets samples
@@ -232,6 +312,7 @@ sampleSelect.addEventListener('change', () => {
     fileInput.click();
     return;
   }
+  closeAllMenus();
   lastRealSelectValue = value;
   const sample = SAMPLE_FILES.find((f) => f.url === value);
   void loadSampleUrl(value, sample?.label ?? value).catch(onFailed);
@@ -254,6 +335,78 @@ fileInput.addEventListener('change', async (e) => {
   setStatus(`Opened ${file.name}.`);
   markCustomFileLoaded(file.name);
   fileInput.value = '';
+});
+
+// Manual test aid for packFilesAsWorkspace()/onPackRequested (mdzip-editor#34)
+// — picks a real folder via the browser's native directory picker and hands
+// the collected files straight to the active tab's workspace, exactly the
+// shape a host (Studio/VS Code) would already have after its own folder walk.
+const packFolderBtn = document.getElementById('pack-folder-btn') as HTMLButtonElement;
+const packFolderInput = document.getElementById('pack-folder-input') as HTMLInputElement;
+const PACK_NOISE_DIRS = ['node_modules/', '.git/'];
+
+interface WebkitFile extends File {
+  webkitRelativePath: string;
+}
+
+function stripRootSegment(relativePath: string): string {
+  const slash = relativePath.indexOf('/');
+  return slash === -1 ? relativePath : relativePath.slice(slash + 1);
+}
+
+packFolderBtn.addEventListener('click', () => {
+  closeAllMenus();
+  if (diffMode) {
+    setStatus('Pack Folder needs a workspace tab, not Diff mode.');
+    return;
+  }
+  packFolderInput.click();
+});
+
+packFolderInput.addEventListener('change', async () => {
+  const fileList = packFolderInput.files;
+  packFolderInput.value = '';
+  if (!fileList || !fileList.length) return;
+
+  const picked = Array.from(fileList) as WebkitFile[];
+  const skippedNoise = picked.filter((file) =>
+    PACK_NOISE_DIRS.some((dir) => file.webkitRelativePath.includes(`/${dir}`) || file.webkitRelativePath.startsWith(dir))
+  ).length;
+  const kept = picked.filter((file) =>
+    !PACK_NOISE_DIRS.some((dir) => file.webkitRelativePath.includes(`/${dir}`) || file.webkitRelativePath.startsWith(dir))
+  );
+  if (!kept.length) {
+    setStatus('Folder had nothing to pack (only node_modules/.git contents).');
+    return;
+  }
+
+  setStatus(`Reading ${kept.length} file(s)...`);
+  try {
+    const files = await Promise.all(kept.map(async (file) => ({
+      path: stripRootSegment(file.webkitRelativePath),
+      bytes: new Uint8Array(await file.arrayBuffer()),
+    })));
+
+    const ctrl = await getOrInitTab(activeTab);
+    setStatus(`Packing ${files.length} file(s)${skippedNoise ? ` (skipped ${skippedNoise} noise file(s))` : ''}...`);
+    const result = await ctrl.packFilesAsWorkspace(files, {});
+
+    if (!result) {
+      setStatus('Pack cancelled.');
+      return;
+    }
+    if (result.mode === 'document') {
+      currentBytes = result.archiveBytes;
+      currentFileName = 'packaged.mdz';
+      markCustomFileLoaded(currentFileName);
+      setStatus(`Packed ${files.length} file(s) into packaged.mdz (Document mode) — opened above.`);
+    } else {
+      downloadBytes(result.archiveBytes, 'packaged.mdz');
+      setStatus(`Packed ${files.length} file(s) (Project mode) — downloaded packaged.mdz; open it via "Choose file..." to verify.`);
+    }
+  } catch (err) {
+    onFailed(err);
+  }
 });
 
 

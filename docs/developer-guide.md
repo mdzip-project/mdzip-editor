@@ -137,6 +137,18 @@ aspect ratio instead of asking for width and height independently.
 The built-in HTML path uses portable `align` attributes for positioning because
 the default preview sanitizer strips inline `style` attributes.
 
+Hosts that let a user pick a folder (Electron dialog, VS Code workspace API,
+...) can hand the collected files to `view.packFilesAsWorkspace(files, options)`
+instead of packing the `.mdz` themselves. With zero or one Markdown file it
+packs Document mode immediately, no prompt; with more than one, it needs a
+Document-vs-Project mode and entry-point decision, which `onPackRequested(request, context)`
+lets a host take over the same way `onConversionRequested` does (return/resolve
+`true` to suppress the built-in decision dialog, after calling
+`context.applyDecision({ mode, entryPoint })` to perform the actual pack).
+Document mode opens the result in the view; Project mode returns the archive
+bytes without opening them, since only the host knows where a project archive
+should be saved.
+
 Broad boolean forms remain supported:
 
 ```ts

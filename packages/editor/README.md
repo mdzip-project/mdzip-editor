@@ -232,6 +232,46 @@ the default preview sanitizer strips inline `style` attributes.
 `MdzipRenderingService` uses `defaultSafeMarkdownRenderer` when no renderer is
 injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
 
+## Pack Files Hook
+
+Hosts that let a user pick a folder (Electron dialog, VS Code workspace API,
+etc.) can hand the collected files straight to the view instead of building
+the `.mdz` themselves:
+
+```ts
+const result = await view.packFilesAsWorkspace(
+  files, // Array<{ path: string; bytes: Uint8Array }>
+  { title: 'My Project', fileName: 'project.mdz' }
+);
+```
+
+With zero or one Markdown file among `files`, it packs Document mode
+immediately and opens the result in memory — no prompt. With more than one,
+it needs a Document-vs-Project mode and entry-point decision. Provide
+`onPackRequested` to own that decision:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  async onPackRequested(request, context) {
+    // request.markdownFiles, request.suggestedEntryPoint
+    const decision = await hostPicksModeAndEntryPoint(request);
+    if (!decision) return false; // fall back to the built-in dialog
+    await context.applyDecision(decision);
+    return true;
+  }
+});
+```
+
+Returning or resolving `false` (or omitting the callback) keeps the built-in
+dialog — a mode toggle plus an entry-point picker listing the discovered
+Markdown files. Errors thrown by the hook are reported via `onFailed` and
+fall back to the built-in dialog. `context.applyDecision({ mode, entryPoint })`
+performs the actual pack either way.
+
+Document mode opens the packed archive in the view (unsaved); Project mode
+returns the archive bytes without opening them, since only the host knows
+where a project archive should be saved — save it, then `view.open(bytes, ...)`.
+
 ## Rendering Extensibility
 
 The view accepts a custom markdown renderer, composable markdown pipeline

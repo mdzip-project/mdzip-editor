@@ -1,7 +1,7 @@
 import { MdzipWorkspaceView } from 'mdzip-editor';
 import { MdzipDiffView } from 'mdzip-editor/diff-view';
 import { mdzipMermaidExtension } from 'mdzip-editor/mermaid';
-import { modeFromControls, type DemoControls, type DemoImageInsertOptions } from '../tab-controls.js';
+import { modeFromControls, type DemoControls, type DemoDensity, type DemoImageInsertOptions } from '../tab-controls.js';
 import type { TabController } from '../tab-controller.js';
 import { loadDiffBaseBytes } from '../diff-sample.js';
 
@@ -15,6 +15,7 @@ export function initRaw(
   let currentBytes = new Uint8Array();
   let currentControls: DemoControls = 'standalone-editor';
   let currentImageInsert: DemoImageInsertOptions = { mode: 'markdown' };
+  let currentDensity: DemoDensity = { toolbarDensity: 'comfortable', contentDensity: 'comfortable' };
   let currentFileName = 'document.mdz';
   let diffMode = false;
 
@@ -28,6 +29,8 @@ export function initRaw(
       imageHydrationAnimation: 'initial',
       imageInsertMode: currentImageInsert.mode,
       imageInsertHandler: currentImageInsert.handler,
+      toolbarDensity: currentDensity.toolbarDensity,
+      contentDensity: currentDensity.contentDensity,
       markdownExtensions: [mermaidExtension],
       onSaved: (bytes, snapshot) => { onSaved(bytes, snapshot.fileName); workspaceView?.markPersisted(); },
       onFailed,
@@ -63,11 +66,12 @@ export function initRaw(
   render();
 
   return {
-    update: (bytes, fileName, controls, imageInsert) => {
+    update: (bytes, fileName, controls, imageInsert, density) => {
       currentBytes = bytes;
       currentFileName = fileName;
       currentControls = controls;
       currentImageInsert = imageInsert;
+      currentDensity = density;
       render();
     },
     setControls: (controls) => {
@@ -83,12 +87,18 @@ export function initRaw(
         });
       }
     },
+    setDensity: (density) => {
+      currentDensity = density;
+      if (!diffMode) workspaceView?.setDensityOptions(density);
+    },
     setDiffMode: (enabled) => {
       if (diffMode === enabled) return;
       diffMode = enabled;
       render();
     },
     markPersisted: () => workspaceView?.markPersisted(),
+    packFilesAsWorkspace: (files, options) =>
+      workspaceView?.packFilesAsWorkspace(files, options) ?? Promise.resolve(null),
     destroy: () => destroyActive(),
   };
 }

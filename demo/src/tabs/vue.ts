@@ -3,7 +3,7 @@ import { MdzipWorkspace, type MdzipWorkspaceExposed } from '@mdzip/editor-vue';
 import { MdzipDiff } from '@mdzip/editor-vue/diff-view';
 import type { MdzipWorkspaceSave } from 'mdzip-editor';
 import { mdzipMermaidExtension } from 'mdzip-editor/mermaid';
-import { modeFromControls, type DemoControls, type DemoImageInsertOptions } from '../tab-controls.js';
+import { modeFromControls, type DemoControls, type DemoDensity, type DemoImageInsertOptions } from '../tab-controls.js';
 import type { TabController } from '../tab-controller.js';
 import { loadDiffBaseBytes } from '../diff-sample.js';
 
@@ -14,6 +14,7 @@ interface TabState {
   fileName: string;
   controls: DemoControls;
   imageInsert: DemoImageInsertOptions;
+  density: DemoDensity;
   diffMode: boolean;
   diffBaseBytes: Uint8Array | null;
 }
@@ -29,6 +30,7 @@ export function initVue(
     fileName: 'document.mdz',
     controls: 'standalone-editor',
     imageInsert: { mode: 'markdown' },
+    density: { toolbarDensity: 'comfortable', contentDensity: 'comfortable' },
     diffMode: false,
     diffBaseBytes: null,
   });
@@ -53,6 +55,8 @@ export function initVue(
         imageHydrationAnimation: 'initial',
         imageInsertMode: state.value.imageInsert.mode,
         imageInsertHandler: state.value.imageInsert.handler,
+        toolbarDensity: state.value.density.toolbarDensity,
+        contentDensity: state.value.density.contentDensity,
         markdownExtensions: [mermaidExtension],
         onSaved: (event: MdzipWorkspaceSave) => { onSaved(event.bytes, event.snapshot.fileName); workspaceRef.value?.markPersisted(); },
         onFailed,
@@ -63,14 +67,17 @@ export function initVue(
   app.mount(container);
 
   return {
-    update: (bytes, fileName, controls, imageInsert) => {
-      state.value = { ...state.value, bytes, fileName, controls, imageInsert };
+    update: (bytes, fileName, controls, imageInsert, density) => {
+      state.value = { ...state.value, bytes, fileName, controls, imageInsert, density };
     },
     setControls: (controls) => {
       state.value = { ...state.value, controls };
     },
     setImageInsertOptions: (imageInsert) => {
       state.value = { ...state.value, imageInsert };
+    },
+    setDensity: (density) => {
+      state.value = { ...state.value, density };
     },
     setDiffMode: (enabled) => {
       if (state.value.diffMode === enabled) return;
@@ -82,6 +89,8 @@ export function initVue(
       }
     },
     markPersisted: () => workspaceRef.value?.markPersisted(),
+    packFilesAsWorkspace: (files, options) =>
+      workspaceRef.value?.packFilesAsWorkspace(files, options) ?? Promise.resolve(null),
     destroy: () => app.unmount(),
   };
 }

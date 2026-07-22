@@ -1,8 +1,10 @@
 import type {
+  MdzipContentDensity,
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipImageInsertHandler,
   MdzipImageInsertMode,
+  MdzipToolbarDensity,
   MdzipWorkspaceMode,
 } from 'mdzip-editor';
 
@@ -13,6 +15,21 @@ export interface DemoImageInsertOptions {
   mode?: MdzipImageInsertMode;
   handler?: MdzipImageInsertHandler;
 }
+
+export type DemoDensityChoice = 'comfortable' | 'compact' | 'dense';
+
+export interface DemoDensity {
+  toolbarDensity: MdzipToolbarDensity;
+  contentDensity: MdzipContentDensity;
+}
+
+// contentDensity has no 'dense' value, so the "Dense" preset pairs a dense
+// toolbar with the densest content option available (compact).
+export const DENSITY_PRESETS: Record<DemoDensityChoice, DemoDensity> = {
+  comfortable: { toolbarDensity: 'comfortable', contentDensity: 'comfortable' },
+  compact: { toolbarDensity: 'compact', contentDensity: 'compact' },
+  dense: { toolbarDensity: 'dense', contentDensity: 'compact' },
+};
 
 export const PRESETS: { value: MdzipControlPreset; label: string; description: string }[] = [
   { value: 'preview',           label: 'Preview',    description: 'Read-only · clean output, no chrome'         },

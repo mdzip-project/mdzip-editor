@@ -67,6 +67,11 @@ import {
 import type { MdzWorkspace, MdzWorkspaceAsset } from '@mdzip/core-js';
 import { browserClipboardHasImage, readBrowserClipboardImage } from './browser.js';
 import {
+  buildPackedArchiveBytes,
+  isMarkdownArchivePath,
+  resolveMarkdownEntryPoint
+} from './archive-utils.js';
+import {
   MdzipAssetSession,
   mdzipArchiveSourceId,
   sniffImageSize,
@@ -309,6 +314,37 @@ export type MdzipConversionAction =
 export interface MdzipConversionContext {
   insertMarkdown(text: string): Promise<boolean>;
   convertToMdz(): Promise<boolean>;
+}
+
+/** One file the host already collected (e.g. from a folder picker). */
+export interface MdzipPackFilesInput {
+  path: string;
+  bytes: Uint8Array;
+}
+
+export interface MdzipPackFilesRequest {
+  files: readonly MdzipPackFilesInput[];
+  /** Archive-relative paths of the .md/.markdown files among `files` (length > 1 whenever this fires). */
+  markdownFiles: readonly string[];
+  /** Default entry point the built-in dialog preselects. */
+  suggestedEntryPoint: string;
+}
+
+export interface MdzipPackFilesDecision {
+  mode: 'document' | 'project';
+  entryPoint: string;
+}
+
+export interface MdzipPackFilesResult {
+  mode: 'document' | 'project';
+  entryPoint: string;
+  archiveBytes: Uint8Array;
+  /** True when the view already opened the archive in memory (document mode). */
+  opened: boolean;
+}
+
+export interface MdzipPackFilesContext {
+  applyDecision(decision: MdzipPackFilesDecision): Promise<MdzipPackFilesResult>;
 }
 
 export interface MdzipLibraryInfo {
@@ -586,6 +622,21 @@ export interface MdzipWorkspaceViewOptions {
   onConversionRequested?: (
     action: MdzipConversionAction,
     context: MdzipConversionContext
+  ) => boolean | Promise<boolean>;
+  /**
+   * Lets the host take over the folder→.mdz packing decision (Document vs.
+   * Project mode and entry-point choice) surfaced by
+   * {@link MdzipWorkspaceView.packFilesAsWorkspace} when the collected files
+   * contain more than one Markdown file. Resolve `true` to suppress the
+   * built-in dialog — the host owns the flow and performs the pack itself via
+   * `context.applyDecision(...)`. Resolve `false` (or omit) to keep the
+   * built-in dialog. If the callback throws or rejects, the error is reported
+   * via `onFailed` and the built-in dialog is shown. Not consulted for the
+   * zero/one-Markdown fast path, which always packs Document mode immediately.
+   */
+  onPackRequested?: (
+    request: MdzipPackFilesRequest,
+    context: MdzipPackFilesContext
   ) => boolean | Promise<boolean>;
   /**
    * Replaces the default markdown renderer. Output is sanitized by the
@@ -1270,6 +1321,16 @@ export class MdzipWorkspaceView {
     request: MdzipImageInsertRequest;
     resolve: (decision: MdzipImageInsertDecision | null) => void;
   } | null = null;
+  // Promise-based, like imageInsertDialogState — packFilesAsWorkspace is an
+  // explicit awaited call building a brand-new archive from an
+  // already-captured file list, so (unlike conversionAction's fire-and-forget
+  // trigger) there's no "currently open document" to race against and no
+  // de-dupe/staleness guard is needed.
+  private packFilesDialogState: {
+    request: MdzipPackFilesRequest;
+    files: readonly MdzipPackFilesInput[];
+    resolve: (decision: MdzipPackFilesDecision | null) => void;
+  } | null = null;
   private navPaneWidth = 280;
   private splitRatio = 0.5;
   private resizing = false;
@@ -1398,6 +1459,11 @@ export class MdzipWorkspaceView {
   private readonly elImageInsertSizeValueInput: HTMLInputElement;
   private readonly elImageInsertPositionSelect: HTMLSelectElement;
   private readonly elImageInsertConfirmBtn: HTMLButtonElement;
+  private readonly elPackFilesDialog: HTMLElement;
+  private readonly elPackFilesModeDocument: HTMLInputElement;
+  private readonly elPackFilesModeProject: HTMLInputElement;
+  private readonly elPackFilesEntrySelect: HTMLSelectElement;
+  private readonly elPackFilesConfirmBtn: HTMLButtonElement;
   private readonly elNavMenu: HTMLElement;
   private readonly elNameDialog: HTMLElement;
   private readonly elNameDialogHeading: HTMLElement;
@@ -1491,6 +1557,11 @@ export class MdzipWorkspaceView {
     this.elImageInsertSizeValueInput = q('[data-ref="image-insert-size-value"]');
     this.elImageInsertPositionSelect = q('[data-ref="image-insert-position"]');
     this.elImageInsertConfirmBtn = q('[data-ref="image-insert-confirm-btn"]');
+    this.elPackFilesDialog = q('[data-ref="pack-files-dialog"]');
+    this.elPackFilesModeDocument = q('[data-ref="pack-files-mode-document"]');
+    this.elPackFilesModeProject = q('[data-ref="pack-files-mode-project"]');
+    this.elPackFilesEntrySelect = q('[data-ref="pack-files-entry"]');
+    this.elPackFilesConfirmBtn = q('[data-ref="pack-files-confirm-btn"]');
     this.elNavMenu = q('[data-ref="nav-menu"]');
     this.elNameDialog = q('[data-ref="name-dialog"]');
     this.elNameDialogHeading = q('[data-ref="name-dialog-heading"]');
@@ -1836,6 +1907,7 @@ export class MdzipWorkspaceView {
   public destroy(): void {
     this.conversionDocumentGeneration += 1;
     this.resolveImageInsertDialog(null);
+    this.resolvePackFilesDialog(null);
     try {
       this.unsub?.();
     } catch {
@@ -1894,6 +1966,14 @@ export class MdzipWorkspaceView {
     const next = resolveMdzipControlPolicy(controls);
     const lineNumbersChanged = next.lineNumbers !== this.controlPolicy.lineNumbers;
     const searchChanged = next.search !== this.controlPolicy.search;
+    // codeBlockTools chrome is only attached when the preview HTML actually
+    // re-mounts (mountPreviewHtml/mountProgressivePreview), which updatePreview()
+    // skips via its memo when nothing document-facing changed. Unlike
+    // lineNumbers/search (live CodeMirror compartment reconfigures), there's
+    // no live DOM toggle for already-rendered code blocks, so the memo has to
+    // be busted to pick up the new policy — same reason
+    // setImageHydrationAnimation calls resetPreviewState() below.
+    const codeBlockToolsChanged = next.codeBlockTools !== this.controlPolicy.codeBlockTools;
     this.controlPolicy = next;
     if (lineNumbersChanged && this.cmEditor) {
       this.cmEditor.dispatch({
@@ -1911,6 +1991,9 @@ export class MdzipWorkspaceView {
           next.search ? [search({ top: true }), keymap.of(searchKeymap)] : []
         )
       });
+    }
+    if (codeBlockToolsChanged) {
+      this.resetPreviewState();
     }
     const snapshot = this.workspace?.snapshot();
     if (snapshot) {
@@ -3024,6 +3107,16 @@ export class MdzipWorkspaceView {
       this.elImageInsertPositionSelect.value = 'inline';
       this.updateImageInsertOptionControls();
     }
+    this.elPackFilesDialog.hidden = this.packFilesDialogState === null;
+    if (this.packFilesDialogState) {
+      const { request } = this.packFilesDialogState;
+      this.elPackFilesEntrySelect.innerHTML = request.markdownFiles
+        .map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`)
+        .join('');
+      this.elPackFilesEntrySelect.value = request.suggestedEntryPoint;
+      this.elPackFilesModeDocument.checked = true;
+      this.elPackFilesModeProject.checked = false;
+    }
     this.elMetadataDialog.hidden = !this.metadataDialogOpen;
 
     if (this.contextMenuState) {
@@ -3413,6 +3506,13 @@ export class MdzipWorkspaceView {
     this.elImageInsertSizeModeSelect.addEventListener('change', () => {
       this.resetImageInsertSizeValue();
       this.updateImageInsertOptionControls();
+    });
+    this.elPackFilesDialog.querySelector<HTMLButtonElement>('[data-action="cancel-pack-files"]')!
+      .addEventListener('click', () => {
+        this.resolvePackFilesDialog(null);
+      });
+    this.elPackFilesConfirmBtn.addEventListener('click', () => {
+      this.resolvePackFilesDialog(this.readPackFilesDialogDecision());
     });
 
     this.elNavMenu.addEventListener('click', (e) => {
@@ -3952,6 +4052,105 @@ export class MdzipWorkspaceView {
       return;
     }
     this.elImageInput.click();
+  }
+
+  /**
+   * Packs an already-collected file list (e.g. from a host folder picker)
+   * into a new .mdz workspace. With 0 or 1 Markdown files among `files`,
+   * packs Document mode immediately with no prompt. With more than one,
+   * asks `onPackRequested` (if set) to decide Document vs. Project mode and
+   * the entry point; falls back to a built-in dialog if the hook is absent,
+   * declines, or throws. Document mode opens the result in memory; Project
+   * mode returns the archive bytes without opening them, since only the
+   * host knows where a project archive should be saved.
+   */
+  public async packFilesAsWorkspace(
+    files: readonly MdzipPackFilesInput[],
+    options: { title?: string; fileName?: string } = {}
+  ): Promise<MdzipPackFilesResult | null> {
+    const markdownFiles = files.filter((f) => isMarkdownArchivePath(f.path)).map((f) => f.path);
+
+    if (markdownFiles.length <= 1) {
+      const entryPoint = markdownFiles[0] ?? 'index.md';
+      return this.applyPackDecision(files, { mode: 'document', entryPoint }, options);
+    }
+
+    const suggestedEntryPoint = resolveMarkdownEntryPoint(markdownFiles);
+    const request: MdzipPackFilesRequest = { files, markdownFiles, suggestedEntryPoint };
+    const hook = this.options.onPackRequested;
+
+    if (hook) {
+      const context = this.createPackFilesContext(files, options);
+      let applied: MdzipPackFilesResult | null = null;
+      const wrappedContext: MdzipPackFilesContext = {
+        applyDecision: async (decision) => {
+          applied = await context.applyDecision(decision);
+          return applied;
+        }
+      };
+      let handled = false;
+      try {
+        handled = await hook(request, wrappedContext);
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+      if (handled) {
+        return applied;
+      }
+    }
+
+    const decision = await this.openPackFilesDialog(request);
+    return decision ? this.applyPackDecision(files, decision, options) : null;
+  }
+
+  private createPackFilesContext(
+    files: readonly MdzipPackFilesInput[],
+    options: { title?: string; fileName?: string }
+  ): MdzipPackFilesContext {
+    return { applyDecision: (decision) => this.applyPackDecision(files, decision, options) };
+  }
+
+  private async applyPackDecision(
+    files: readonly MdzipPackFilesInput[],
+    decision: MdzipPackFilesDecision,
+    options: { title?: string; fileName?: string }
+  ): Promise<MdzipPackFilesResult> {
+    const archiveBytes = await buildPackedArchiveBytes(files, {
+      mode: decision.mode,
+      entryPoint: decision.entryPoint,
+      title: options.title ?? 'document'
+    });
+    if (decision.mode === 'document') {
+      await this.open(archiveBytes, { mode: 'editable', fileName: options.fileName ?? 'document.mdz' });
+      return { mode: 'document', entryPoint: decision.entryPoint, archiveBytes, opened: true };
+    }
+    return { mode: 'project', entryPoint: decision.entryPoint, archiveBytes, opened: false };
+  }
+
+  private openPackFilesDialog(request: MdzipPackFilesRequest): Promise<MdzipPackFilesDecision | null> {
+    return new Promise((resolve) => {
+      this.resolvePackFilesDialog(null); // cancel any prior pending dialog, same as image-insert
+      this.packFilesDialogState = { request, files: request.files, resolve };
+      this.render();
+      requestAnimationFrame(() => this.elPackFilesConfirmBtn.focus());
+    });
+  }
+
+  private resolvePackFilesDialog(decision: MdzipPackFilesDecision | null): void {
+    const state = this.packFilesDialogState;
+    if (!state) {
+      return;
+    }
+    this.packFilesDialogState = null;
+    this.render();
+    state.resolve(decision);
+  }
+
+  private readPackFilesDialogDecision(): MdzipPackFilesDecision {
+    return {
+      mode: this.elPackFilesModeProject.checked ? 'project' : 'document',
+      entryPoint: this.elPackFilesEntrySelect.value
+    };
   }
 
   private async handlePaste(event: ClipboardEvent): Promise<void> {
@@ -5870,6 +6069,35 @@ const SHELL_HTML = `
       <div class="title-dialog-actions">
         <button type="button" data-action="cancel-image-insert">Cancel</button>
         <button type="button" class="save-title" data-ref="image-insert-confirm-btn">Insert</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="title-dialog-backdrop" data-ref="pack-files-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-pack-files-dialog-heading">
+    <div class="title-dialog pack-files-dialog">
+      <h3 id="mdzip-pack-files-dialog-heading">Package Markdown Files</h3>
+      <p>These files contain more than one Markdown document. Choose how to package them.</p>
+      <fieldset class="pack-files-options">
+        <legend>Mode</legend>
+        <label>
+          <input type="radio" name="mdzip-pack-files-mode" value="document"
+            data-ref="pack-files-mode-document" checked />
+          Document — one primary page; the rest are attached
+        </label>
+        <label>
+          <input type="radio" name="mdzip-pack-files-mode" value="project"
+            data-ref="pack-files-mode-project" />
+          Project — a set of related documents
+        </label>
+      </fieldset>
+      <label class="pack-files-field">
+        <span>Entry point</span>
+        <select data-ref="pack-files-entry"></select>
+      </label>
+      <div class="title-dialog-actions">
+        <button type="button" data-action="cancel-pack-files">Cancel</button>
+        <button type="button" class="save-title" data-ref="pack-files-confirm-btn">Package</button>
       </div>
     </div>
   </div>

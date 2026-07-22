@@ -141,6 +141,7 @@ re-mount), and unmounts on selection change.
 | `onAssetsHydrated` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called once the mounted preview's images have loaded |
 | `onFailed` | `(error: unknown) => void` | Called on unrecoverable errors |
 | `onConversionRequested` | `(action: MdzipConversionAction) => boolean \| Promise<boolean>` | Host hook for the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog |
+| `onPackRequested` | `(request: MdzipPackFilesRequest, context: MdzipPackFilesContext) => boolean \| Promise<boolean>` | Host hook for the folder→.mdz packing decision surfaced by the `packFilesAsWorkspace(files, options)` ref method — fires only when the file list contains more than one Markdown file. Same return contract as `onConversionRequested` |
 
 ## Image insertion
 

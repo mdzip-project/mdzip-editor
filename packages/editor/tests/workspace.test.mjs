@@ -1500,3 +1500,286 @@ test('conversion context rejects insertion after the document changes', async ()
   assert.equal(await context.insertMarkdown('unsafe'), false);
   assert.equal(state.currentText, 'changed elsewhere');
 });
+
+// --- onPackRequested host hook ---
+//
+// packFilesAsWorkspace is an explicit, awaited call building a brand-new,
+// independent archive from an already-captured file list — unlike
+// requestMdzConversion (a fire-and-forget trigger mutating the *currently
+// open* document), there's nothing for a second concurrent call to race
+// against, so there is deliberately no conversionHookPending-style de-dupe
+// guard here. Don't "fix" that in by mistaking it for an oversight.
+
+const packHookTarget = (hook, onFailed) => {
+  const calls = { dialog: 0, apply: [] };
+  const target = {
+    options: { onPackRequested: hook, onFailed },
+    createPackFilesContext: MdzipWorkspaceView.prototype.createPackFilesContext,
+    applyPackDecision: async (_files, decision) => {
+      calls.apply.push(decision);
+      return {
+        mode: decision.mode,
+        entryPoint: decision.entryPoint,
+        archiveBytes: new Uint8Array(),
+        opened: decision.mode === 'document'
+      };
+    },
+    openPackFilesDialog: async () => { calls.dialog += 1; return null; },
+    render: () => {}
+  };
+  return { target, calls };
+};
+
+const multiMarkdownFiles = () => [
+  { path: 'index.md', bytes: new TextEncoder().encode('# Index\n') },
+  { path: 'chapter.md', bytes: new TextEncoder().encode('# Chapter\n') }
+];
+
+test('onPackRequested=true and applyDecision suppresses the built-in pack dialog', async () => {
+  const seen = [];
+  const { target, calls } = packHookTarget(async (request, context) => {
+    seen.push(request);
+    await context.applyDecision({ mode: 'project', entryPoint: 'chapter.md' });
+    return true;
+  });
+
+  const result = await MdzipWorkspaceView.prototype.packFilesAsWorkspace.call(
+    target, multiMarkdownFiles(), {}
+  );
+
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].markdownFiles, ['index.md', 'chapter.md']);
+  assert.equal(seen[0].suggestedEntryPoint, 'index.md');
+  assert.equal(calls.dialog, 0);
+  assert.deepEqual(calls.apply, [{ mode: 'project', entryPoint: 'chapter.md' }]);
+  assert.equal(result.mode, 'project');
+  assert.equal(result.opened, false);
+});
+
+test('onPackRequested=true without calling applyDecision returns null', async () => {
+  const { target, calls } = packHookTarget(async () => true);
+
+  const result = await MdzipWorkspaceView.prototype.packFilesAsWorkspace.call(
+    target, multiMarkdownFiles(), {}
+  );
+
+  assert.equal(result, null);
+  assert.equal(calls.dialog, 0);
+});
+
+test('onPackRequested=false falls through to the built-in pack dialog', async () => {
+  const { target, calls } = packHookTarget(async () => false);
+
+  await MdzipWorkspaceView.prototype.packFilesAsWorkspace.call(target, multiMarkdownFiles(), {});
+
+  assert.equal(calls.dialog, 1);
+});
+
+test('a rejecting onPackRequested reports onFailed and shows the built-in dialog', async () => {
+  const failures = [];
+  const { target, calls } = packHookTarget(
+    () => Promise.reject(new Error('host broke')),
+    (error) => failures.push(error)
+  );
+
+  await MdzipWorkspaceView.prototype.packFilesAsWorkspace.call(target, multiMarkdownFiles(), {});
+
+  assert.equal(failures.length, 1);
+  assert.equal(calls.dialog, 1);
+});
+
+test('packFilesAsWorkspace does not consult the hook for the zero/one-Markdown fast path', async () => {
+  let hookCalls = 0;
+  const { target, calls } = packHookTarget(async () => { hookCalls += 1; return true; });
+
+  const result = await MdzipWorkspaceView.prototype.packFilesAsWorkspace.call(
+    target,
+    [{ path: 'only.md', bytes: new TextEncoder().encode('# Only\n') }],
+    {}
+  );
+
+  assert.equal(hookCalls, 0, 'the hook is not consulted for the fast path');
+  assert.equal(calls.dialog, 0);
+  assert.equal(calls.apply.length, 1, 'the fast path still packs directly via applyPackDecision');
+  assert.equal(result.mode, 'document');
+  assert.equal(result.entryPoint, 'only.md');
+});
+
+// --- packFilesAsWorkspace built-in dialog (real DOM view) ---
+
+test('packFilesAsWorkspace fast path opens a single Markdown file without a dialog', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const result = await view.packFilesAsWorkspace([
+      { path: 'only.md', bytes: new TextEncoder().encode('# Hi\n') }
+    ]);
+
+    assert.equal(container.querySelector('[data-ref="pack-files-dialog"]').hidden, true);
+    assert.equal(result.mode, 'document');
+    assert.equal(result.opened, true);
+    assert.equal(result.entryPoint, 'only.md');
+
+    const snapshot = await view.getCurrentSnapshot();
+    const text = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'only.md'
+    );
+    assert.equal(text, '# Hi\n');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('packFilesAsWorkspace fast path with no Markdown files auto-creates index.md', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const result = await view.packFilesAsWorkspace([
+      { path: 'logo.png', bytes: PNG_1X1 }
+    ]);
+
+    assert.equal(result.entryPoint, 'index.md');
+    const snapshot = await view.getCurrentSnapshot();
+    const archive = await openMdzArchive(new Uint8Array(await snapshot.bytes.arrayBuffer()));
+    assert.ok(archive.paths.some((entry) => entry.path === 'index.md'));
+    assert.ok(archive.paths.some((entry) => entry.path === 'logo.png'));
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('packFilesAsWorkspace shows the built-in dialog for multiple Markdown files (Document mode)', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    // The dialog is part of render(), which no-ops until a workspace is
+    // open (same reason every image-insert dialog test opens a document
+    // first) — packFilesAsWorkspace can build a document with nothing open,
+    // but showing the *dialog* needs an active view first.
+    await view.open(await buildNewArchiveBytesWithTitle('# Placeholder\n', 'Placeholder'), {
+      mode: 'editable',
+      fileName: 'placeholder.mdz'
+    });
+
+    const pending = view.packFilesAsWorkspace(multiMarkdownFiles());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const dialog = container.querySelector('[data-ref="pack-files-dialog"]');
+    const entrySelect = container.querySelector('[data-ref="pack-files-entry"]');
+    assert.equal(dialog.hidden, false);
+    assert.deepEqual([...entrySelect.options].map((o) => o.value), ['index.md', 'chapter.md']);
+    assert.equal(entrySelect.value, 'index.md');
+    assert.equal(container.querySelector('[data-ref="pack-files-mode-document"]').checked, true);
+
+    container.querySelector('[data-ref="pack-files-confirm-btn"]').click();
+    const result = await pending;
+
+    assert.equal(result.mode, 'document');
+    assert.equal(result.opened, true);
+    assert.equal(dialog.hidden, true);
+
+    const snapshot = await view.getCurrentSnapshot();
+    const text = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.equal(text, '# Index\n');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('packFilesAsWorkspace Project mode returns bytes without opening them', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const initialBytes = await buildNewArchiveBytesWithTitle('# Already Open\n', 'Existing');
+    await view.open(initialBytes, { mode: 'editable', fileName: 'existing.mdz' });
+
+    const pending = view.packFilesAsWorkspace(multiMarkdownFiles());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    container.querySelector('[data-ref="pack-files-mode-project"]').checked = true;
+    container.querySelector('[data-ref="pack-files-confirm-btn"]').click();
+    const result = await pending;
+
+    assert.equal(result.mode, 'project');
+    assert.equal(result.opened, false);
+    assert.ok(result.archiveBytes.length > 0);
+
+    // The view must still show the document open before the pack call.
+    const currentSnapshot = await view.getCurrentSnapshot();
+    const currentText = await readTextFileFromArchive(
+      new Uint8Array(await currentSnapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.equal(currentText, '# Already Open\n');
+
+    // The returned bytes are the real packed project, independently of the view.
+    const packedText = await readTextFileFromArchive(result.archiveBytes, 'chapter.md');
+    assert.equal(packedText, '# Chapter\n');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('cancelling the built-in pack dialog resolves null', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    await view.open(await buildNewArchiveBytesWithTitle('# Placeholder\n', 'Placeholder'), {
+      mode: 'editable',
+      fileName: 'placeholder.mdz'
+    });
+
+    const pending = view.packFilesAsWorkspace(multiMarkdownFiles());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const dialog = container.querySelector('[data-ref="pack-files-dialog"]');
+    assert.equal(dialog.hidden, false, 'dialog is actually visible before cancelling');
+
+    container.querySelector('[data-action="cancel-pack-files"]').click();
+    const result = await pending;
+
+    assert.equal(result, null);
+    assert.equal(dialog.hidden, true);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});

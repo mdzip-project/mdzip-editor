@@ -151,6 +151,11 @@ pass `(action: MdzipConversionAction) => boolean | Promise<boolean>`. It fires w
 triggers the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a
 plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog.
 
+`onPackRequested` is the same kind of function prop for the folder→.mdz packing
+decision surfaced by the exposed `packFilesAsWorkspace(files, options)` method — fires
+only when the file list contains more than one Markdown file, with the same
+return contract as `onConversionRequested`.
+
 ## Image insertion
 
 Pass `image-insert-mode="markdown"`, `"ask"`, or `"html"` for the built-in

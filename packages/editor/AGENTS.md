@@ -37,6 +37,10 @@ The context menu's mutating items and drag-and-drop are gated by the `fileAction
 
 Hosts intercept the markdown→MDZ conversion flow by returning/resolving `true` from `onConversionRequested(action)`. This replaces the old capture-phase paste workaround in VS Code-style hosts. A rejecting hook reports to `onFailed` and falls back to the built-in dialog.
 
+**`packFilesAsWorkspace` / `onPackRequested` hook**
+
+`view.packFilesAsWorkspace(files, options)` packs a host-collected file list (e.g. from a folder picker) into a new archive. The hook is only consulted when `files` contains more than one Markdown file — the zero/one-Markdown fast path always packs Document mode directly, no hook call, no dialog. Document mode opens the packed archive in the view; Project mode does **not** auto-open — it returns `archiveBytes` for the host to save first, since only the host knows where a project archive belongs. Same `true`/`false`/throw contract as `onConversionRequested`.
+
 **Preview code-block chrome (since 1.3.16)**
 
 Rendered code blocks get a language header, a copy button, and (past 15 lines) a collapse toggle, gated by the `codeBlockTools` control-policy flag (default `true` everywhere, including `preview`). This is wired into `mountPreviewHtml`/`mountProgressivePreview` directly, not a `markdownExtensions` entry — don't confuse it with `formatting.codeBlock`, which is the unrelated editor-toolbar insert-code-block control.

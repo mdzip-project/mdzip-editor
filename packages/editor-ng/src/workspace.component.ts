@@ -25,6 +25,10 @@ import type {
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipEditorCommand,
+  MdzipPackFilesContext,
+  MdzipPackFilesInput,
+  MdzipPackFilesRequest,
+  MdzipPackFilesResult,
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
   MdzipEntryRenderer,
@@ -91,6 +95,15 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() onConversionRequested?: (
     action: MdzipConversionAction,
     context: MdzipConversionContext
+  ) => boolean | Promise<boolean>;
+  /**
+   * Host hook for the folder→.mdz packing decision surfaced by
+   * `packFilesAsWorkspace()`. Same input-not-output reasoning as
+   * `onConversionRequested`.
+   */
+  @Input() onPackRequested?: (
+    request: MdzipPackFilesRequest,
+    context: MdzipPackFilesContext
   ) => boolean | Promise<boolean>;
   /**
    * Custom markdown renderer. Keep the reference stable: identity changes
@@ -246,6 +259,13 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     return this.view?.setEntryPoint(archivePath) ?? Promise.resolve(false);
   }
 
+  packFilesAsWorkspace(
+    files: readonly MdzipPackFilesInput[],
+    options?: { title?: string; fileName?: string }
+  ): Promise<MdzipPackFilesResult | null> {
+    return this.view?.packFilesAsWorkspace(files, options) ?? Promise.resolve(null);
+  }
+
   setCoverImage(archivePath: string | null): Promise<boolean> {
     return this.view?.setCoverImage(archivePath) ?? Promise.resolve(false);
   }
@@ -299,6 +319,9 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onFailed: (e: unknown) => this.failed.emit(e),
       onConversionRequested: this.onConversionRequested
         ? (action, context) => this.onConversionRequested!(action, context)
+        : undefined,
+      onPackRequested: this.onPackRequested
+        ? (request, context) => this.onPackRequested!(request, context)
         : undefined,
       imageInsertHandler: (request) => this.imageInsertHandler?.(request),
       markdownRenderer: this.markdownRenderer,

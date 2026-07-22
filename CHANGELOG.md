@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.20] - 2026-07-22
+
+### Added
+- `packFilesAsWorkspace(files, options)` packs a host-collected file list
+  (e.g. from a folder picker) into a new `.mdz` workspace. With zero or one
+  Markdown file, it packs Document mode immediately with no prompt. With
+  more than one, it surfaces a Document-vs-Project mode + entry-point
+  decision — new `onPackRequested(request, context)` hook lets a host take
+  over that decision (same `true`/`false`/throw contract as
+  `onConversionRequested`), falling back to a built-in dialog otherwise.
+  Document mode opens the packed archive in the view; Project mode returns
+  the archive bytes without opening them, since only the host knows where a
+  project archive should be saved. Addresses the shared "pack a folder into
+  .mdz" decision UI both `mdzip-studio` and `mdzip-vscode` were about to
+  build independently. (#34)
+
 ## [1.3.19] - 2026-07-21
 
 ### Added

@@ -160,6 +160,11 @@ value): bind `[onConversionRequested]="handler"` where `handler` is
 triggers the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a
 plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog.
 
+`onPackRequested` is the same kind of input function for the folder→.mdz packing
+decision surfaced by the exposed `packFilesAsWorkspace(files, options)` method — fires
+only when the file list contains more than one Markdown file, with the same
+return contract as `onConversionRequested`.
+
 ## Image insertion
 
 Use `[imageInsertMode]="'markdown' | 'ask' | 'html'"` for the built-in image
