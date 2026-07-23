@@ -16,7 +16,12 @@ Reusable JavaScript, Angular, React, and Vue workspace packages for Markdown and
 * [![npm](https://img.shields.io/npm/v/@mdzip/editor-ng)](https://www.npmjs.com/package/@mdzip/editor-ng) `@mdzip/editor-ng` is the Angular component wrapper for the workspace engine.
 * [![npm](https://img.shields.io/npm/v/@mdzip/editor-react)](https://www.npmjs.com/package/@mdzip/editor-react) `@mdzip/editor-react` is the React component wrapper.
 * [![npm](https://img.shields.io/npm/v/@mdzip/editor-vue)](https://www.npmjs.com/package/@mdzip/editor-vue) `@mdzip/editor-vue` is the Vue 3 component wrapper.
-* `demo` is a browser application with raw JS, Angular, React, and Vue tabs that proves the packages run outside VS Code.
+
+The interactive demo (raw JS, Angular, React, and Vue tabs proving the
+packages run outside VS Code) lives in
+[mdzip.org's `editor-demo/app`](https://github.com/mdzip-project/mdzip.org/tree/main/editor-demo/app),
+not in this repo — see `private/Publish.mdz` §2 for testing local editor
+changes against it before publishing.
 
 ## Development
 
@@ -24,7 +29,6 @@ Reusable JavaScript, Angular, React, and Vue workspace packages for Markdown and
 npm install
 npm run build
 npm test
-npm run start:demo
 ```
 
 ## Using The Library
