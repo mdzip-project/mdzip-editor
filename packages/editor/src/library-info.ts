@@ -2,7 +2,7 @@
 export const MDZIP_RUNTIME_LIBRARIES = [
   {
     "name": "@mdzip/editor",
-    "version": "1.3.20",
+    "version": "1.3.21",
     "repositoryUrl": "https://github.com/mdzip-project/mdzip-editor",
     "description": "MDZip workspace engine and browser UI."
   },

@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.3.21] - 2026-07-24
+
+### Added
+- `--mdzip-preview-content-max-width` CSS variable (default `900px`) caps
+  the preview's reading-column width — previously hardcoded. Left unset, it
+  now scales with the zoom control (`calc(900px * var(--mdz-zoom))`); an
+  explicit value (via this variable or `previewMaxWidth` below) does not, so
+  a host's own container-width choice is never silently multiplied by
+  whatever zoom level happens to be active elsewhere. (#35, #36)
+- `previewMaxWidth` constructor option + `setPreviewMaxWidth()` — a
+  developer-facing config knob (no toolbar UI) wrapping the CSS variable
+  above with a typed API: a number is an exact pixel value; `'narrow'` /
+  `'default'` / `'wide'` are aliases for 650/900/1200px. (#38)
+
+### Changed
+- Explicit raw-HTML image `width`/`height` attributes (and the image-insert
+  dialog's HTML-mode sizing) now scale with zoom, matching the preview
+  column above — previously they stayed pinned at their literal pixel value
+  while surrounding text grew, so images shrank relative to the page at
+  higher zoom levels. (#36)
+
+### Fixed
+- Line-number gutter: removed its solid background and border, reduced its
+  font size (`0.85em`) and opacity (`0.65`) so it reads as part of the page
+  rather than a boxed sidebar, and tightened the editor content's left
+  padding so text starts right after the numbers instead of leaving a wide
+  gap. (#37)
+- Line-number gutter text rendered top-aligned instead of matching its
+  line's baseline: CodeMirror force-sets each gutter element's height to
+  its content line's rendered height, but a unitless line-height resolves
+  against the gutter's own (now smaller) font-size, leaving the text
+  shorter than its box. Pinned the gutter's line-height to the content's
+  absolute value instead. (#37)
+- Zoom made gutter row heights drift out of alignment with their content
+  lines, worsening with every line down the document: `EditorView` caches
+  block-height measurements from its own measure pass and has no way to
+  observe a `--mdz-zoom` CSS-variable change (font-size grows but the
+  scroller's outer box doesn't, so no `ResizeObserver` fires either).
+  `setZoom()` now explicitly calls `requestMeasure()` after updating the
+  variable. (#37)
+
 ## [1.3.20] - 2026-07-22
 
 ### Added
