@@ -206,6 +206,22 @@ exact sizing, set stable CSS variables on an ancestor of the workspace:
 }
 ```
 
+`previewMaxWidth` is the typed, developer-facing counterpart to that last CSS
+variable — not toolbar UI. A number is an exact pixel value;
+`'narrow'`/`'default'`/`'wide'` are aliases for 650/900/1200px:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls,
+  previewMaxWidth: 'wide' // or an exact pixel number
+});
+
+view.setPreviewMaxWidth(720);
+```
+
+Leaving it unset keeps the built-in default, which scales with zoom; setting
+it (via this option or the CSS variable directly) does not scale with zoom.
+
 ## Raw Browser API
 
 ```ts

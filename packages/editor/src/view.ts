@@ -268,6 +268,24 @@ export type MdzipImageInsertSource = 'paste' | 'drop' | 'picker';
 export type MdzipImagePosition = 'inline' | 'left' | 'center' | 'right' | 'wrap-left' | 'wrap-right';
 export type MdzipToolbarDensity = 'comfortable' | 'compact' | 'dense';
 export type MdzipContentDensity = 'comfortable' | 'compact';
+/**
+ * Preview reading-column width. A `number` is an exact pixel value; `'narrow'`
+ * / `'default'` / `'wide'` are convenience aliases for common values. Unset
+ * (the default) leaves the built-in CSS default in effect, which scales with
+ * zoom — see {@link MdzipWorkspaceView.setPreviewMaxWidth}.
+ */
+export type MdzipPreviewMaxWidth = number | 'narrow' | 'default' | 'wide';
+
+const PREVIEW_MAX_WIDTH_ALIASES: Record<'narrow' | 'default' | 'wide', number> = {
+  narrow: 650,
+  default: 900,
+  wide: 1200,
+};
+
+function resolvePreviewMaxWidthPx(value: MdzipPreviewMaxWidth | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === 'number' ? value : PREVIEW_MAX_WIDTH_ALIASES[value];
+}
 
 export interface MdzipImageInsertRequest {
   fileName: string;
@@ -540,6 +558,14 @@ export interface MdzipWorkspaceViewOptions {
    * can still fine-tune with stable `--mdzip-*-content-padding` CSS variables.
    */
   contentDensity?: MdzipContentDensity;
+  /**
+   * Developer-facing preview reading-column width — not exposed as toolbar
+   * UI. A number is an exact pixel value; `'narrow'`/`'default'`/`'wide'`
+   * are convenience aliases (650/900/1200px). Unset leaves the built-in
+   * default in effect, which scales with zoom; an explicit value here does
+   * not (see {@link MdzipWorkspaceView.setPreviewMaxWidth}).
+   */
+  previewMaxWidth?: MdzipPreviewMaxWidth;
   /**
    * Controls the progressive preview image reveal animation. Use `'off'` in
    * live-editing hosts to prevent images from pulsing/sliding. Use `'initial'`
@@ -1315,6 +1341,7 @@ export class MdzipWorkspaceView {
   private imageHydrationAnimation: MdzipImageHydrationAnimation;
   private toolbarDensity: MdzipToolbarDensity;
   private contentDensity: MdzipContentDensity;
+  private previewMaxWidth: MdzipPreviewMaxWidth | undefined;
 
   private layout: MdzipWorkspaceLayout = 'split';
   private navVisible = true;
@@ -1492,6 +1519,7 @@ export class MdzipWorkspaceView {
     this.imageHydrationAnimation = options.imageHydrationAnimation ?? 'auto';
     this.toolbarDensity = options.toolbarDensity ?? 'comfortable';
     this.contentDensity = options.contentDensity ?? 'comfortable';
+    this.previewMaxWidth = options.previewMaxWidth;
     this.layout = options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy);
     this.colorScheme = options.initialColorScheme
       ?? (container.ownerDocument.defaultView?.matchMedia('(prefers-color-scheme: dark)').matches
@@ -2029,6 +2057,20 @@ export class MdzipWorkspaceView {
     this.toolbarDensity = nextToolbarDensity;
     this.contentDensity = nextContentDensity;
     this.applyDensityClasses();
+  }
+
+  /**
+   * Sets the preview reading-column width. Developer-facing only — there is
+   * no toolbar UI for this. Pass `undefined` to return to the built-in
+   * default (which scales with zoom); any other value is used exactly as
+   * given and does not scale with zoom (see {@link MdzipPreviewMaxWidth}).
+   */
+  public setPreviewMaxWidth(value: MdzipPreviewMaxWidth | undefined): void {
+    if (value === this.previewMaxWidth) {
+      return;
+    }
+    this.previewMaxWidth = value;
+    this.render();
   }
 
   public setImageInsertOptions(
@@ -2971,6 +3013,12 @@ export class MdzipWorkspaceView {
     this.elRoot.style.setProperty('--mdz-zoom', String(this.zoom));
     this.elRoot.style.setProperty('--nav-pane-width', `${this.navPaneWidth}px`);
     this.elRoot.style.setProperty('--split-edit-ratio', String(this.splitRatio));
+    const previewMaxWidthPx = resolvePreviewMaxWidthPx(this.previewMaxWidth);
+    if (previewMaxWidthPx === undefined) {
+      this.elRoot.style.removeProperty('--mdzip-preview-content-max-width');
+    } else {
+      this.elRoot.style.setProperty('--mdzip-preview-content-max-width', `${previewMaxWidthPx}px`);
+    }
     this.elRoot.classList.toggle('resizing', this.resizing);
     this.elRoot.classList.toggle('mdzip-theme-dark', this.colorScheme === 'dark');
     this.elRoot.classList.toggle('mdzip-theme-light', this.colorScheme === 'light');

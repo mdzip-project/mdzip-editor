@@ -204,6 +204,48 @@ test('density options apply semantic sizing classes without reopening the view',
   }
 });
 
+test('previewMaxWidth sets --mdzip-preview-content-max-width and setPreviewMaxWidth updates it live', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    previewMaxWidth: 'narrow',
+    initialLayout: 'split',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const root = container.querySelector('.mdzip-root');
+
+    const bytes = await buildNewArchiveBytesWithTitle('# Width\n', 'Width');
+    await view.open(bytes, { mode: 'editable', fileName: 'width.mdz' });
+    const editor = view.cmEditor;
+    assert.ok(editor, 'CodeMirror editor was created');
+    assert.equal(
+      root?.style.getPropertyValue('--mdzip-preview-content-max-width'),
+      '650px',
+      'constructor previewMaxWidth applies once the first document renders'
+    );
+
+    view.setPreviewMaxWidth(720);
+    assert.equal(view.cmEditor, editor, 'width update does not recreate the editor');
+    assert.equal(root?.style.getPropertyValue('--mdzip-preview-content-max-width'), '720px');
+
+    view.setPreviewMaxWidth('wide');
+    assert.equal(root?.style.getPropertyValue('--mdzip-preview-content-max-width'), '1200px');
+
+    view.setPreviewMaxWidth(undefined);
+    assert.equal(
+      root?.style.getPropertyValue('--mdzip-preview-content-max-width'),
+      '',
+      'unset removes the inline override, falling back to the built-in (zoom-scaled) CSS default'
+    );
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
 test('infers source format from file name and ZIP signature', async () => {
   const markdown = new TextEncoder().encode('# Notes\n');
   const archive = await buildNewArchiveBytesWithTitle('# Archive\n', 'Archive');

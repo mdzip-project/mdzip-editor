@@ -149,6 +149,27 @@ workspace:
 }
 ```
 
+## Preview Width
+
+`previewMaxWidth` is a developer-facing option, not toolbar UI — it sets the
+preview's reading-column width (`--mdzip-preview-content-max-width` under the
+hood). A number is an exact pixel value; `'narrow'` / `'default'` / `'wide'`
+are convenience aliases for 650 / 900 / 1200px:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls: 'hosted-editor',
+  previewMaxWidth: 'wide' // or an exact pixel number, e.g. 760
+});
+
+view.setPreviewMaxWidth(720);
+```
+
+Leaving it unset (the default) keeps the built-in CSS default in effect,
+which scales with the zoom control; an explicit value set here (or via the
+`--mdzip-preview-content-max-width` CSS variable directly) does not scale
+with zoom — it's used exactly as given.
+
 ## Host Persistence
 
 Desktop hosts can flush pending editor content, persist the returned bytes, and
