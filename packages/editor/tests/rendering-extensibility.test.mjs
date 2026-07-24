@@ -616,7 +616,7 @@ test('progressive image hydration honors raw HTML width/height attributes', asyn
 
     const image = container.querySelector('[data-ref="preview-content"] img');
     assert.ok(image, 'image element is in the mounted preview');
-    assert.equal(image.style.height, '300px', 'explicit height attribute survives the preview\'s height:auto rule');
+    assert.equal(image.style.height, 'calc(300px * var(--mdz-zoom, 1))', 'explicit height attribute survives the preview\'s height:auto rule, scaled with zoom');
     assert.equal(image.style.width, '', 'width is left to scale from the aspect ratio when only height is given');
     const slot = image.parentElement;
     assert.equal(slot.classList.contains('mdzip-image-align-right'), true);
@@ -647,7 +647,7 @@ test('raw HTML image alignment applies even for images that skip archive hydrati
     const image = container.querySelector('[data-ref="preview-content"] img');
     assert.ok(image, 'external image is in the mounted preview');
     assert.equal(image.classList.contains('mdzip-image-left'), true);
-    assert.equal(image.style.width, '180px');
+    assert.equal(image.style.width, 'calc(180px * var(--mdz-zoom, 1))');
     assert.equal(
       image.parentElement.classList.contains('mdzip-image-slot'),
       false,

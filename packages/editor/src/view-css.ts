@@ -1089,7 +1089,7 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .preview-content {
-  max-width: var(--mdzip-preview-content-max-width, 900px);
+  max-width: var(--mdzip-preview-content-max-width, calc(900px * var(--mdz-zoom)));
   margin: 0 auto;
   padding: var(--mdzip-preview-content-padding, var(--mdzip-density-preview-content-padding, 36px 32px 48px));
   line-height: 1.55;

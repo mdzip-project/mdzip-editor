@@ -939,6 +939,14 @@ const mdzipEditorTheme = EditorView.theme({
     color: 'var(--mdzip-line-number-foreground-color)',
     fontFamily: '"Cascadia Code", Consolas, monospace',
     fontSize: '0.85em',
+    // CodeMirror force-sets each gutter element's height to match its
+    // content line's rendered height, but a unitless/inherited line-height
+    // resolves against the gutter's own (smaller) font-size — leaving the
+    // number shorter than its box and rendering top-aligned instead of
+    // matching the content line's baseline. Pin it to the same absolute
+    // line-height as the content (fontSize '&' * the '.cm-scroller' 1.5
+    // multiplier) so both sit centered in equal-height boxes.
+    lineHeight: 'calc(16px * var(--mdz-zoom, 1) * 1.5)',
     opacity: '0.65',
   },
   '.cm-lineNumbers .cm-gutterElement': {
@@ -1275,11 +1283,11 @@ interface MdzipPreviewMemo {
 function applyRawHtmlImageSizeAttributes(image: HTMLImageElement): void {
   const width = image.getAttribute('width');
   if (width && /^\d+$/.test(width) && !image.style.width) {
-    image.style.width = `${width}px`;
+    image.style.width = `calc(${width}px * var(--mdz-zoom, 1))`;
   }
   const height = image.getAttribute('height');
   if (height && /^\d+$/.test(height) && !image.style.height) {
-    image.style.height = `${height}px`;
+    image.style.height = `calc(${height}px * var(--mdz-zoom, 1))`;
   }
 }
 
@@ -5041,6 +5049,14 @@ export class MdzipWorkspaceView {
   private setZoom(value: number): void {
     this.zoom = Math.max(0.5, Math.min(2.5, Math.round(value * 100) / 100));
     this.render();
+    // render() only updates the --mdz-zoom CSS variable; CodeMirror caches
+    // gutter/line-block heights from its own measure pass and has no way to
+    // observe a custom-property change (font-size grows but the scroller's
+    // own outer box doesn't, so no ResizeObserver fires either). Without
+    // this, gutter row heights stay pinned to their pre-zoom pixel values
+    // while .cm-line rows reflow normally, drifting the two further apart
+    // with every line.
+    this.cmEditor?.requestMeasure();
   }
 
   /**
