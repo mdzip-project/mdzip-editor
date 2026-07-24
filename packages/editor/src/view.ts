@@ -928,21 +928,21 @@ const mdzipEditorTheme = EditorView.theme({
     overflow: 'auto',
   },
   '.cm-content': {
-    padding: 'var(--mdzip-editor-content-padding, var(--mdzip-density-editor-content-padding, 36px 48px))',
+    padding: 'var(--mdzip-editor-content-padding, var(--mdzip-density-editor-content-padding, 36px 48px 36px 16px))',
     caretColor: 'var(--mdzip-editor-cursor-color)',
     overflowWrap: 'anywhere',
     wordBreak: 'normal',
   },
   '.cm-gutters': {
-    background: 'var(--mdzip-widget-background-color)',
-    borderRight: '1px solid var(--mdzip-border-color)',
+    background: 'transparent',
+    border: 'none',
     color: 'var(--mdzip-line-number-foreground-color)',
     fontFamily: '"Cascadia Code", Consolas, monospace',
-    minWidth: '52px',
+    fontSize: '0.85em',
+    opacity: '0.65',
   },
   '.cm-lineNumbers .cm-gutterElement': {
     padding: '0 8px 0 4px',
-    minWidth: '44px',
   },
   '&.cm-focused .cm-cursor': {
     borderLeftColor: 'var(--mdzip-editor-cursor-color)',

@@ -202,6 +202,7 @@ exact sizing, set stable CSS variables on an ancestor of the workspace:
   --mdzip-toolbar-gap: 4px;
   --mdzip-editor-content-padding: 16px 20px;
   --mdzip-preview-content-padding: 16px 20px 24px;
+  --mdzip-preview-content-max-width: 720px;
 }
 ```
 
