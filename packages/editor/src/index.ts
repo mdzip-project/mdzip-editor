@@ -5,6 +5,7 @@ export * from './browser.js';
 export * from './diff.js';
 export * from './metadata.js';
 export * from './rendering.js';
+export * from './stats.js';
 export * from './theme.js';
 export * from './view.js';
 export * from './workspace.js';

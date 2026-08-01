@@ -1,8 +1,8 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { closeSearchPanel, openSearchPanel, search, searchKeymap } from '@codemirror/search';
-import { Compartment, EditorState } from '@codemirror/state';
+import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -1125,6 +1125,48 @@ const htmlTagMarkerHighlight = ViewPlugin.fromClass(class {
   update(update: ViewUpdate): void {
     if (update.docChanged || update.viewportChanged) {
       this.decorations = htmlTagMarkerMatcher.updateDeco(update, this.decorations);
+    }
+  }
+}, {
+  decorations: value => value.decorations
+});
+
+// Fenced/indented code blocks, inline code spans, and link/image URLs aren't
+// prose — the browser's spellchecker has no dictionary for shell syntax or
+// filenames, so it just underlines everything. Syntax-tree node ranges (not
+// a MatchDecorator regexp) are required here because MatchDecorator only
+// matches within a single line, and fenced code blocks span many.
+const NO_SPELLCHECK_NODE_NAMES = new Set(['FencedCode', 'CodeBlock', 'InlineCode', 'URL']);
+const noSpellcheckMark = Decoration.mark({ attributes: { spellcheck: 'false' } });
+
+function buildNoSpellcheckDecorations(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const { from, to } of view.visibleRanges) {
+    syntaxTree(view.state).iterate({
+      from,
+      to,
+      enter: (node) => {
+        if (NO_SPELLCHECK_NODE_NAMES.has(node.name)) {
+          builder.add(node.from, node.to, noSpellcheckMark);
+          return false;
+        }
+        return true;
+      }
+    });
+  }
+  return builder.finish();
+}
+
+const noSpellcheckHighlight = ViewPlugin.fromClass(class {
+  decorations: DecorationSet;
+
+  constructor(view: EditorView) {
+    this.decorations = buildNoSpellcheckDecorations(view);
+  }
+
+  update(update: ViewUpdate): void {
+    if (update.docChanged || update.viewportChanged || syntaxTree(update.state) !== syntaxTree(update.startState)) {
+      this.decorations = buildNoSpellcheckDecorations(update.view);
     }
   }
 }, {
@@ -2877,6 +2919,7 @@ export class MdzipWorkspaceView {
         syntaxHighlighting(mdzipMarkdownHighlight),
         hardBreakMarkerHighlight,
         htmlTagMarkerHighlight,
+        noSpellcheckHighlight,
         EditorView.lineWrapping,
         dropCursor(),
         // Content is contenteditable, but browsers don't agree on a default
