@@ -44,6 +44,7 @@ import {
   inferMdzipSourceFormat,
   normalizeArchivePath,
   openMdzArchive,
+  readBinaryFileFromArchive,
   readTextFileFromArchive,
   relativeArchivePath,
   resolveMdzipArchiveLinkTarget,
@@ -937,6 +938,161 @@ test('built-in image insert dialog opens for every paste in ask mode', async () 
   }
 });
 
+// The click-to-affordance step (posAtCoords hit-testing against real pixel
+// coordinates) needs real layout, which jsdom doesn't compute — so these
+// dispatch the affordance widget's own click event directly (the same
+// bubbling CustomEvent `ImageEditAffordanceWidget.toDOM()` fires in
+// view.ts), exercising resolution/rewrite end to end without depending on
+// geometry. 'no handler set' is covered separately with a real click, since
+// that path returns before any geometry is needed.
+test('imageEditHandler receives the parsed request and rewrites the image in place on confirm', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const requests = [];
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light',
+    imageEditHandler: (request) => {
+      requests.push(request);
+      return { mode: 'html', altText: 'New alt', width: 200, position: 'center' };
+    }
+  });
+
+  try {
+    const initial = '![alt](img.png)\n\nMore text.';
+    const bytes = await buildNewArchiveBytesWithTitle(initial, 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const target = container.querySelector('.cm-content');
+    assert.ok(target);
+
+    const event = new window.CustomEvent('mdzip-image-edit-affordance-click', {
+      bubbles: true,
+      detail: { from: 0, to: '![alt](img.png)'.length }
+    });
+    target.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(requests.length, 1);
+    assert.deepEqual(requests[0], {
+      src: 'img.png',
+      altText: 'alt',
+      width: undefined,
+      height: undefined,
+      position: 'inline',
+      mode: 'markdown'
+    });
+
+    const snapshot = await view.getCurrentSnapshot();
+    const markdown = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.match(markdown, /^<p align="center"><img src="img\.png" alt="New alt" width="200"><\/p>\n\nMore text\./);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('imageEditHandler returning null cancels, leaving the document untouched', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light',
+    imageEditHandler: () => null
+  });
+
+  try {
+    const initial = '![alt](img.png)\n\nMore text.';
+    const bytes = await buildNewArchiveBytesWithTitle(initial, 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const target = container.querySelector('.cm-content');
+    assert.ok(target);
+
+    const event = new window.CustomEvent('mdzip-image-edit-affordance-click', {
+      bubbles: true,
+      detail: { from: 0, to: '![alt](img.png)'.length }
+    });
+    target.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const snapshot = await view.getCurrentSnapshot();
+    const markdown = await readTextFileFromArchive(
+      new Uint8Array(await snapshot.bytes.arrayBuffer()),
+      'index.md'
+    );
+    assert.equal(markdown, initial);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('a stale/mismatched affordance range is ignored — the handler is never invoked', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const requests = [];
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light',
+    imageEditHandler: (request) => {
+      requests.push(request);
+      return null;
+    }
+  });
+
+  try {
+    const initial = '![alt](img.png)\n\nMore text.';
+    const bytes = await buildNewArchiveBytesWithTitle(initial, 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const target = container.querySelector('.cm-content');
+    assert.ok(target);
+
+    // Points at "More text." — not an image reference at all.
+    const event = new window.CustomEvent('mdzip-image-edit-affordance-click', {
+      bubbles: true,
+      detail: { from: initial.indexOf('More'), to: initial.indexOf('More') + 4 }
+    });
+    target.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(requests.length, 0);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('with no imageEditHandler, clicking inside the editor never creates an edit affordance', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'source',
+    initialColorScheme: 'light'
+  });
+
+  try {
+    const bytes = await buildNewArchiveBytesWithTitle('![alt](img.png)\n', 'Original');
+    await view.open(bytes, { mode: 'editable', fileName: 'demo.mdz' });
+    const target = container.querySelector('.cm-content');
+    assert.ok(target);
+
+    const event = new window.MouseEvent('click', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+    target.dispatchEvent(event);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(container.querySelector('[data-mdzip-image-edit-affordance]'), null);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
 test('provides workspace view helpers outside framework wrappers', async () => {
   const bytes = await buildNewArchiveBytesWithTitle('# Original\n', 'Original', [
     { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
@@ -1823,5 +1979,31 @@ test('cancelling the built-in pack dialog resolves null', async () => {
   } finally {
     view.destroy();
     container.remove();
+  }
+});
+
+test('readBinaryFileFromArchive/readTextFileFromArchive reuse one parsed handle per byte buffer', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Title\n\n![a](images/a.png)\n', 'Demo', [
+    { archivePath: 'images/a.png', fileBytes: PNG_1X1 },
+    { archivePath: 'images/b.png', fileBytes: PNG_1X1 }
+  ]);
+  const otherBytes = await buildNewArchiveBytesWithTitle('# Other\n', 'Other');
+
+  let openCalls = 0;
+  const originalOpen = MdzArchiveCore.open;
+  MdzArchiveCore.open = function patchedOpen(...args) {
+    openCalls += 1;
+    return originalOpen.apply(MdzArchiveCore, args);
+  };
+  try {
+    await readBinaryFileFromArchive(bytes, 'images/a.png');
+    await readBinaryFileFromArchive(bytes, 'images/b.png');
+    await readTextFileFromArchive(bytes, 'index.md');
+    assert.equal(openCalls, 1, 'repeated reads of the same bytes reuse one opened archive handle');
+
+    await readTextFileFromArchive(otherBytes, 'index.md');
+    assert.equal(openCalls, 2, 'a distinct byte buffer opens its own handle');
+  } finally {
+    MdzArchiveCore.open = originalOpen;
   }
 });

@@ -172,6 +172,10 @@ markup flow. Bind `[imageInsertHandler]="handler"` for host-owned image UI; the
 handler can return Markdown or HTML sizing/alignment settings, return `null` to
 cancel, or return `undefined` to fall back to `imageInsertMode`.
 
+Bind `[imageEditHandler]="handler"` to let users edit an *existing* image by
+clicking it. Fully opt-in — with no handler bound, clicking an image does
+nothing and no edit affordance appears; there is no built-in fallback dialog.
+
 ## File management (nav pane)
 
 With `controls="standalone-editor"` or `"hosted-editor"` (or `fileActions: true` in a custom

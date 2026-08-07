@@ -14,6 +14,7 @@ import type {
   MdzipEditorSnapshot,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
+  MdzipImageEditHandler,
   MdzipImageHydrationAnimation,
   MdzipImageInsertHandler,
   MdzipImageInsertMode,
@@ -131,8 +132,16 @@ export interface MdzipWorkspaceProps {
   imageHydrationAnimation?: MdzipImageHydrationAnimation;
   imageInsertMode?: MdzipImageInsertMode;
   imageInsertHandler?: MdzipImageInsertHandler;
+  imageEditHandler?: MdzipImageEditHandler;
   initialLayout?: MdzipWorkspaceLayout;
   initialColorScheme?: MdzipColorScheme;
+  /**
+   * Mounts the preview in chunks near the viewport instead of rendering the
+   * whole document synchronously up front. Recommended for hosts that may
+   * open very large documents. Defaults to `false`. Constructor-only, like
+   * `initialColorScheme` — changing it recreates the view.
+   */
+  progressiveTextRendering?: boolean;
   navigationMode?: MdzipNavigationMode;
   navigationButtonActive?: boolean;
   onChanged?: (event: MdzipWorkspaceChange) => void;
@@ -226,8 +235,10 @@ function MdzipWorkspace({
   imageHydrationAnimation,
   imageInsertMode,
   imageInsertHandler,
+  imageEditHandler,
   initialLayout,
   initialColorScheme,
+  progressiveTextRendering,
   navigationMode,
   navigationButtonActive,
   onChanged,
@@ -281,6 +292,7 @@ function MdzipWorkspace({
     onConversionRequested,
     onPackRequested,
     imageInsertHandler,
+    imageEditHandler,
   });
   callbacksRef.current = {
     onChanged,
@@ -300,6 +312,7 @@ function MdzipWorkspace({
     onConversionRequested,
     onPackRequested,
     imageInsertHandler,
+    imageEditHandler,
   };
 
   const contentRef = useRef({ bytes, workspace, mode, sourceFormat, fileName });
@@ -366,6 +379,7 @@ function MdzipWorkspace({
       imageInsertMode: controlsRef.current.imageInsertMode,
       initialLayout,
       initialColorScheme,
+      progressiveTextRendering,
       navigationMode,
       navigationButtonActive,
       onChanged: (bytes, snapshot) => callbacksRef.current.onChanged?.({ bytes, snapshot }),
@@ -390,6 +404,8 @@ function MdzipWorkspace({
         callbacksRef.current.onPackRequested?.(request, context) ?? false,
       imageInsertHandler: (request) =>
         callbacksRef.current.imageInsertHandler?.(request),
+      imageEditHandler: (request) =>
+        callbacksRef.current.imageEditHandler?.(request),
       markdownRenderer: renderingRef.current.markdownRenderer,
       markdownExtensions: renderingRef.current.markdownExtensions,
       entryRenderers: composeEntryRenderers(
@@ -419,6 +435,7 @@ function MdzipWorkspace({
   }, [
     initialLayout,
     initialColorScheme,
+    progressiveTextRendering,
     navigationMode,
     navigationButtonActive
   ]);
@@ -442,6 +459,13 @@ function MdzipWorkspace({
         callbacksRef.current.imageInsertHandler?.(request),
     });
   }, [imageInsertMode, imageInsertHandler]);
+
+  useEffect(() => {
+    viewRef.current?.setImageEditOptions({
+      imageEditHandler: (request) =>
+        callbacksRef.current.imageEditHandler?.(request),
+    });
+  }, [imageEditHandler]);
 
   useEffect(() => {
     if (viewRef.current && workspace) {

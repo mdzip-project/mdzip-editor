@@ -31,6 +31,7 @@ import type {
   MdzipEntryRenderer,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
+  MdzipImageEditHandler,
   MdzipImageHydrationAnimation,
   MdzipImageInsertHandler,
   MdzipImageInsertMode,
@@ -131,8 +132,16 @@ export const MdzipWorkspace = defineComponent({
     imageHydrationAnimation: String as PropType<MdzipImageHydrationAnimation>,
     imageInsertMode: String as PropType<MdzipImageInsertMode>,
     imageInsertHandler: Function as PropType<MdzipImageInsertHandler>,
+    imageEditHandler: Function as PropType<MdzipImageEditHandler>,
     initialLayout: String as PropType<MdzipWorkspaceLayout>,
     initialColorScheme: String as PropType<MdzipColorScheme>,
+    /**
+     * Mounts the preview in chunks near the viewport instead of rendering the
+     * whole document synchronously up front. Recommended for hosts that may
+     * open very large documents. Defaults to `false`. Constructor-only, like
+     * `initialColorScheme` — changing it recreates the view.
+     */
+    progressiveTextRendering: Boolean,
     navigationMode: {
       type: String as PropType<MdzipNavigationMode>,
       default: 'editor'
@@ -294,6 +303,7 @@ export const MdzipWorkspace = defineComponent({
         imageInsertMode: props.imageInsertMode,
         initialLayout: props.initialLayout,
         initialColorScheme: props.initialColorScheme,
+        progressiveTextRendering: props.progressiveTextRendering,
         navigationMode: props.navigationMode,
         navigationButtonActive: props.navigationButtonActive,
         onChanged: (bytes, snapshot) => emit('changed', { bytes, snapshot }),
@@ -313,6 +323,7 @@ export const MdzipWorkspace = defineComponent({
         onConversionRequested: props.onConversionRequested,
         onPackRequested: props.onPackRequested,
         imageInsertHandler: (request) => props.imageInsertHandler?.(request),
+        imageEditHandler: (request) => props.imageEditHandler?.(request),
         markdownRenderer: props.markdownRenderer ?? undefined,
         markdownExtensions: props.markdownExtensions,
         entryRenderers: composedEntryRenderers(),
@@ -358,6 +369,7 @@ export const MdzipWorkspace = defineComponent({
     watch([
       () => props.initialLayout,
       () => props.initialColorScheme,
+      () => props.progressiveTextRendering,
       () => props.navigationMode,
       () => props.navigationButtonActive
     ], () => {
@@ -380,6 +392,12 @@ export const MdzipWorkspace = defineComponent({
       view?.setImageInsertOptions({
         imageInsertMode: mode,
         imageInsertHandler: (request) => props.imageInsertHandler?.(request),
+      });
+    });
+
+    watch(() => props.imageEditHandler, () => {
+      view?.setImageEditOptions({
+        imageEditHandler: (request) => props.imageEditHandler?.(request),
       });
     });
 

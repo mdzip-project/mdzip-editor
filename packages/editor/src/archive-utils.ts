@@ -111,11 +111,27 @@ export async function findOrphanedAssetPathsInArchive(
   return result.orphanedAssetPaths;
 }
 
+// Keyed by the byte buffer's identity: callers that keep reading from the
+// same (immutable) archiveBytes reuse the already-parsed handle instead of
+// re-opening (and re-parsing) the whole archive on every single asset read.
+// A WeakMap lets the cached handle be collected once the caller drops its
+// reference to the bytes (e.g. after an edit produces a new archiveBytes).
+const openArchiveCache = new WeakMap<Uint8Array, Promise<MdzArchiveCore>>();
+
+function openArchiveCached(existingBytes: Uint8Array): Promise<MdzArchiveCore> {
+  let archive = openArchiveCache.get(existingBytes);
+  if (!archive) {
+    archive = MdzArchiveCore.open(existingBytes);
+    openArchiveCache.set(existingBytes, archive);
+  }
+  return archive;
+}
+
 export async function readBinaryFileFromArchive(
   existingBytes: Uint8Array,
   archivePath: string
 ): Promise<Uint8Array> {
-  const archive = await MdzArchiveCore.open(existingBytes);
+  const archive = await openArchiveCached(existingBytes);
   try {
     return await archive.readBytes(archivePath);
   } catch {
@@ -127,7 +143,7 @@ export async function readTextFileFromArchive(
   existingBytes: Uint8Array,
   archivePath: string
 ): Promise<string> {
-  const archive = await MdzArchiveCore.open(existingBytes);
+  const archive = await openArchiveCached(existingBytes);
   try {
     return await archive.readText(archivePath);
   } catch {

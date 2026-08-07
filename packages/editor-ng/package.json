@@ -22,7 +22,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/fesm2022/mdzip-editor-ng.mjs"
-    }
+    },
+    "./mdz-archive.worker.js": "./dist/mdz-archive.worker.js"
   },
   "sideEffects": false,
   "peerDependencies": {
@@ -41,6 +42,7 @@
     "generate:package-info": "node ../../scripts/generate-package-info.mjs",
     "prebuild": "npm run generate:package-info",
     "build": "ng build @mdzip/editor-ng",
+    "postbuild": "node scripts/copy-worker-asset.mjs",
     "test": "vitest run"
   },
   "files": [

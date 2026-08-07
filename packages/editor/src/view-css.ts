@@ -861,6 +861,24 @@ export const WORKSPACE_CSS = `
   pointer-events: none;
 }
 
+.mdzip-root .mdzip-copy-toast {
+  position: fixed;
+  z-index: 10000;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 8px 14px;
+  border-radius: 6px;
+  background: var(--mdzip-editor-foreground-color);
+  color: var(--mdzip-editor-background-color);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+  pointer-events: none;
+}
+
 .mdzip-root .pane-stack {
   display: block;
   flex: 1;
@@ -1115,6 +1133,20 @@ export const WORKSPACE_CSS = `
 }
 
 .mdzip-root .preview-content > :first-child {
+  margin-top: 0;
+}
+
+/* Chunked (progressiveTextRendering) mounting wraps each rendered chunk in
+   a mount boundary. display:contents drops it from the box tree so margin
+   collapsing and other layout behave exactly as the non-chunked path (one
+   flat run of blocks) — but :first-child selector matching still follows
+   the real DOM tree regardless of display, so the rule above needs a
+   companion for the now one-level-deeper first real content element. */
+.mdzip-root .preview-content > .mdzip-chunk {
+  display: contents;
+}
+
+.mdzip-root .preview-content > .mdzip-chunk:first-child > :first-child {
   margin-top: 0;
 }
 
@@ -1721,6 +1753,19 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root .pack-files-field {
   margin-top: 8px;
+}
+
+.mdzip-root .copy-render-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--mdzip-secondary-background-color);
+  overflow: hidden;
+}
+
+.mdzip-root .copy-render-progress-bar {
+  height: 100%;
+  background: var(--mdzip-accent-color);
+  transition: width 0.1s linear;
 }
 
 .mdzip-root .metadata-dialog dl {

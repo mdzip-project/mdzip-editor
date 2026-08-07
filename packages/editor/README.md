@@ -254,6 +254,33 @@ the default preview sanitizer strips inline `style` attributes.
 `MdzipRenderingService` uses `defaultSafeMarkdownRenderer` when no renderer is
 injected. The default renderer sanitizes generated HTML and unsafe URL schemes.
 
+## Image Edit Hook
+
+Editing an *existing* image (Markdown `![]()` or raw HTML `<img>`, including
+one wrapped in `<p align="...">`) is fully opt-in — unlike image insertion,
+there is no built-in fallback dialog and no `imageEditMode`. Set
+`imageEditHandler` to enable it:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  async imageEditHandler(request) {
+    // request: { src, altText, width?, height?, position?, mode: 'markdown' | 'html' }
+    const decision = await hostEditDialog(request);
+    if (!decision) return null; // cancel — leaves the image untouched
+    return decision; // same shape as an image-insert decision
+  }
+});
+```
+
+With no `imageEditHandler` set, clicking an existing image does nothing —
+no edit affordance ever appears. With one set, clicking an image reference
+in the source editor shows a small edit icon next to it; clicking that icon
+calls the handler with the image's current alt/width/height/position parsed
+from its existing Markdown or HTML, and rewrites that exact reference in
+place with whatever decision is returned (same `{ mode, altText, width,
+height, position }` shape `imageInsertHandler` returns). Reference-style
+Markdown images (`![alt][label]`) aren't supported.
+
 ## Pack Files Hook
 
 Hosts that let a user pick a folder (Electron dialog, VS Code workspace API,

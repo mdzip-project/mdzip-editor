@@ -34,6 +34,7 @@ import type {
   MdzipEntryRenderer,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
+  MdzipImageEditHandler,
   MdzipImageHydrationAnimation,
   MdzipImageInsertHandler,
   MdzipImageInsertMode,
@@ -77,14 +78,31 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() fileName = 'document.mdz';
   @Input() mode: MdzipWorkspaceMode = 'read-only';
   @Input() sourceFormat?: MdzipSourceFormat;
+  /**
+   * Dedicated Worker running `@mdzip/editor`'s `mdz-archive.worker.js`. When
+   * provided, archive parsing and reads happen off the main thread instead of
+   * blocking it — recommended for large archives. The host constructs the
+   * `Worker` (asset URL resolution varies by build tooling); this component
+   * forwards it to `MdzipWorkspaceService` unchanged and does not own its
+   * lifecycle beyond that.
+   */
+  @Input() worker?: Worker;
   @Input() controls: MdzipControlPreset | MdzipControlPolicy = 'viewer';
   @Input() toolbarDensity?: MdzipToolbarDensity;
   @Input() contentDensity?: MdzipContentDensity;
   @Input() imageHydrationAnimation?: MdzipImageHydrationAnimation;
   @Input() imageInsertMode?: MdzipImageInsertMode;
   @Input() imageInsertHandler?: MdzipImageInsertHandler;
+  @Input() imageEditHandler?: MdzipImageEditHandler;
   @Input() initialLayout?: MdzipWorkspaceLayout;
   @Input() initialColorScheme?: MdzipColorScheme;
+  /**
+   * Mounts the preview in chunks near the viewport instead of rendering the
+   * whole document synchronously up front. Recommended for hosts that may
+   * open very large documents. Defaults to `false`. Constructor-only, like
+   * `initialColorScheme` — changing it recreates the view.
+   */
+  @Input() progressiveTextRendering?: boolean;
   @Input() navigationMode: MdzipNavigationMode = 'editor';
   @Input() navigationButtonActive = true;
   /**
@@ -156,8 +174,8 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (this.view && (changes['initialLayout'] || changes['initialColorScheme'] || changes['navigationMode']
-      || changes['navigationButtonActive'])) {
+    if (this.view && (changes['initialLayout'] || changes['initialColorScheme'] || changes['progressiveTextRendering']
+      || changes['navigationMode'] || changes['navigationButtonActive'])) {
       this.createView();
       this.syncView();
       return;
@@ -180,8 +198,13 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
         imageInsertHandler: (request) => this.imageInsertHandler?.(request),
       });
     }
+    if (this.view && changes['imageEditHandler']) {
+      this.view.setImageEditOptions({
+        imageEditHandler: (request) => this.imageEditHandler?.(request),
+      });
+    }
     if (this.view && (changes['bytes'] || changes['workspace'] || changes['mode']
-      || changes['sourceFormat'] || changes['fileName'])) {
+      || changes['sourceFormat'] || changes['fileName'] || changes['worker'])) {
       this.syncView();
     }
     if (this.view && (changes['markdownRenderer'] || changes['markdownExtensions']
@@ -279,13 +302,15 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       void this.view.openWorkspace(this.workspace, {
         mode: this.mode,
         sourceFormat: this.sourceFormat,
-        fileName: this.fileName
+        fileName: this.fileName,
+        worker: this.worker
       });
     } else if (this.view && this.bytes) {
       void this.view.open(this.bytes, {
         mode: this.mode,
         sourceFormat: this.sourceFormat,
-        fileName: this.fileName
+        fileName: this.fileName,
+        worker: this.worker
       });
     }
   }
@@ -301,6 +326,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       imageInsertMode: this.imageInsertMode,
       initialLayout: this.initialLayout,
       initialColorScheme: this.initialColorScheme,
+      progressiveTextRendering: this.progressiveTextRendering,
       navigationMode: this.navigationMode,
       navigationButtonActive: this.navigationButtonActive,
       onChanged: (bytes, snapshot) => this.changed.emit({ bytes, snapshot }),
@@ -324,6 +350,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
         ? (request, context) => this.onPackRequested!(request, context)
         : undefined,
       imageInsertHandler: (request) => this.imageInsertHandler?.(request),
+      imageEditHandler: (request) => this.imageEditHandler?.(request),
       markdownRenderer: this.markdownRenderer,
       markdownExtensions: this.markdownExtensions,
       entryRenderers: this.composedEntryRenderers(),

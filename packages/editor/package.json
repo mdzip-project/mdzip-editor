@@ -31,7 +31,8 @@
     "./mermaid": {
       "types": "./dist/mermaid.d.ts",
       "import": "./dist/mermaid.js"
-    }
+    },
+    "./mdz-archive.worker.js": "./dist/mdz-archive.worker.js"
   },
   "files": [
     "dist",
@@ -41,7 +42,8 @@
     "generate:icons": "node scripts/generate-icons.mjs",
     "generate:library-info": "node scripts/generate-library-info.mjs",
     "prebuild": "npm run generate:icons && npm run generate:library-info",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:worker",
+    "build:worker": "esbuild src/mdz-archive.worker.ts --bundle --outfile=dist/mdz-archive.worker.js --format=esm --platform=browser",
     "test": "npm run build && node --test tests/*.test.mjs && vitest run"
   },
   "dependencies": {
@@ -71,6 +73,8 @@
     "access": "public"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
+    "mermaid": "^11.0.0",
     "jsdom": "^29.1.1"
   }
 }

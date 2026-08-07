@@ -1,6 +1,8 @@
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js';
-import { Marked, type Tokens } from 'marked';
+import { Marked, type Token, type Tokens, type TokensList } from 'marked';
+
+export type { Token, TokensList };
 import type { MdzManifest } from '@mdzip/core-js';
 import type {
   MdzipPathType,
@@ -349,6 +351,11 @@ export class MdzipRenderingService {
     private readonly extensions: readonly MdzipMarkdownRenderExtension[] = []
   ) {}
 
+  /** Whether {@link tokenizeMarkdown}/{@link renderChunk} are usable — only with the default marked-based renderer. */
+  public get supportsChunking(): boolean {
+    return this.renderer === defaultSafeMarkdownRenderer;
+  }
+
   /**
    * Legacy synchronous render. Behavior is unchanged: the configured
    * renderer's output is returned as-is (the default renderer sanitizes
@@ -414,6 +421,118 @@ export class MdzipRenderingService {
     }
     return value;
   }
+
+  /**
+   * Lexes markdown into top-level block tokens without rendering or
+   * sanitizing anything, for callers that want to render/mount the result
+   * incrementally (see {@link renderChunk}) instead of all at once. Runs
+   * `transformMarkdown` extensions first, same as {@link renderMarkdown} —
+   * they still see the whole markdown string once; chunking is a
+   * post-transform concern.
+   *
+   * Only supported with {@link defaultSafeMarkdownRenderer}: a host-supplied
+   * custom renderer takes a markdown string and returns opaque HTML with no
+   * token structure to chunk by.
+   */
+  public tokenizeMarkdown(
+    markdown: string,
+    context: MdzipMarkdownRenderContext
+  ): TokensList | Promise<TokensList> {
+    if (this.renderer !== defaultSafeMarkdownRenderer) {
+      throw new Error(
+        'tokenizeMarkdown() only supports the default marked-based renderer; a custom renderer has no token structure to chunk by.'
+      );
+    }
+    let value: string | Promise<string> = markdown;
+    for (const ext of this.extensions) {
+      if (ext.transformMarkdown) {
+        value = chainRenderStage(value, (md) => ext.transformMarkdown!(md, context), context.signal);
+      }
+    }
+    if (isThenable(value)) {
+      return Promise.resolve(value).then((resolved) => {
+        if (context.signal.aborted) {
+          throw createAbortError();
+        }
+        return marked.lexer(resolved);
+      });
+    }
+    return marked.lexer(value);
+  }
+
+  /**
+   * Renders a subset of tokens from {@link tokenizeMarkdown} through
+   * `transformHtml*` and sanitize — the back half of the pipeline documented
+   * on {@link MdzipMarkdownRenderExtension}, starting from tokens instead of
+   * a markdown string. Always sanitizes (unlike {@link renderMarkdown}, which
+   * can skip its pipeline pass when the renderer already sanitized
+   * internally): this deliberately calls the underlying `marked` parser
+   * directly rather than `defaultSafeMarkdownRenderer.render()`, so that
+   * internal sanitize pass never runs and this is the only one that will.
+   */
+  public renderChunk(
+    tokens: readonly Token[],
+    context: MdzipMarkdownRenderContext
+  ): string | Promise<string> {
+    if (this.renderer !== defaultSafeMarkdownRenderer) {
+      throw new Error(
+        'renderChunk() only supports the default marked-based renderer; a custom renderer has no token structure to render from.'
+      );
+    }
+    let value: string | Promise<string> = marked.parser(tokens as Token[]);
+    for (const ext of this.extensions) {
+      if (ext.transformHtml) {
+        value = chainRenderStage(value, (html) => ext.transformHtml!(html, context), context.signal);
+      }
+    }
+    const contributions = this.extensions
+      .map((ext) => ext.sanitize)
+      .filter((contribution): contribution is MdzipSanitizeContribution => contribution !== undefined);
+    return chainRenderStage(value, (html) => sanitizeMdzipHtml(html, contributions), context.signal);
+  }
+}
+
+const DEFAULT_CHUNK_TOKEN_CAP = 40;
+const DEFAULT_CHUNK_CHAR_BUDGET = 2000;
+
+export interface MdzipChunkOptions {
+  /** Max tokens per chunk, whichever of this or `charBudget` is hit first. Default 40. */
+  tokenCap?: number;
+  /** Approximate max raw markdown chars per chunk (via each token's `.raw.length`). Default 2000. */
+  charBudget?: number;
+}
+
+/**
+ * Groups top-level block tokens from {@link MdzipRenderingService.tokenizeMarkdown}
+ * into chunks suitable for incremental rendering — a token-count cap and a
+ * char-budget estimate, whichever is hit first, so a document made of many
+ * tiny tokens (e.g. a chat export's one-line-paragraph-per-message shape)
+ * doesn't end up with one chunk per token. A single token larger than the
+ * budget still gets its own chunk on its own (a chunk boundary can never
+ * split a token).
+ */
+export function groupTokensIntoChunks(
+  tokens: readonly Token[],
+  options: MdzipChunkOptions = {}
+): Token[][] {
+  const tokenCap = options.tokenCap ?? DEFAULT_CHUNK_TOKEN_CAP;
+  const charBudget = options.charBudget ?? DEFAULT_CHUNK_CHAR_BUDGET;
+  const chunks: Token[][] = [];
+  let current: Token[] = [];
+  let currentChars = 0;
+  for (const token of tokens) {
+    current.push(token);
+    currentChars += token.raw?.length ?? 0;
+    if (current.length >= tokenCap || currentChars >= charBudget) {
+      chunks.push(current);
+      current = [];
+      currentChars = 0;
+    }
+  }
+  if (current.length > 0) {
+    chunks.push(current);
+  }
+  return chunks;
 }
 
 function rewriteAssetSources(markdown: string, resolver: MdzipAssetUrlResolver): string {

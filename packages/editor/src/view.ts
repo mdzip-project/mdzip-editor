@@ -2,12 +2,13 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { closeSearchPanel, openSearchPanel, search, searchKeymap } from '@codemirror/search';
-import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state';
+import { Compartment, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
   MatchDecorator,
   ViewPlugin,
+  WidgetType,
   dropCursor,
   keymap,
   lineNumbers,
@@ -103,16 +104,19 @@ import {
   renderMdzipPreviewHtml,
   type MdzipNavNode
 } from './workspace-view.js';
+import { escapeMarkdownImageAlt, findImageReferenceAtOffset, formatImageEditMarkdown } from './image-edit.js';
 import {
   MdzipRenderingService,
   defaultSafeMarkdownRenderer,
+  groupTokensIntoChunks,
   type MdzipEntryRenderContext,
   type MdzipEntryRenderHandle,
   type MdzipEntryRenderer,
   type MdzipMarkdownRenderContext,
   type MdzipMarkdownRenderer,
   type MdzipMarkdownRenderExtension,
-  type MdzipRenderHandle
+  type MdzipRenderHandle,
+  type Token
 } from './rendering.js';
 import { WORKSPACE_CSS } from './view-css.js';
 import type { MdzipWorkspaceSnapshot } from './workspace.js';
@@ -136,6 +140,7 @@ const IMAGE_ICON_HTML = lucideIcon(FileImage, NAV_ICON_CLASS);
 const FILE_ICON_HTML = lucideIcon(File, NAV_ICON_CLASS);
 const ORPHAN_ICON_HTML = lucideIcon(Link2Off, '');
 const SOURCE_EDIT_ICON_HTML = lucideIcon(SquarePen, TOOLBAR_ICON_CLASS);
+const IMAGE_EDIT_AFFORDANCE_ICON_HTML = lucideIcon(SquarePen, 'mdzip-image-edit-affordance-icon');
 const SOURCE_MARKDOWN_ICON_HTML = lucideIcon(Hash, TOOLBAR_ICON_CLASS);
 const NAV_TOGGLE_ICON_HTML = lucideIcon(PanelLeft, `${TOOLBAR_ICON_CLASS} nav-toggle-icon`);
 const CONVERT_TO_MDZ_ICON_HTML = lucideIcon(PackagePlus, `${TOOLBAR_ICON_CLASS} convert-mdz-icon`);
@@ -306,6 +311,32 @@ export interface MdzipImageInsertDecision {
 
 export type MdzipImageInsertHandler =
   (request: MdzipImageInsertRequest) =>
+    MdzipImageInsertDecision | null | undefined | Promise<MdzipImageInsertDecision | null | undefined>;
+
+/**
+ * Parsed from the image reference (Markdown or raw HTML) currently under an
+ * edit-affordance click.
+ */
+export interface MdzipImageEditRequest {
+  src: string;
+  altText: string;
+  width?: number;
+  height?: number;
+  position?: MdzipImagePosition;
+  /** Which form the image is currently written in. */
+  mode: MdzipImageInsertOutputMode;
+}
+
+/**
+ * Host-owned async UI for editing an existing image's alt/size/position.
+ * Invoked when the user clicks an existing image's edit affordance in the
+ * source editor; returning `null`/`undefined` cancels, leaving the image
+ * untouched. Reuses `MdzipImageInsertDecision` as its resolution shape.
+ * Fully opt-in: with no `imageEditHandler` set, no affordance ever appears
+ * and clicking an image does nothing — there is no built-in fallback dialog.
+ */
+export type MdzipImageEditHandler =
+  (request: MdzipImageEditRequest) =>
     MdzipImageInsertDecision | null | undefined | Promise<MdzipImageInsertDecision | null | undefined>;
 
 export type MdzipEditorCommand =
@@ -567,6 +598,19 @@ export interface MdzipWorkspaceViewOptions {
    */
   previewMaxWidth?: MdzipPreviewMaxWidth;
   /**
+   * Opt-in: render+mount the preview in chunks near the viewport instead of
+   * the whole document at once. For very large documents (e.g. a chat
+   * export with thousands of message rows) this keeps first-paint cost
+   * proportional to what's visible instead of the whole document's size —
+   * `marked`/DOMPurify otherwise run once, synchronously, over the entire
+   * rendered HTML before anything is mounted, which can block the main
+   * thread for seconds on real-world large files. Defaults to `false`.
+   * Only takes effect with the default marked-based renderer — a
+   * host-supplied custom {@link MdzipMarkdownRenderer} has no token
+   * structure to chunk by, so this option is silently ignored for it.
+   */
+  progressiveTextRendering?: boolean;
+  /**
    * Controls the progressive preview image reveal animation. Use `'off'` in
    * live-editing hosts to prevent images from pulsing/sliding. Use `'initial'`
    * to animate the first render for a document path but snap open subsequent
@@ -586,6 +630,14 @@ export interface MdzipWorkspaceViewOptions {
    * the insertion cleanly.
    */
   imageInsertHandler?: MdzipImageInsertHandler;
+  /**
+   * Optional host-owned async UI for editing an existing image (alt/size/
+   * position), opened by clicking that image's edit affordance in the
+   * source editor. Unset by default — with no handler, no affordance
+   * appears at all; there is no built-in fallback dialog like
+   * `imageInsertMode: 'ask'` provides for insertion.
+   */
+  imageEditHandler?: MdzipImageEditHandler;
   /**
    * Languages offered in the context menu's Code Block submenu. Each entry's
    * `id` becomes the fence info string (e.g. ```` ```ts ````); an empty `id`
@@ -997,6 +1049,29 @@ const mdzipEditorTheme = EditorView.theme({
     color: 'var(--mdzip-muted-foreground-color)',
     opacity: '0.65',
   },
+  '.mdzip-image-edit-affordance': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    marginLeft: '2px',
+    padding: '0',
+    verticalAlign: 'middle',
+    border: 'none',
+    borderRadius: '4px',
+    background: 'var(--mdzip-widget-background-color)',
+    color: 'var(--mdzip-muted-foreground-color)',
+    cursor: 'pointer',
+  },
+  '.mdzip-image-edit-affordance:hover': {
+    background: 'var(--mdzip-control-hover-background-color)',
+    color: 'var(--mdzip-control-foreground-color)',
+  },
+  '.mdzip-image-edit-affordance-icon': {
+    width: '13px',
+    height: '13px',
+  },
   '.cm-panels': {
     background: 'var(--mdzip-widget-background-color)',
     color: 'var(--mdzip-editor-foreground-color)',
@@ -1171,6 +1246,69 @@ const noSpellcheckHighlight = ViewPlugin.fromClass(class {
   }
 }, {
   decorations: value => value.decorations
+});
+
+// Click-to-edit affordance for existing image references. Populated
+// on-click (not continuously, since the trigger is click not hover) via a
+// StateEffect dispatched from the editor's `click` domEventHandler in
+// createCmEditor. Fully inert unless a host imageEditHandler is set — see
+// that click handler's own gate.
+const IMAGE_EDIT_AFFORDANCE_CLICK_EVENT = 'mdzip-image-edit-affordance-click';
+
+const imageEditAffordanceEffect = StateEffect.define<{ from: number; to: number } | null>();
+
+class ImageEditAffordanceWidget extends WidgetType {
+  constructor(readonly from: number, readonly to: number) {
+    super();
+  }
+
+  eq(other: ImageEditAffordanceWidget): boolean {
+    return other.from === this.from && other.to === this.to;
+  }
+
+  toDOM(): HTMLElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mdzip-image-edit-affordance';
+    btn.setAttribute('aria-label', 'Edit image');
+    btn.setAttribute('data-mdzip-image-edit-affordance', '');
+    btn.innerHTML = IMAGE_EDIT_AFFORDANCE_ICON_HTML;
+    // Buttons are natively focusable; without this, clicking one moves DOM
+    // focus onto it and blurs the CodeMirror content — which would clear
+    // (and remove from the DOM) this very widget via the blur handler below
+    // before its own click event has a chance to fire.
+    btn.addEventListener('mousedown', (event) => event.preventDefault());
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      btn.dispatchEvent(new CustomEvent(IMAGE_EDIT_AFFORDANCE_CLICK_EVENT, {
+        bubbles: true,
+        detail: { from: this.from, to: this.to }
+      }));
+    });
+    return btn;
+  }
+}
+
+function imageEditAffordanceDeco(from: number, to: number): DecorationSet {
+  return Decoration.set([Decoration.widget({ widget: new ImageEditAffordanceWidget(from, to), side: 1 }).range(to)]);
+}
+
+const imageEditAffordanceField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    value = value.map(tr.changes);
+    if (tr.docChanged) {
+      value = Decoration.none;
+    }
+    for (const effect of tr.effects) {
+      if (effect.is(imageEditAffordanceEffect)) {
+        value = effect.value ? imageEditAffordanceDeco(effect.value.from, effect.value.to) : Decoration.none;
+      }
+    }
+    return value;
+  },
+  provide: (field) => EditorView.decorations.from(field)
 });
 
 function injectStyles(doc: Document): void {
@@ -1381,6 +1519,7 @@ export class MdzipWorkspaceView {
   private controlPolicy: MdzipResolvedControlPolicy;
   private readonly navigationMode: MdzipNavigationMode;
   private imageHydrationAnimation: MdzipImageHydrationAnimation;
+  private readonly progressiveTextRendering: boolean;
   private toolbarDensity: MdzipToolbarDensity;
   private contentDensity: MdzipContentDensity;
   private previewMaxWidth: MdzipPreviewMaxWidth | undefined;
@@ -1408,6 +1547,60 @@ export class MdzipWorkspaceView {
     files: readonly MdzipPackFilesInput[];
     resolve: (decision: MdzipPackFilesDecision | null) => void;
   } | null = null;
+  // Tracks an in-progress progressive (chunked) preview render so Copy All
+  // can force-drain whatever's left unmounted. `cursor` is how many of
+  // `chunks` are mounted so far; null once everything's mounted (or when
+  // progressive rendering isn't active at all) — that's Copy All's signal
+  // to skip the dialog and copy instantly. `sentinelHandle` is the
+  // scroll-driven continuation's IntersectionObserver, if one is currently
+  // armed; Copy All tears it down before manually draining so the two don't
+  // race and double-mount the same chunk.
+  private chunkedRenderState: {
+    chunks: readonly Token[][];
+    cursor: number;
+    context: MdzipMarkdownRenderContext;
+    generation: number;
+    animateImageHydration: boolean;
+    sentinelHandle: MdzipRenderHandle | null;
+  } | null = null;
+  // Per-generation memo of renderChunk's raw HTML output, keyed by chunk
+  // index, shared between the DOM-mount path (renderAndMountChunkBatch) and
+  // Copy All with Images (renderFullDocumentHtml) so whichever renders a
+  // given chunk first is the only one that pays for it. A chunk's HTML is
+  // written at most once per generation, never recomputed-and-compared: the
+  // shipped mermaid extension mints each diagram's SVG id from a counter
+  // that lives on the extension instance for the view's whole lifetime, so
+  // re-rendering the same chunk twice yields different-but-valid output —
+  // only a genuine write-once cache is safe to share across call sites.
+  // Deliberately a separate field from chunkedRenderState (not nested in
+  // it): that becomes null as soon as every chunk is mounted, but this
+  // needs to stay alive for the whole generation, including after mounting
+  // finishes — an idle, fully-mounted document is exactly when Copy All
+  // should get full reuse.
+  private chunkHtmlCache: { generation: number; html: Map<number, string> } | null = null;
+  // Promise-based like packFilesDialogState, but there's no caller awaiting
+  // a decision here — `abort` is Copy All's own cancellation switch, wired
+  // to the dialog's Cancel button. `label` distinguishes Copy All's single
+  // "Rendering the full document" phase from Copy All with Images' two
+  // phases ("Rendering the document" then "Embedding images").
+  private copyRenderDialogState: { done: number; total: number; label: string; abort: AbortController } | null = null;
+  // Third state sharing the same dialog element as copyRenderDialogState
+  // (all three are mutually exclusive) — set once rendering/embedding
+  // finishes for a copy that showed the progress dialog. The clipboard
+  // write itself is deliberately *not* fired automatically: the async
+  // Clipboard API requires a recent user gesture, and by the time a
+  // multi-second (sometimes multi-minute) prepare phase finishes, the
+  // gesture that triggered Copy All has expired — Chrome rejects the write
+  // with "blocked due to lack of user activation". Waiting for the user to
+  // click the dialog's own Copy button gives the write a fresh gesture to
+  // run inside. `perform` does the actual write when that happens.
+  private copyReadyState: { perform: () => Promise<{ message: string } | { error: string } | null> } | null = null;
+  // Set once a copy that showed the progress dialog finishes (a rejection
+  // included — see `copyReadyState` above for why that write happens from
+  // a button click, not automatically), so the completion message stays up
+  // until the user dismisses it, rather than a fleeting toast easy to miss
+  // after a long wait.
+  private copyRenderDoneState: { message: string } | null = null;
   private navPaneWidth = 280;
   private splitRatio = 0.5;
   private resizing = false;
@@ -1443,6 +1636,12 @@ export class MdzipWorkspaceView {
   private tooltipState: { text: string; x: number; y: number } | null = null;
   private tooltipShowTimer: ReturnType<typeof setTimeout> | null = null;
   private tooltipHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private copyToastHideTimer: ReturnType<typeof setTimeout> | null = null;
+  // Not readonly: tests override these to keep the "clipboard write hangs
+  // forever" case fast rather than actually waiting out the real production
+  // timeouts.
+  private clipboardWriteTimeoutMs = 30000;
+  private clipboardFallbackWriteTimeoutMs = 15000;
 
   private cmEditor: EditorView | null = null;
   private readonly readOnlyCompartment = new Compartment();
@@ -1455,6 +1654,16 @@ export class MdzipWorkspaceView {
   // syncScrollFromPreview/syncScrollToPreview).
   private lastSyncedEditorScrollTop: number | null = null;
   private lastSyncedPreviewScrollTop: number | null = null;
+  // Guards syncScrollToPreviewBottom against overlapping drains: set to the
+  // chunkedRenderState generation currently being force-drained, null when
+  // none is in flight. A second bottom-edge sync that arrives mid-drain
+  // (e.g. repeated wheel events once the editor is already pinned at max
+  // scrollTop) just no-ops — the in-flight call already owns finishing the
+  // job for that generation.
+  private bottomDrainGeneration: number | null = null;
+  // Non-null while the scroll-to-bottom catch-up toast is showing (past its
+  // debounce) — see syncScrollToPreviewBottom.
+  private scrollCatchUpState: { done: number; total: number } | null = null;
 
   private markdownRenderer?: MdzipMarkdownRenderer;
   private markdownExtensions: readonly MdzipMarkdownRenderExtension[] = [];
@@ -1541,6 +1750,17 @@ export class MdzipWorkspaceView {
   private readonly elPackFilesModeProject: HTMLInputElement;
   private readonly elPackFilesEntrySelect: HTMLSelectElement;
   private readonly elPackFilesConfirmBtn: HTMLButtonElement;
+  private readonly elCopyRenderDialog: HTMLElement;
+  private readonly elCopyRenderHeading: HTMLElement;
+  private readonly elCopyRenderProgressSection: HTMLElement;
+  private readonly elCopyRenderProgressBar: HTMLElement;
+  private readonly elCopyRenderProgressText: HTMLElement;
+  private readonly elCopyRenderReadyText: HTMLElement;
+  private readonly elCopyRenderDoneText: HTMLElement;
+  private readonly elCopyRenderCancelBtn: HTMLButtonElement;
+  private readonly elCopyRenderReadyCancelBtn: HTMLButtonElement;
+  private readonly elCopyRenderConfirmBtn: HTMLButtonElement;
+  private readonly elCopyRenderDismissBtn: HTMLButtonElement;
   private readonly elNavMenu: HTMLElement;
   private readonly elNameDialog: HTMLElement;
   private readonly elNameDialogHeading: HTMLElement;
@@ -1552,6 +1772,7 @@ export class MdzipWorkspaceView {
   private readonly elDeleteConfirmBtn: HTMLButtonElement;
   private readonly elReplaceInput: HTMLInputElement;
   private readonly elTooltip: HTMLElement;
+  private readonly elCopyToast: HTMLElement;
   private readonly elEmptyState: HTMLElement;
 
   public constructor(container: HTMLElement, options: MdzipWorkspaceViewOptions = {}) {
@@ -1559,6 +1780,7 @@ export class MdzipWorkspaceView {
     this.controlPolicy = resolveMdzipControlPolicy(options.controls);
     this.navigationMode = options.navigationMode ?? 'editor';
     this.imageHydrationAnimation = options.imageHydrationAnimation ?? 'auto';
+    this.progressiveTextRendering = options.progressiveTextRendering ?? false;
     this.toolbarDensity = options.toolbarDensity ?? 'comfortable';
     this.contentDensity = options.contentDensity ?? 'comfortable';
     this.previewMaxWidth = options.previewMaxWidth;
@@ -1640,6 +1862,17 @@ export class MdzipWorkspaceView {
     this.elPackFilesModeProject = q('[data-ref="pack-files-mode-project"]');
     this.elPackFilesEntrySelect = q('[data-ref="pack-files-entry"]');
     this.elPackFilesConfirmBtn = q('[data-ref="pack-files-confirm-btn"]');
+    this.elCopyRenderDialog = q('[data-ref="copy-render-dialog"]');
+    this.elCopyRenderHeading = q('[data-ref="copy-render-heading"]');
+    this.elCopyRenderProgressSection = q('[data-ref="copy-render-progress-section"]');
+    this.elCopyRenderProgressBar = q('[data-ref="copy-render-progress-bar"]');
+    this.elCopyRenderProgressText = q('[data-ref="copy-render-progress-text"]');
+    this.elCopyRenderReadyText = q('[data-ref="copy-render-ready-text"]');
+    this.elCopyRenderDoneText = q('[data-ref="copy-render-done-text"]');
+    this.elCopyRenderCancelBtn = q('[data-ref="copy-render-cancel-btn"]');
+    this.elCopyRenderReadyCancelBtn = q('[data-ref="copy-render-ready-cancel-btn"]');
+    this.elCopyRenderConfirmBtn = q('[data-ref="copy-render-confirm-btn"]');
+    this.elCopyRenderDismissBtn = q('[data-ref="copy-render-dismiss-btn"]');
     this.elNavMenu = q('[data-ref="nav-menu"]');
     this.elNameDialog = q('[data-ref="name-dialog"]');
     this.elNameDialogHeading = q('[data-ref="name-dialog-heading"]');
@@ -1651,6 +1884,7 @@ export class MdzipWorkspaceView {
     this.elDeleteConfirmBtn = q('[data-ref="delete-confirm-btn"]');
     this.elReplaceInput = q('[data-ref="replace-input"]');
     this.elTooltip = q('[data-ref="tooltip"]');
+    this.elCopyToast = q('[data-ref="copy-toast"]');
     this.elEmptyState = q('[data-ref="empty-state"]');
 
     this.prepareTooltips();
@@ -1675,6 +1909,7 @@ export class MdzipWorkspaceView {
     this.resetRenderingState();
     this.cmEditor?.destroy();
     this.cmEditor = null;
+    this.workspace?.dispose();
     this.workspace = null;
     this.replaceAssetSession(null);
     this.conversionDocumentGeneration += 1;
@@ -1770,6 +2005,7 @@ export class MdzipWorkspaceView {
     this.resetRenderingState();
     this.cmEditor?.destroy();
     this.cmEditor = null;
+    this.workspace?.dispose();
     this.workspace = null;
     this.replaceAssetSession(null);
     this.conversionDocumentGeneration += 1;
@@ -1997,6 +2233,11 @@ export class MdzipWorkspaceView {
     // Release any whenRendered() waiters so their promises do not hang.
     this.flushRenderedWaiters();
     try {
+      this.workspace?.dispose();
+    } catch {
+      // Ignore worker teardown errors
+    }
+    try {
       this.cmEditor?.destroy();
     } catch {
       // Ignore CodeMirror cleanup errors
@@ -2122,6 +2363,10 @@ export class MdzipWorkspaceView {
     this.options.imageInsertHandler = options.imageInsertHandler;
   }
 
+  public setImageEditOptions(options: Pick<MdzipWorkspaceViewOptions, 'imageEditHandler'>): void {
+    this.options.imageEditHandler = options.imageEditHandler;
+  }
+
   private applyDensityClasses(): void {
     this.elRoot.classList.remove(
       'toolbar-density-comfortable',
@@ -2169,6 +2414,27 @@ export class MdzipWorkspaceView {
         this.options.onFailed?.(error);
       }
     }
+    // A new render generation invalidates any in-progress chunk draining —
+    // Copy All's own abort check unwinds it and hides the dialog. It also
+    // invalidates a "ready to copy" or "done" dialog left over from a
+    // previous document: `copyReadyState.perform` closes over that
+    // document's already-built HTML/text, and clicking Copy against a
+    // now-superseded document would silently copy the wrong content.
+    this.chunkedRenderState = null;
+    this.chunkHtmlCache = null;
+    this.copyRenderDialogState?.abort.abort();
+    this.copyReadyState = null;
+    this.copyRenderDoneState = null;
+  }
+
+  /** True when `this.previewMemo` — and by extension `this.previewGeneration` — still represents `snapshot`: nothing that feeds the preview (path, pathType, text, colorScheme) has changed since it was last rendered. */
+  private previewMemoMatchesSnapshot(snapshot: MdzipWorkspaceSnapshot): boolean {
+    const memo = this.previewMemo;
+    return !!memo
+      && memo.path === snapshot.currentPath
+      && memo.pathType === snapshot.currentPathType
+      && memo.text === snapshot.currentText
+      && memo.colorScheme === this.colorScheme;
   }
 
   private updatePreview(snapshot: MdzipWorkspaceSnapshot, entryClaimed: boolean): void {
@@ -2186,11 +2452,7 @@ export class MdzipWorkspaceView {
     }
 
     const memo = this.previewMemo;
-    if (memo
-      && memo.path === snapshot.currentPath
-      && memo.pathType === snapshot.currentPathType
-      && memo.text === snapshot.currentText
-      && memo.colorScheme === this.colorScheme) {
+    if (this.previewMemoMatchesSnapshot(snapshot)) {
       // Nothing that feeds the preview changed; keep the existing DOM and any
       // mounted extension handles.
       return;
@@ -2232,6 +2494,11 @@ export class MdzipWorkspaceView {
     const abort = new AbortController();
     this.previewAbort = abort;
     const context = this.createMarkdownContext(snapshot, abort.signal);
+
+    if (this.progressiveTextRendering && this.renderingService.supportsChunking) {
+      this.renderChunkedPreview(snapshot, context, generation, animateImageHydration);
+      return;
+    }
 
     let result: string | Promise<string>;
     try {
@@ -2329,28 +2596,98 @@ export class MdzipWorkspaceView {
     animateImageHydration: boolean
   ): void {
     this.elPreviewContent.innerHTML = html;
-    const session = this.assetSession;
-    const document = this.elPreviewContent.ownerDocument;
-    const pending: { image: HTMLImageElement; slot: HTMLElement; source: string }[] = [];
-    for (const image of Array.from(this.elPreviewContent.querySelectorAll('img'))) {
-      applyRawHtmlImageSizeAttributes(image);
-      const source = image.getAttribute('src');
-      // Leave external, protocol-relative, data, and fragment URLs untouched.
-      if (!source || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(source)) {
-        const alignClass = rawHtmlImageAlignClass(image);
-        if (alignClass) {
-          image.classList.add(alignClass);
+    // Cheap pass over every <img> happens before extensions/code-block
+    // controls mount, same relative order as always — see
+    // collectPendingImages for why it's split from the (expensive) slot
+    // creation that follows.
+    const pending = this.collectPendingImages([this.elPreviewContent], animateImageHydration);
+    this.mountPreviewExtensions(context, generation);
+    const codeBlockHandle = this.mountCodeBlockControls();
+    if (codeBlockHandle) {
+      this.previewHandles.push(codeBlockHandle);
+    }
+    this.firePreviewRendered(snapshot, generation);
+    this.hydrateImages(pending, context, generation, animateImageHydration, () => {
+      this.fireAssetsHydrated(snapshot, generation);
+    });
+  }
+
+  /**
+   * Cheap, attribute-only pass over every `<img>` under `roots`: no DOM tree
+   * mutation. Archive-relative sources have their `src` stripped here
+   * (immediately, so the browser never fires a bad network request for the
+   * archive-relative path) and are returned for {@link hydrateImages};
+   * external/data/fragment sources are left untouched (just get their align
+   * class, if any — they never get a slot). Returns `[]` without touching
+   * anything when there's no asset session to resolve archive images
+   * against, matching `mountPreviewHtml`'s no-op image handling.
+   */
+  private collectPendingImages(
+    roots: readonly HTMLElement[],
+    animateImageHydration: boolean
+  ): { image: HTMLImageElement; source: string }[] {
+    if (!this.assetSession) {
+      return [];
+    }
+    const pending: { image: HTMLImageElement; source: string }[] = [];
+    for (const root of roots) {
+      for (const image of Array.from(root.querySelectorAll<HTMLImageElement>('img'))) {
+        applyRawHtmlImageSizeAttributes(image);
+        const source = image.getAttribute('src');
+        // Leave external, protocol-relative, data, and fragment URLs untouched.
+        if (!source || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(source)) {
+          const alignClass = rawHtmlImageAlignClass(image);
+          if (alignClass) {
+            image.classList.add(alignClass);
+          }
+          continue;
         }
-        continue;
+        image.removeAttribute('src');
+        if (animateImageHydration) {
+          image.classList.add('mdzip-image-loading');
+        }
+        pending.push({ image, source });
       }
-      // Drop the archive-relative src so the browser does not fetch the bad
-      // path. Wrap the image in a collapsed slot so the text stays compact and
-      // immediately readable; the slot eases open to the reserved height once
-      // the image resolves.
-      image.removeAttribute('src');
-      if (animateImageHydration) {
-        image.classList.add('mdzip-image-loading');
+    }
+    return pending;
+  }
+
+  /**
+   * Slot-wraps and resolves `pending` images (from {@link collectPendingImages}),
+   * only decompressing/resolving ones near the viewport up front — a
+   * document with a few hundred distinct embedded images would otherwise
+   * decompress and blob-URL every one of them synchronously, freezing the UI
+   * for as long as that takes. Falls back to eager resolution when
+   * IntersectionObserver isn't available (e.g. non-browser hosts). Calls
+   * `onSettled` once every image in `pending` has resolved (or immediately
+   * if `pending` is empty) — callers that want a single "hydrated" signal
+   * for a whole preview pass `pending` from every root at once; callers
+   * mounting one chunk among several within the same generation (see
+   * {@link mountChunkBatch}) pass a no-op instead, so the signal only fires
+   * once, for the batch it's semantically tied to.
+   */
+  private hydrateImages(
+    pending: readonly { image: HTMLImageElement; source: string }[],
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean,
+    onSettled: () => void
+  ): void {
+    const session = this.assetSession;
+    if (!session || pending.length === 0) {
+      onSettled();
+      return;
+    }
+
+    const document = this.elPreviewContent.ownerDocument;
+    let remaining = pending.length;
+    const settle = (): void => {
+      remaining -= 1;
+      if (remaining === 0) {
+        onSettled();
       }
+    };
+    const createImageSlot = (image: HTMLImageElement): HTMLElement => {
       const slot = document.createElement('span');
       slot.className = animateImageHydration
         ? 'mdzip-image-slot'
@@ -2363,29 +2700,10 @@ export class MdzipWorkspaceView {
       }
       image.parentNode?.insertBefore(slot, image);
       slot.appendChild(image);
-      pending.push({ image, slot, source });
-    }
-
-    this.mountPreviewExtensions(context, generation);
-    const codeBlockHandle = this.mountCodeBlockControls();
-    if (codeBlockHandle) {
-      this.previewHandles.push(codeBlockHandle);
-    }
-    this.firePreviewRendered(snapshot, generation);
-
-    if (!session || pending.length === 0) {
-      this.fireAssetsHydrated(snapshot, generation);
-      return;
-    }
-
-    let remaining = pending.length;
-    const settle = (): void => {
-      remaining -= 1;
-      if (remaining === 0) {
-        this.fireAssetsHydrated(snapshot, generation);
-      }
+      return slot;
     };
-    for (const { image, slot, source } of pending) {
+
+    const hydrate = (image: HTMLImageElement, slot: HTMLElement, source: string): void => {
       void session.resolveImage(source, context.currentPath).then((resolved) => {
         if (generation !== this.previewGeneration || context.signal.aborted) {
           settle();
@@ -2417,6 +2735,326 @@ export class MdzipWorkspaceView {
         this.openImageSlot(slot);
         settle();
       });
+    };
+
+    const observerWindow = document.defaultView;
+    if (!observerWindow?.IntersectionObserver) {
+      for (const { image, source } of pending) {
+        hydrate(image, createImageSlot(image), source);
+      }
+      return;
+    }
+
+    const bySlot = new Map<Element, { image: HTMLImageElement; source: string }>();
+    const observer = new observerWindow.IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        observer.unobserve(entry.target);
+        const item = bySlot.get(entry.target);
+        if (item) hydrate(item.image, entry.target as HTMLElement, item.source);
+      }
+    }, { root: this.elPreviewPane, rootMargin: '600px 0px' });
+    this.previewHandles.push({ destroy: () => observer.disconnect() });
+
+    // Slot creation + observer registration is a real DOM tree mutation per
+    // image (as opposed to the cheap attribute-only pass in
+    // collectPendingImages), and at thousands of occurrences (e.g. a chat
+    // export where a handful of distinct avatars repeat across every row)
+    // doing it all synchronously blocks the main thread for seconds.
+    // Time-budget it across animation frames instead — the first chunk
+    // still runs synchronously as part of this call (no yield before it),
+    // so small documents (every existing test) see their slots exist
+    // immediately, same as before.
+    const CHUNK_BUDGET_MS = 8;
+    let cursor = 0;
+    const processChunk = (): void => {
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      const chunkStart = observerWindow.performance.now();
+      while (cursor < pending.length && observerWindow.performance.now() - chunkStart < CHUNK_BUDGET_MS) {
+        const item = pending[cursor];
+        cursor += 1;
+        const slot = createImageSlot(item.image);
+        bySlot.set(slot, item);
+        observer.observe(slot);
+      }
+      if (cursor < pending.length) {
+        observerWindow.requestAnimationFrame(processChunk);
+      }
+    };
+    processChunk();
+  }
+
+  /**
+   * Opt-in (`progressiveTextRendering`) alternative to the whole-document
+   * `renderMarkdown()` path above: tokenizes the markdown once, then renders
+   * and mounts it in chunks near the viewport instead of all at once — see
+   * {@link mountChunkedPreview}. Only reachable when
+   * `renderingService.supportsChunking` is true (the default marked-based
+   * renderer); the caller already checked that.
+   */
+  private renderChunkedPreview(
+    snapshot: MdzipWorkspaceSnapshot,
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean
+  ): void {
+    let tokens: ReturnType<MdzipRenderingService['tokenizeMarkdown']>;
+    try {
+      tokens = this.renderingService.tokenizeMarkdown(snapshot.currentText, context);
+    } catch (error) {
+      this.options.onFailed?.(error);
+      this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+      this.firePreviewRendered(snapshot, generation);
+      this.fireAssetsHydrated(snapshot, generation);
+      return;
+    }
+
+    if (Array.isArray(tokens)) {
+      this.mountChunkedPreview(tokens, snapshot, context, generation, animateImageHydration);
+      return;
+    }
+    void tokens.then((resolved) => {
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      this.mountChunkedPreview(resolved, snapshot, context, generation, animateImageHydration);
+    }).catch((error) => {
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      if ((error as { name?: string } | null)?.name !== 'AbortError') {
+        this.options.onFailed?.(error);
+      }
+    });
+  }
+
+  /**
+   * Groups tokens into chunks and mounts them: an initial batch synchronously
+   * (enough for a small document to behave exactly like the non-chunked
+   * path), then the rest as the user scrolls near a trailing sentinel
+   * element, via the same `IntersectionObserver` + time-budgeted-rAF pattern
+   * already used for image hydration — just for "need more text" instead of
+   * "need this image". `onAssetsHydrated` fires once for the initial batch's
+   * images only (not re-fired per later chunk) — `onPreviewRendered` still
+   * means "the initial batch is in the DOM", same intent as the non-chunked
+   * path, just proportional to the viewport instead of the whole document.
+   */
+  private mountChunkedPreview(
+    tokens: readonly Token[],
+    snapshot: MdzipWorkspaceSnapshot,
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean
+  ): void {
+    this.elPreviewContent.replaceChildren();
+    // Also called with no options in renderFullDocumentHtml — see the
+    // comment there; keep both call sites' chunking in sync.
+    const chunks = groupTokensIntoChunks(tokens);
+    if (chunks.length === 0) {
+      this.chunkedRenderState = null;
+      this.firePreviewRendered(snapshot, generation);
+      this.fireAssetsHydrated(snapshot, generation);
+      return;
+    }
+    this.chunkedRenderState = { chunks, cursor: 0, context, generation, animateImageHydration, sentinelHandle: null };
+
+    void this.mountChunkBatch(chunks, 0, context, generation, animateImageHydration, () => {
+      this.fireAssetsHydrated(snapshot, generation);
+    }).then((cursor) => {
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      this.recordChunkProgress(generation, chunks, cursor);
+      this.firePreviewRendered(snapshot, generation);
+      if (cursor < chunks.length) {
+        this.armChunkSentinel(chunks, cursor, context, generation, animateImageHydration);
+      }
+    });
+  }
+
+  /**
+   * Updates `chunkedRenderState.cursor` after a batch mounts, or clears the
+   * whole state once every chunk is in the DOM — that `null` is Copy All's
+   * signal that there's nothing left to force-render. A no-op if a newer
+   * render generation has already superseded this one.
+   */
+  private recordChunkProgress(generation: number, chunks: readonly Token[][], cursor: number): void {
+    if (this.chunkedRenderState?.generation !== generation) return;
+    if (cursor >= chunks.length) {
+      this.chunkedRenderState = null;
+    } else {
+      this.chunkedRenderState.cursor = cursor;
+    }
+  }
+
+  /**
+   * Renders+appends chunks starting at `startCursor` up to a char budget
+   * (enough for one screenful, roughly) *or* a wall-clock time budget,
+   * whichever comes first — char count alone is a poor proxy for cost on a
+   * document where some chunks are plain text and others are dense with
+   * `<img>` tags (parsing + sanitizing + inserting into an already-huge
+   * `elPreviewContent` gets measurably more expensive per chunk as an
+   * image-heavy document's accumulated DOM grows); the time budget catches
+   * what the char budget alone misses. Mounts extensions/code-block controls
+   * for exactly the chunks it appended (never re-scanning earlier ones), and
+   * returns the cursor to resume from plus those chunks' roots (for the
+   * caller to run `collectPendingImages` on). Shared by every caller that
+   * mounts chunk batches — the initial batch, every later sentinel-triggered
+   * continuation, and Copy All's drain — image hydration itself is *not*
+   * included here; see {@link mountChunkBatch} and
+   * {@link drainRemainingChunks} for the two different ways callers pace it.
+   */
+  private async renderAndMountChunkBatch(
+    chunks: readonly Token[][],
+    startCursor: number,
+    context: MdzipMarkdownRenderContext,
+    generation: number
+  ): Promise<{ cursor: number; mountedRoots: HTMLElement[] }> {
+    const BATCH_CHAR_BUDGET = 4000;
+    const BATCH_TIME_BUDGET_MS = 10;
+    const clock = this.elPreviewContent.ownerDocument.defaultView?.performance ?? performance;
+    const batchStart = clock.now();
+    let cursor = startCursor;
+    let renderedChars = 0;
+    const mountedRoots: HTMLElement[] = [];
+    while (
+      cursor < chunks.length
+      && renderedChars < BATCH_CHAR_BUDGET
+      && (mountedRoots.length === 0 || clock.now() - batchStart < BATCH_TIME_BUDGET_MS)
+    ) {
+      if (generation !== this.previewGeneration || context.signal.aborted) return { cursor, mountedRoots };
+      const chunkTokens = chunks[cursor];
+      const chunkIndex = cursor;
+      cursor += 1;
+      let html: string;
+      let cacheHit: string | undefined;
+      try {
+        cacheHit = this.chunkHtmlCache?.generation === generation
+          ? this.chunkHtmlCache.html.get(chunkIndex)
+          : undefined;
+        if (cacheHit !== undefined) {
+          html = cacheHit;
+        } else {
+          const result = this.renderingService.renderChunk(chunkTokens, context);
+          html = typeof result === 'string' ? result : await result;
+        }
+      } catch (error) {
+        if ((error as { name?: string } | null)?.name !== 'AbortError') {
+          this.options.onFailed?.(error);
+        }
+        continue;
+      }
+      if (generation !== this.previewGeneration || context.signal.aborted) return { cursor, mountedRoots };
+      if (cacheHit === undefined) {
+        // groupTokensIntoChunks is also called with no options in
+        // renderFullDocumentHtml — keep both call sites' chunking in sync,
+        // since chunk index is this cache's only key.
+        if (this.chunkHtmlCache?.generation !== generation) {
+          this.chunkHtmlCache = { generation, html: new Map() };
+        }
+        this.chunkHtmlCache.html.set(chunkIndex, html);
+      }
+      const root = this.appendChunkHtml(html);
+      mountedRoots.push(root);
+      renderedChars += html.length;
+    }
+
+    for (const root of mountedRoots) {
+      this.mountPreviewExtensions(context, generation, root);
+      const codeBlockHandle = this.mountCodeBlockControls(root);
+      if (codeBlockHandle) {
+        this.previewHandles.push(codeBlockHandle);
+      }
+    }
+    return { cursor, mountedRoots };
+  }
+
+  /**
+   * `renderAndMountChunkBatch` plus its own immediate, independent
+   * `hydrateImages` pass — the shape every caller except Copy All's drain
+   * wants: mount a batch, then hydrate whatever images it contained,
+   * decoupled from mounting the next batch. Scroll-paced callers (the
+   * initial batch, every sentinel continuation) are naturally rate-limited
+   * by how fast the user scrolls, so one independent hydration loop per
+   * batch never has a chance to pile up against another.
+   */
+  private async mountChunkBatch(
+    chunks: readonly Token[][],
+    startCursor: number,
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean,
+    onImagesSettled: () => void
+  ): Promise<number> {
+    const { cursor, mountedRoots } = await this.renderAndMountChunkBatch(chunks, startCursor, context, generation);
+    // Same relative order as the non-chunked path: cheap image pass, then
+    // the (expensive) slot/observe pass.
+    const pending = this.collectPendingImages(mountedRoots, animateImageHydration);
+    this.hydrateImages(pending, context, generation, animateImageHydration, onImagesSettled);
+    return cursor;
+  }
+
+  /** Wraps one chunk's rendered HTML in a mount boundary and appends it. See the `.mdzip-chunk` CSS rules for why. */
+  private appendChunkHtml(html: string): HTMLElement {
+    const doc = this.elPreviewContent.ownerDocument;
+    const wrapper = doc.createElement('div');
+    wrapper.className = 'mdzip-chunk';
+    wrapper.innerHTML = html;
+    this.elPreviewContent.appendChild(wrapper);
+    return wrapper;
+  }
+
+  /**
+   * Appends a trailing sentinel and mounts the next chunk batch once it's
+   * within `rootMargin` of the viewport — a larger margin than images'
+   * (`hydrateImages`' 600px) since keeping text ahead of scroll is cheap
+   * relative to keeping images ahead. Re-arms itself after each batch until
+   * every chunk is mounted. Falls back to mounting everything immediately
+   * when IntersectionObserver isn't available, matching `hydrateImages`.
+   */
+  private armChunkSentinel(
+    chunks: readonly Token[][],
+    cursor: number,
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean
+  ): void {
+    const doc = this.elPreviewContent.ownerDocument;
+    const observerWindow = doc.defaultView;
+
+    const mountNext = (nextCursor: number): void => {
+      void this.mountChunkBatch(chunks, nextCursor, context, generation, animateImageHydration, () => {})
+        .then((newCursor) => {
+          if (generation !== this.previewGeneration || context.signal.aborted) return;
+          this.recordChunkProgress(generation, chunks, newCursor);
+          if (newCursor < chunks.length) {
+            this.armChunkSentinel(chunks, newCursor, context, generation, animateImageHydration);
+          }
+        });
+    };
+
+    if (!observerWindow?.IntersectionObserver) {
+      mountNext(cursor);
+      return;
+    }
+
+    const sentinel = doc.createElement('div');
+    sentinel.className = 'mdzip-chunk-sentinel';
+    this.elPreviewContent.appendChild(sentinel);
+    const observer = new observerWindow.IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        observer.disconnect();
+        sentinel.remove();
+        if (this.chunkedRenderState?.generation === generation) {
+          this.chunkedRenderState.sentinelHandle = null;
+        }
+        mountNext(cursor);
+      }
+    }, { root: this.elPreviewPane, rootMargin: '1600px 0px' });
+    observer.observe(sentinel);
+    // Stored on both previewHandles (torn down on the next render generation,
+    // like every other preview handle) and chunkedRenderState.sentinelHandle
+    // (torn down early by Copy All so its own manual drain doesn't race this
+    // observer and double-mount a chunk).
+    const handle: MdzipRenderHandle = { destroy: () => { observer.disconnect(); sentinel.remove(); } };
+    this.previewHandles.push(handle);
+    if (this.chunkedRenderState?.generation === generation) {
+      this.chunkedRenderState.sentinelHandle = handle;
     }
   }
 
@@ -2491,13 +3129,24 @@ export class MdzipWorkspaceView {
     ));
   }
 
-  private mountPreviewExtensions(context: MdzipMarkdownRenderContext, generation: number): void {
+  /**
+   * `root` scopes extension `mount()` calls to a specific chunk instead of
+   * the whole preview — used by chunked rendering (see
+   * {@link mountChunkedPreview}), where extensions run once per newly
+   * appended chunk rather than once over the whole document. Defaults to
+   * the whole preview content, matching the non-chunked path exactly.
+   */
+  private mountPreviewExtensions(
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    root: HTMLElement = this.elPreviewContent
+  ): void {
     for (const extension of this.markdownExtensions) {
       if (!extension.mount) {
         continue;
       }
       try {
-        const mounted = extension.mount(this.elPreviewContent, context);
+        const mounted = extension.mount(root, context);
         if (isThenable(mounted)) {
           void Promise.resolve(mounted).then((handle) => {
             if (!handle) {
@@ -2535,12 +3184,15 @@ export class MdzipWorkspaceView {
    * extension) — every consumer gets this automatically, gated by policy
    * rather than opt-in wiring. Runs after `mountPreviewExtensions` so any
    * extension-provided `pre > code` blocks already exist in the DOM. See #29.
+   *
+   * `root` scopes the scan to a specific chunk instead of the whole preview
+   * — see {@link mountPreviewExtensions} for why.
    */
-  private mountCodeBlockControls(): MdzipRenderHandle | null {
+  private mountCodeBlockControls(root: HTMLElement = this.elPreviewContent): MdzipRenderHandle | null {
     if (!this.controlPolicy.codeBlockTools) {
       return null;
     }
-    const codeEls = Array.from(this.elPreviewContent.querySelectorAll<HTMLElement>('pre > code'));
+    const codeEls = Array.from(root.querySelectorAll<HTMLElement>('pre > code'));
     if (codeEls.length === 0) {
       return null;
     }
@@ -2920,6 +3572,7 @@ export class MdzipWorkspaceView {
         hardBreakMarkerHighlight,
         htmlTagMarkerHighlight,
         noSpellcheckHighlight,
+        imageEditAffordanceField,
         EditorView.lineWrapping,
         dropCursor(),
         // Content is contenteditable, but browsers don't agree on a default
@@ -2974,6 +3627,23 @@ export class MdzipWorkspaceView {
               void self.handleEditorImageDrop(file, event.clientX, event.clientY);
               return true;
             }
+          },
+          click(event, view) {
+            // Fully inert unless a host has opted in — no parse cost, no
+            // widget, matching #39's "default editor behavior unchanged".
+            if (!self.options.imageEditHandler) {
+              return;
+            }
+            const target = event.target as HTMLElement;
+            if (target.closest('[data-mdzip-image-edit-affordance]')) {
+              return;
+            }
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            const hit = pos === null ? null : findImageReferenceAtOffset(view.state, pos);
+            view.dispatch({ effects: imageEditAffordanceEffect.of(hit ? { from: hit.from, to: hit.to } : null) });
+          },
+          blur(_event, view) {
+            view.dispatch({ effects: imageEditAffordanceEffect.of(null) });
           }
         }),
       ],
@@ -2986,6 +3656,11 @@ export class MdzipWorkspaceView {
     if (scroller) {
       scroller.addEventListener('scroll', () => self.syncScrollToPreview());
     }
+
+    editor.dom.addEventListener(IMAGE_EDIT_AFFORDANCE_CLICK_EVENT, (event) => {
+      const { from, to } = (event as CustomEvent<{ from: number; to: number }>).detail;
+      void self.openImageEditFlow(from, to);
+    });
 
     return editor;
   }
@@ -3216,6 +3891,25 @@ export class MdzipWorkspaceView {
       this.elPackFilesModeDocument.checked = true;
       this.elPackFilesModeProject.checked = false;
     }
+    this.elCopyRenderDialog.hidden = this.copyRenderDialogState === null
+      && this.copyReadyState === null
+      && this.copyRenderDoneState === null;
+    this.elCopyRenderProgressSection.hidden = this.copyRenderDialogState === null;
+    this.elCopyRenderReadyText.hidden = this.copyReadyState === null;
+    this.elCopyRenderDoneText.hidden = this.copyRenderDoneState === null;
+    this.elCopyRenderCancelBtn.hidden = this.copyRenderDialogState === null;
+    this.elCopyRenderReadyCancelBtn.hidden = this.copyReadyState === null;
+    this.elCopyRenderConfirmBtn.hidden = this.copyReadyState === null;
+    this.elCopyRenderDismissBtn.hidden = this.copyRenderDoneState === null;
+    if (this.copyRenderDialogState) {
+      this.elCopyRenderHeading.textContent = 'Copying document...';
+      this.updateCopyRenderDialogProgress();
+    } else if (this.copyReadyState) {
+      this.elCopyRenderHeading.textContent = 'Ready to copy';
+    } else if (this.copyRenderDoneState) {
+      this.elCopyRenderHeading.textContent = 'Done';
+      this.elCopyRenderDoneText.textContent = this.copyRenderDoneState.message;
+    }
     this.elMetadataDialog.hidden = !this.metadataDialogOpen;
 
     if (this.contextMenuState) {
@@ -3316,10 +4010,11 @@ export class MdzipWorkspaceView {
     });
 
     // Ctrl/Cmd+A normally selects the whole page, which in split layout grabs
-    // both panes' text at once. Scope it to the rendered content instead when
-    // focus is inside the preview pane (see the mousedown handler below for
-    // how it gets there); the source editor keeps its own defaultKeymap
-    // binding since CodeMirror's content root sits outside this element.
+    // both panes' text at once. Scope it to a Copy All of the rendered
+    // content instead when focus is inside the preview pane (see the
+    // mousedown handler below for how it gets there); the source editor
+    // keeps its own defaultKeymap binding since CodeMirror's content root
+    // sits outside this element.
     doc.addEventListener('keydown', (e) => {
       if (e.key.toLowerCase() !== 'a' || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
         return;
@@ -3328,7 +4023,7 @@ export class MdzipWorkspaceView {
         return;
       }
       e.preventDefault();
-      this.selectAllPreviewContent();
+      void this.copyAllPreviewContent();
     });
 
     this.elNavBtn.addEventListener('click', () => {
@@ -3613,6 +4308,28 @@ export class MdzipWorkspaceView {
     this.elPackFilesConfirmBtn.addEventListener('click', () => {
       this.resolvePackFilesDialog(this.readPackFilesDialogDecision());
     });
+    this.elCopyRenderDialog.querySelector<HTMLButtonElement>('[data-action="cancel-copy-render"]')!
+      .addEventListener('click', () => {
+        this.copyRenderDialogState?.abort.abort();
+      });
+    this.elCopyRenderDialog.querySelector<HTMLButtonElement>('[data-action="cancel-copy-ready"]')!
+      .addEventListener('click', () => {
+        this.copyReadyState = null;
+        this.render();
+      });
+    this.elCopyRenderDialog.querySelector<HTMLButtonElement>('[data-action="confirm-copy-ready"]')!
+      .addEventListener('click', () => {
+        // Must call the actual write synchronously from this handler (no
+        // awaits ahead of it) — this click is the fresh user gesture the
+        // Clipboard API needs; losing it to another async hop before the
+        // write starts would defeat the entire reason this button exists.
+        void this.performReadyCopy();
+      });
+    this.elCopyRenderDialog.querySelector<HTMLButtonElement>('[data-action="dismiss-copy-render"]')!
+      .addEventListener('click', () => {
+        this.copyRenderDoneState = null;
+        this.render();
+      });
 
     this.elNavMenu.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -3901,6 +4618,19 @@ export class MdzipWorkspaceView {
       this.elTooltip.textContent = '';
       this.tooltipHideTimer = null;
     }, 40);
+  }
+
+  /** Briefly shows a status message (e.g. "Text copied to clipboard") near the bottom of the view, auto-hiding after a couple of seconds. */
+  private showCopyToast(message: string): void {
+    if (this.copyToastHideTimer) {
+      clearTimeout(this.copyToastHideTimer);
+    }
+    this.elCopyToast.textContent = message;
+    this.elCopyToast.hidden = false;
+    this.copyToastHideTimer = setTimeout(() => {
+      this.elCopyToast.hidden = true;
+      this.copyToastHideTimer = null;
+    }, 2000);
   }
 
   private async save(): Promise<void> {
@@ -4334,6 +5064,61 @@ export class MdzipWorkspaceView {
     }
   }
 
+  /**
+   * Handles a click on an existing image's edit affordance (see
+   * `imageEditAffordanceField`/the `click` domEventHandler in
+   * createCmEditor). Only reachable when `imageEditHandler` is set — the
+   * click handler that dispatches the affordance already gates on that.
+   */
+  private async openImageEditFlow(from: number, to: number): Promise<void> {
+    const editor = this.cmEditor;
+    const handler = this.options.imageEditHandler;
+    if (!editor || !handler) {
+      return;
+    }
+    const parsed = findImageReferenceAtOffset(editor.state, from);
+    if (!parsed || parsed.from !== from || parsed.to !== to) {
+      return;
+    }
+    const request: MdzipImageEditRequest = {
+      src: parsed.src,
+      altText: parsed.altText,
+      width: parsed.width,
+      height: parsed.height,
+      position: parsed.position,
+      mode: parsed.kind
+    };
+    let decision: MdzipImageInsertDecision | null;
+    try {
+      decision = normalizeImageInsertDecision(await handler(request));
+    } catch (error) {
+      this.options.onFailed?.(error);
+      decision = null;
+    }
+    this.cmEditor?.dispatch({ effects: imageEditAffordanceEffect.of(null) });
+    if (!decision) {
+      return; // cancelled
+    }
+    const current = this.cmEditor;
+    if (!current) {
+      return;
+    }
+    // The handler may have awaited arbitrarily long — revalidate against the
+    // live doc instead of trusting the captured range/text, in case it
+    // changed underneath while the dialog was open.
+    const revalidated = findImageReferenceAtOffset(current.state, from);
+    if (!revalidated || revalidated.raw !== parsed.raw) {
+      this.options.onFailed?.(new Error('Image reference changed before the edit could be applied.'));
+      return;
+    }
+    const replacement = formatImageEditMarkdown(revalidated.src, decision);
+    current.dispatch({
+      changes: { from: revalidated.from, to: revalidated.to, insert: replacement },
+      selection: { anchor: revalidated.from + replacement.length }
+    });
+    current.focus();
+  }
+
   private async resolveImageInsertDecision(
     bytes: Uint8Array,
     mimeType: string,
@@ -4649,7 +5434,7 @@ export class MdzipWorkspaceView {
   }
 
   // Items for the rendered-preview selection menu. Taking over `contextmenu`
-  // to offer Select All also suppresses the browser's native menu — which is
+  // to offer Copy All also suppresses the browser's native menu — which is
   // the only thing that was otherwise offering Copy on a right-click — so
   // Copy has to be reinstated explicitly whenever there's a selection.
   private previewMenuItems(): Array<MdzipNavMenuItem | null> {
@@ -4663,10 +5448,15 @@ export class MdzipWorkspaceView {
       items.push(null);
     }
     items.push({
-      action: 'preview-select-all',
-      label: 'Select All',
-      icon: MENU_SELECT_ALL_ICON_HTML,
+      action: 'preview-copy-all',
+      label: 'Copy All',
+      icon: MENU_COPY_ICON_HTML,
       shortcut: this.editorShortcut('A')
+    });
+    items.push({
+      action: 'preview-copy-all-images',
+      label: 'Copy All with Images',
+      icon: MENU_COPY_ICON_HTML
     });
     return items;
   }
@@ -4679,42 +5469,478 @@ export class MdzipWorkspaceView {
       return;
     }
     switch (action) {
-      case 'preview-select-all':
-        this.selectAllPreviewContent();
+      case 'preview-copy-all':
+        void this.copyAllPreviewContent();
+        break;
+      case 'preview-copy-all-images':
+        void this.copyAllWithImagesPreviewContent();
         break;
       case 'preview-copy':
-        void this.copyPreviewSelection(state.text);
+        // Partial Copy never shows the render dialog (there's nothing to
+        // drain), so its confirmation is always the brief toast.
+        void this.copyPreviewSelection(state.text).then((outcome) => this.finishCopyNotification(false, outcome));
         break;
     }
   }
 
-  private async copyPreviewSelection(text: string): Promise<void> {
-    if (!text) {
+  /**
+   * Shows the copy confirmation either as a brief auto-hiding toast (an
+   * instant copy — nothing for the user to have looked away from) or, if
+   * the render dialog was showing, by switching that same dialog into a
+   * dismissable "done" state instead of hiding it — a copy that took long
+   * enough to need a progress dialog shouldn't end in a 2-second toast the
+   * user may not be looking at. `outcome` null means there was nothing to
+   * copy (empty selection) — silently clean up the dialog if one was
+   * showing, no confirmation needed. An `error` outcome carries the actual
+   * failure text inline (`onFailed` is a host callback with no guaranteed
+   * visible surface — this component has no other way to guarantee the
+   * user ever sees why it failed).
+   */
+  private finishCopyNotification(dialogWasShown: boolean, outcome: { message: string } | { error: string } | null): void {
+    if (!outcome) {
+      if (dialogWasShown) {
+        this.copyRenderDialogState = null;
+        this.render();
+      }
       return;
     }
-    try {
-      await this.editorClipboard()?.writeText(text);
-    } catch (error) {
-      this.options.onFailed?.(error);
+    const text = 'error' in outcome ? `Copy failed: ${outcome.error}` : outcome.message;
+    if (dialogWasShown) {
+      this.copyRenderDialogState = null;
+      this.copyRenderDoneState = { message: text };
+      this.render();
+    } else {
+      this.showCopyToast(text);
     }
   }
 
-  // Selects the full rendered content of the preview pane, scoped to that
-  // pane rather than the whole page (native Ctrl+A / right-click Select All
-  // would otherwise grab the source editor's text too in split layout).
-  private selectAllPreviewContent(): void {
-    const doc = this.elPreviewContent.ownerDocument;
-    const selection = doc.defaultView?.getSelection();
-    if (!selection) {
+  /** Switches the render dialog into its "ready to copy" state, holding `perform` until the user clicks Copy — see `copyReadyState` for why the write can't just happen automatically here. */
+  private armCopyReady(perform: () => Promise<{ message: string } | { error: string } | null>): void {
+    this.copyRenderDialogState = null;
+    this.copyReadyState = { perform };
+    this.render();
+  }
+
+  /** Runs the held write from `copyReadyState` — called directly from the dialog's Copy button click, which is what makes the write's own user-activation check pass. */
+  private async performReadyCopy(): Promise<void> {
+    const ready = this.copyReadyState;
+    if (!ready) return;
+    this.copyReadyState = null;
+    const outcome = await ready.perform();
+    // Always the dialog path: copyReadyState only ever gets armed for a
+    // copy that already showed the progress dialog.
+    this.finishCopyNotification(true, outcome);
+  }
+
+  /**
+   * Races `promise` against a timer, rejecting with `timeoutMessage` if the
+   * timer wins. The async Clipboard API has no built-in timeout, and a
+   * write large enough to strain a real OS clipboard (a document with
+   * thousands of embedded images can build a HTML payload well over
+   * 100MB) can apparently hang indefinitely on some machines rather than
+   * rejecting — without this, that leaves the operation permanently
+   * pending, and the progress dialog never resolves into either a done or
+   * a failure state.
+   */
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    });
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      clearTimeout(timer!);
+    }
+  }
+
+  /** Writes `text` to the clipboard. Returns null if there was nothing to copy (a true no-op, not a failure); otherwise a success message or the failure text (also reported via `onFailed`, but that's a host callback with no guaranteed visible surface — the caller needs the text itself to show the user). */
+  private async copyPreviewSelection(text: string): Promise<{ message: string } | { error: string } | null> {
+    if (!text) {
+      return null;
+    }
+    try {
+      await this.withTimeout(
+        Promise.resolve(this.editorClipboard()?.writeText(text)),
+        this.clipboardFallbackWriteTimeoutMs,
+        'Clipboard write timed out.'
+      );
+      return { message: 'Plain text copied to clipboard' };
+    } catch (error) {
+      this.options.onFailed?.(error);
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  /** Syncs just the copy-render dialog's progress bar/text from `copyRenderDialogState` — see `copyAllPreviewContent` for why this bypasses `render()`. No-op while the dialog isn't showing. */
+  private updateCopyRenderDialogProgress(): void {
+    if (!this.copyRenderDialogState) {
       return;
     }
-    // Focus before selecting: focusing the pane after building the range
-    // collapses the selection right back out.
-    this.elPreviewPane.focus({ preventScroll: true });
-    const range = doc.createRange();
-    range.selectNodeContents(this.elPreviewContent);
-    selection.removeAllRanges();
-    selection.addRange(range);
+    const { done, total, label } = this.copyRenderDialogState;
+    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+    this.elCopyRenderProgressBar.style.width = `${percent}%`;
+    this.elCopyRenderProgressText.textContent = total > 0 ? `${label} (${done} / ${total})...` : `${label}...`;
+  }
+
+  /**
+   * Copies the entire rendered document as plain text (same fidelity as
+   * `copyPreviewSelection` — no HTML, no `ClipboardItem`), regardless of how
+   * much of it is currently mounted under progressive rendering. If
+   * everything's already mounted (small doc, non-chunked render, or the user
+   * already scrolled through it) this is instant — `chunkedRenderState` is
+   * null in exactly that case. Otherwise it force-drains the rest first,
+   * showing a cancelable progress dialog once the wait clears a short
+   * debounce so fast documents never flicker it into view.
+   */
+  private async copyAllPreviewContent(): Promise<void> {
+    const pending = this.chunkedRenderState;
+    if (!pending) {
+      const outcome = await this.copyPreviewSelection(this.elPreviewContent.textContent ?? '');
+      this.finishCopyNotification(false, outcome);
+      return;
+    }
+
+    const total = pending.chunks.length;
+    const abort = new AbortController();
+    let dialogShown = false;
+    const label = 'Rendering the full document';
+    const showDialogTimer = setTimeout(() => {
+      dialogShown = true;
+      this.copyRenderDialogState = { done: pending.cursor, total, label, abort };
+      this.render();
+    }, 200);
+
+    // Progress ticks update the dialog's progress bar/text directly instead
+    // of going through the view's full `render()` — profiling a drain on a
+    // 15,000-image document showed `render()` alone (it re-syncs the whole
+    // shell, e.g. rebuilding the nav tree) costing ~870ms of self-time over
+    // a 4s sample even throttled to 10/sec, dwarfing the actual chunk-mount
+    // work it was meant to make room for.
+    await this.drainRemainingChunks(pending, (done) => {
+      if (!dialogShown) return;
+      this.copyRenderDialogState = { done, total, label, abort };
+      this.updateCopyRenderDialogProgress();
+    }, abort.signal);
+
+    clearTimeout(showDialogTimer);
+
+    if (abort.signal.aborted) {
+      if (dialogShown) {
+        this.copyRenderDialogState = null;
+        this.render();
+      }
+      // Cancelled partway through — whatever's left stays unmounted, so
+      // re-arm the usual scroll-driven continuation for it.
+      const remaining = this.chunkedRenderState;
+      if (remaining && remaining.generation === pending.generation && !remaining.sentinelHandle) {
+        this.armChunkSentinel(remaining.chunks, remaining.cursor, remaining.context, remaining.generation, remaining.animateImageHydration);
+      }
+      return;
+    }
+
+    if (dialogShown) {
+      // The prepare phase above can take anywhere from seconds to minutes —
+      // long enough that the click which started this has lost its user
+      // activation by now, so the actual write waits for a fresh one
+      // (the dialog's own Copy button) instead of firing automatically.
+      // See copyReadyState's doc comment.
+      this.armCopyReady(() => this.copyPreviewSelection(this.elPreviewContent.textContent ?? ''));
+      return;
+    }
+    const outcome = await this.copyPreviewSelection(this.elPreviewContent.textContent ?? '');
+    this.finishCopyNotification(false, outcome);
+  }
+
+  /**
+   * Renders the *entire* current document to one HTML string, independent
+   * of whatever's mounted in `elPreviewContent` — no DOM reads or writes.
+   * Copy All with Images needs pristine `<img src="original/path">` markup
+   * to hand to `MdzipAssetSession.rewriteHtmlEmbeddingImages`, and an
+   * already-mounted, possibly-hydrated `<img>` in the live preview may have
+   * had its `src` swapped for a `blob:` URL or stripped entirely pending lazy
+   * load — either way the original archive path is gone. Time-budgeted and
+   * yielded like `renderAndMountChunkBatch`, for the same reason: some
+   * chunks cost far more to render+sanitize than others. Extension `mount()`
+   * hooks are not run — they render into a live DOM (e.g. mermaid diagrams
+   * turning marked-up code fences into SVG), which this never touches, so a
+   * mermaid diagram will paste as its pre-render markup, not a rendered
+   * diagram. Only reachable when `renderingService.supportsChunking` is
+   * true; the caller checks that first.
+   */
+  private async renderFullDocumentHtml(
+    snapshot: MdzipWorkspaceSnapshot,
+    context: MdzipMarkdownRenderContext,
+    signal: AbortSignal,
+    cacheGeneration: number | null,
+    onProgress?: (done: number, total: number) => void
+  ): Promise<string> {
+    const tokensResult = this.renderingService.tokenizeMarkdown(snapshot.currentText, context);
+    const tokens = Array.isArray(tokensResult) ? tokensResult : await tokensResult;
+    if (signal.aborted) {
+      throw new DOMException('Rendering aborted.', 'AbortError');
+    }
+    // groupTokensIntoChunks is also called with no options in
+    // renderAndMountChunkBatch's caller (mountChunkedPreview) — keep both
+    // call sites' chunking in sync, since chunk index is chunkHtmlCache's
+    // only key.
+    const chunks = groupTokensIntoChunks(tokens);
+    const view = this.elPreviewContent.ownerDocument.defaultView;
+    const clock = view?.performance ?? performance;
+    const BATCH_TIME_BUDGET_MS = 10;
+    let html = '';
+    let cursor = 0;
+    while (cursor < chunks.length) {
+      if (signal.aborted) {
+        throw new DOMException('Rendering aborted.', 'AbortError');
+      }
+      const batchStart = clock.now();
+      let processedInBatch = 0;
+      while (cursor < chunks.length && (processedInBatch === 0 || clock.now() - batchStart < BATCH_TIME_BUDGET_MS)) {
+        const chunkIndex = cursor;
+        const cacheHit = cacheGeneration !== null && this.chunkHtmlCache?.generation === cacheGeneration
+          ? this.chunkHtmlCache.html.get(chunkIndex)
+          : undefined;
+        let chunkHtml: string;
+        if (cacheHit !== undefined) {
+          chunkHtml = cacheHit;
+        } else {
+          const result = this.renderingService.renderChunk(chunks[chunkIndex], context);
+          chunkHtml = typeof result === 'string' ? result : await result;
+          // Only populate the shared cache if this generation is *still*
+          // the live one at the moment this (possibly async) render
+          // finished — checked per-chunk, not once up front, since the
+          // outer loop yields via requestAnimationFrame and individual
+          // chunk renders (mermaid) can themselves be async. If the
+          // document was edited mid-copy, cacheGeneration is now stale
+          // even though this render (for the snapshot Copy All captured)
+          // legitimately continues to completion — never write it back
+          // under a generation number that's no longer current.
+          if (cacheGeneration !== null && cacheGeneration === this.previewGeneration) {
+            if (this.chunkHtmlCache?.generation !== cacheGeneration) {
+              this.chunkHtmlCache = { generation: cacheGeneration, html: new Map() };
+            }
+            this.chunkHtmlCache.html.set(chunkIndex, chunkHtml);
+          }
+        }
+        html += chunkHtml;
+        cursor += 1;
+        processedInBatch += 1;
+      }
+      onProgress?.(cursor, chunks.length);
+      if (cursor >= chunks.length) {
+        break;
+      }
+      if (signal.aborted) {
+        throw new DOMException('Rendering aborted.', 'AbortError');
+      }
+      await new Promise<void>((resolve) => {
+        if (view?.requestAnimationFrame) view.requestAnimationFrame(() => resolve());
+        else setTimeout(resolve, 0);
+      });
+    }
+    return html;
+  }
+
+  /**
+   * Like `copyAllPreviewContent`, but writes a rich `text/html` clipboard
+   * representation (alongside the same `text/plain` fallback) with every
+   * archive image re-embedded as a self-contained `data:` URL — the format
+   * an external app like Word needs, since this document's own `blob:` URLs
+   * only resolve inside this tab. Two phases share one debounced, cancelable
+   * dialog: render the document fresh (`renderFullDocumentHtml`), then embed
+   * its images (`rewriteHtmlEmbeddingImages`). Falls back to
+   * `copyAllPreviewContent`'s plain-text-only behavior when there's no
+   * default renderer to re-render from (a host-supplied custom renderer,
+   * the same escape hatch `progressiveTextRendering` already has) — or, if
+   * the clipboard rejects the rich write for any reason (unsupported
+   * browser, payload too large), falls back to a plain-text write so the
+   * user still gets *something* rather than nothing.
+   */
+  private async copyAllWithImagesPreviewContent(): Promise<void> {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot || snapshot.currentPathType !== 'markdown' || !this.renderingService.supportsChunking) {
+      await this.copyAllPreviewContent();
+      return;
+    }
+
+    const abort = new AbortController();
+    let dialogShown = false;
+    const showDialogTimer = setTimeout(() => {
+      dialogShown = true;
+      this.copyRenderDialogState = { done: 0, total: 0, label: 'Rendering the document', abort };
+      this.render();
+    }, 200);
+    const updateProgress = (done: number, total: number, label: string): void => {
+      if (!dialogShown) return;
+      this.copyRenderDialogState = { done, total, label, abort };
+      this.updateCopyRenderDialogProgress();
+    };
+
+    let finalHtml: string;
+    let imageCount = 0;
+    try {
+      const context = this.createMarkdownContext(snapshot, abort.signal);
+      // Only trust chunkHtmlCache if the live preview generation still
+      // represents this exact snapshot — if the preview hasn't caught up to
+      // it yet, or the document has since changed, render fully fresh
+      // rather than risk splicing in HTML for different content.
+      const cacheGeneration = this.previewMemoMatchesSnapshot(snapshot) ? this.previewGeneration : null;
+      let html = await this.renderFullDocumentHtml(
+        snapshot,
+        context,
+        abort.signal,
+        cacheGeneration,
+        (done, total) => updateProgress(done, total, 'Rendering the document')
+      );
+      if (this.assetSession) {
+        html = await this.assetSession.rewriteHtmlEmbeddingImages(
+          html,
+          snapshot.currentPath,
+          abort.signal,
+          (done, total) => {
+            imageCount = total;
+            updateProgress(done, total, 'Embedding images');
+          }
+        );
+      }
+      finalHtml = html;
+    } catch (error) {
+      clearTimeout(showDialogTimer);
+      if ((error as { name?: string } | null)?.name === 'AbortError') {
+        // Deliberate cancel — just close, no failure to report.
+        if (dialogShown) {
+          this.copyRenderDialogState = null;
+          this.render();
+        }
+      } else {
+        this.finishCopyNotification(dialogShown, { error: error instanceof Error ? error.message : String(error) });
+        this.options.onFailed?.(error);
+      }
+      return;
+    }
+
+    clearTimeout(showDialogTimer);
+
+    const scratch = this.elPreviewContent.ownerDocument.createElement('div');
+    scratch.innerHTML = finalHtml;
+    const plainText = scratch.textContent ?? '';
+    if (dialogShown) {
+      // Same reasoning as copyAllPreviewContent: the prepare phase (often
+      // the slower of the two here, once image embedding is involved) has
+      // long since burned through the click's user activation.
+      this.armCopyReady(() => this.writeRichClipboard(finalHtml, plainText, imageCount));
+      return;
+    }
+    const outcome = await this.writeRichClipboard(finalHtml, plainText, imageCount);
+    this.finishCopyNotification(false, outcome);
+  }
+
+  /**
+   * Writes an HTML+plain-text `ClipboardItem` when the browser supports it,
+   * falling back to a plain-text-only `writeText` (same as
+   * `copyPreviewSelection`, which reports itself as "Plain text") when it
+   * doesn't, or if the rich write itself throws (e.g. a payload too large
+   * for the OS clipboard) — either way the user ends up with *something* on
+   * their clipboard rather than nothing. Returns the confirmation message
+   * for the caller to show (see `finishCopyNotification`), naming the
+   * actual MIME type that ended up on the clipboard ("HTML" for a
+   * successful rich write, "Plain text" for the fallback) so the user knows
+   * what they're about to paste — `imageCount` only adds to the "HTML"
+   * wording, since even a rich write with zero images is still HTML, not
+   * plain text.
+   */
+  private async writeRichClipboard(html: string, plainText: string, imageCount: number): Promise<{ message: string } | { error: string } | null> {
+    const clipboard = this.editorClipboard();
+    const view = this.elPreviewContent.ownerDocument.defaultView;
+    const ClipboardItemCtor = (view as (Window & { ClipboardItem?: typeof ClipboardItem }) | undefined)?.ClipboardItem;
+    if (clipboard && ClipboardItemCtor && 'write' in clipboard) {
+      try {
+        const item = new ClipboardItemCtor({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([plainText], { type: 'text/plain' })
+        });
+        // A document with thousands of repeated images (e.g. an avatar
+        // reused across every row of a chat export) can build a payload
+        // well over 100MB, since each occurrence embeds its own full copy
+        // — the clipboard format has no way to reference a shared resource.
+        // 30s is generous for a legitimate slow write; the real purpose is
+        // making sure this can't hang forever with the dialog stuck mid-copy.
+        await this.withTimeout(clipboard.write([item]), this.clipboardWriteTimeoutMs, 'Clipboard write timed out.');
+        return {
+          message: imageCount > 0
+            ? `HTML with ${imageCount} image${imageCount === 1 ? '' : 's'} copied to clipboard`
+            : 'HTML copied to clipboard'
+        };
+      } catch (error) {
+        this.options.onFailed?.(error);
+        // Fall through to the plain-text fallback rather than surfacing
+        // this error directly — if that also fails, its error is more
+        // relevant (it's the one actually blocking the user from getting
+        // anything at all), and the plain-text path already reports this
+        // one to onFailed for anyone watching that.
+      }
+    }
+    return await this.copyPreviewSelection(plainText);
+  }
+
+  /**
+   * Mounts every chunk from `state.cursor` onward, yielding to a fresh
+   * animation frame between batches (unlike the sentinel path's rAF-time-
+   * budgeted-per-batch loop, this has no viewport to wait on — it has to
+   * plow through the whole rest of the document, so the explicit yield is
+   * what keeps a huge draw from locking up the tab while it does). Stops
+   * early if `signal` aborts, a newer render generation supersedes this one,
+   * or the chunk state's own render context aborts.
+   *
+   * Deliberately uses `renderAndMountChunkBatch` instead of `mountChunkBatch`
+   * and defers image hydration until the whole drain finishes, running it
+   * once over every image the drain mounted, instead of once per batch:
+   * Copy All only needs the mounted chunks' *text* (`elPreviewContent
+   * .textContent`, which images never contribute to), so there's no reason
+   * to wait on `hydrateImages`' async image resolution at all here — and
+   * racing through batches as fast as this loop can while each one fires
+   * its own independent, un-awaited `hydrateImages` background loop (as
+   * `mountChunkBatch` does for the scroll-paced callers, where that's fine —
+   * scrolling naturally rate-limits how many can ever be in flight at once)
+   * lets dozens of those loops pile up concurrently on an image-heavy
+   * document, each spending its own `CHUNK_BUDGET_MS` in the same frame —
+   * measured 100-200ms frame gaps on a 15,000-image document. One combined
+   * pass over every image at the end avoids the pile-up entirely, without
+   * making Copy All wait on it.
+   */
+  private async drainRemainingChunks(
+    state: NonNullable<MdzipWorkspaceView['chunkedRenderState']>,
+    onProgress: (done: number, total: number) => void,
+    signal: AbortSignal
+  ): Promise<void> {
+    const { chunks, context, generation, animateImageHydration } = state;
+    // Draining is instead of the scroll-driven continuation, not alongside
+    // it — tearing down any armed sentinel first stops the two from racing
+    // and double-mounting the same chunk.
+    state.sentinelHandle?.destroy();
+    if (this.chunkedRenderState?.generation === generation) {
+      this.chunkedRenderState.sentinelHandle = null;
+    }
+
+    const allPending: { image: HTMLImageElement; source: string }[] = [];
+    try {
+      while (this.chunkedRenderState?.generation === generation && this.chunkedRenderState.cursor < chunks.length) {
+        if (signal.aborted || generation !== this.previewGeneration || context.signal.aborted) return;
+        const cursor = this.chunkedRenderState.cursor;
+        const { cursor: newCursor, mountedRoots } = await this.renderAndMountChunkBatch(chunks, cursor, context, generation);
+        if (generation !== this.previewGeneration || context.signal.aborted) return;
+        allPending.push(...this.collectPendingImages(mountedRoots, animateImageHydration));
+        this.recordChunkProgress(generation, chunks, newCursor);
+        onProgress(newCursor, chunks.length);
+        if (signal.aborted) return;
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
+    } finally {
+      if (generation === this.previewGeneration && !context.signal.aborted) {
+        this.hydrateImages(allPending, context, generation, animateImageHydration, () => {});
+      }
+    }
   }
 
   // Inserts a fenced code block, carrying the chosen language as the fence info
@@ -5790,14 +7016,113 @@ export class MdzipWorkspaceView {
     if (this.lastSyncedEditorScrollTop !== null && Math.abs(currentTop - this.lastSyncedEditorScrollTop) < 2) {
       return;
     }
-    this.syncing = true;
     const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
+    // The editor is at its true bottom, but under progressive rendering the
+    // preview's scrollHeight only accounts for chunks mounted so far — a
+    // plain ratio jump would only reach the bottom of whatever happens to be
+    // mounted right now, not the document's actual end. Force-drain the rest
+    // first so this edge is reliable regardless of how much has been
+    // scrolled-into-view on the preview side.
+    //
+    // "At the bottom" is detected via CodeMirror's own viewport, not a
+    // scrollHeight/scrollTop pixel comparison: CodeMirror estimates the
+    // height of not-yet-measured (virtualized) lines, and on a huge document
+    // that estimate can be tens of pixels off from where it actually clamps
+    // scrollTop — confirmed live against a real 88,000-line file, where a
+    // small fixed pixel epsilon never matched. `viewport.to` is what
+    // CodeMirror has actually decided to draw for the current scroll
+    // position, so comparing it to the document length is exact regardless
+    // of any height estimation drift.
+    const atDocEnd = this.cmEditor.viewport.to >= this.cmEditor.state.doc.length;
+    if (atDocEnd && this.chunkedRenderState) {
+      void this.syncScrollToPreviewBottom();
+      return;
+    }
+    this.syncing = true;
     const scrollRatio = editorHeight > 0 ? currentTop / editorHeight : 0;
     const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
     const target = scrollRatio * previewHeight;
     this.lastSyncedPreviewScrollTop = target;
     this.elPreviewPane.scrollTop = target;
     this.syncing = false;
+  }
+
+  /**
+   * Handles syncScrollToPreview's bottom edge when the preview still has
+   * unmounted chunks: force-mounts the rest (same drain Copy All uses) so
+   * the preview's scrollHeight reflects the whole document, then jumps to
+   * its real bottom — instead of the ordinary ratio-based jump, which would
+   * only land at the bottom of whatever was mounted the instant the sync
+   * fired. Re-checks that the editor is still at its bottom and the document
+   * hasn't changed before applying the jump, since the drain can take long
+   * enough on a huge document for either to no longer hold.
+   *
+   * On the most extreme real documents this drain has been measured at
+   * ~106s (thousands of chunks, tens of thousands of images each needing a
+   * real DOM slot + IntersectionObserver registration) — long enough that a
+   * silent wait looks indistinguishable from a frozen preview pane. Past a
+   * short debounce (so ordinary documents never see it), a small status
+   * toast shows progress, reusing the same element Copy All's confirmation
+   * messages use.
+   */
+  private async syncScrollToPreviewBottom(): Promise<void> {
+    const state = this.chunkedRenderState;
+    if (!state || this.bottomDrainGeneration === state.generation) {
+      return;
+    }
+    const generation = state.generation;
+    this.bottomDrainGeneration = generation;
+    if (this.copyToastHideTimer) {
+      clearTimeout(this.copyToastHideTimer);
+      this.copyToastHideTimer = null;
+    }
+    let showToastTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      showToastTimer = null;
+      this.scrollCatchUpState = { done: state.cursor, total: state.chunks.length };
+      this.updateScrollCatchUpToast();
+    }, 200);
+    try {
+      await this.drainRemainingChunks(state, (done, total) => {
+        if (!this.scrollCatchUpState) return;
+        this.scrollCatchUpState = { done, total };
+        this.updateScrollCatchUpToast();
+      }, new AbortController().signal);
+    } finally {
+      if (showToastTimer) {
+        clearTimeout(showToastTimer);
+      }
+      if (this.scrollCatchUpState) {
+        this.scrollCatchUpState = null;
+        this.elCopyToast.hidden = true;
+      }
+      if (this.bottomDrainGeneration === generation) {
+        this.bottomDrainGeneration = null;
+      }
+    }
+    if (generation !== this.previewGeneration || this.layout !== 'split' || !this.cmEditor) {
+      return;
+    }
+    // See the comment in syncScrollToPreview on why this is viewport-based
+    // rather than a scrollHeight/scrollTop pixel comparison.
+    if (this.cmEditor.viewport.to < this.cmEditor.state.doc.length) {
+      return;
+    }
+    this.syncing = true;
+    const target = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
+    this.lastSyncedPreviewScrollTop = target;
+    this.elPreviewPane.scrollTop = target;
+    this.syncing = false;
+  }
+
+  /** Syncs the catch-up toast's text from `scrollCatchUpState`, bypassing `render()` — see `updateCopyRenderDialogProgress` for why. No-op while the toast isn't showing. */
+  private updateScrollCatchUpToast(): void {
+    if (!this.scrollCatchUpState) {
+      return;
+    }
+    const { done, total } = this.scrollCatchUpState;
+    const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+    this.elCopyToast.textContent = total > 0 ? `Catching up the preview... (${percent}%)` : 'Catching up the preview...';
+    this.elCopyToast.hidden = false;
   }
 }
 
@@ -5944,10 +7269,6 @@ function padHtmlImageBlock(
     ? ''
     : after.startsWith('\n') ? '\n' : '\n\n';
   return `${prefix}${html}${suffix}`;
-}
-
-function escapeMarkdownImageAlt(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/]/g, '\\]');
 }
 
 function formatMetadataValue(value: unknown): string {
@@ -6209,6 +7530,30 @@ const SHELL_HTML = `
     </div>
   </div>
 
+  <div class="title-dialog-backdrop" data-ref="copy-render-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-copy-render-dialog-heading">
+    <div class="title-dialog copy-render-dialog">
+      <h3 id="mdzip-copy-render-dialog-heading" data-ref="copy-render-heading">Copying document...</h3>
+      <div data-ref="copy-render-progress-section">
+        <p data-ref="copy-render-progress-text">Rendering the full document...</p>
+        <div class="copy-render-progress-track">
+          <div class="copy-render-progress-bar" data-ref="copy-render-progress-bar"></div>
+        </div>
+      </div>
+      <p data-ref="copy-render-ready-text" hidden>
+        The document is ready. Browsers only allow a clipboard write right after a click, so this needs one more —
+        click Copy to finish.
+      </p>
+      <p data-ref="copy-render-done-text" hidden></p>
+      <div class="title-dialog-actions">
+        <button type="button" data-action="cancel-copy-render" data-ref="copy-render-cancel-btn">Cancel</button>
+        <button type="button" data-action="cancel-copy-ready" data-ref="copy-render-ready-cancel-btn" hidden>Cancel</button>
+        <button type="button" class="save-title" data-action="confirm-copy-ready" data-ref="copy-render-confirm-btn" hidden>Copy</button>
+        <button type="button" class="save-title" data-action="dismiss-copy-render" data-ref="copy-render-dismiss-btn" hidden>Dismiss</button>
+      </div>
+    </div>
+  </div>
+
   <div class="title-dialog-backdrop" data-ref="metadata-dialog" hidden
     role="dialog" aria-modal="true" aria-labelledby="mdzip-metadata-dialog-heading">
     <div class="title-dialog metadata-dialog">
@@ -6252,6 +7597,8 @@ const SHELL_HTML = `
   <div class="nav-context-menu" data-ref="nav-menu" hidden role="menu"></div>
 
   <div class="mdzip-tooltip" data-ref="tooltip" role="tooltip" hidden></div>
+
+  <div class="mdzip-copy-toast" data-ref="copy-toast" role="status" aria-live="polite" hidden></div>
 
   <p class="mdzip-empty" data-ref="empty-state">No MDZip workspace loaded.</p>
 </section>

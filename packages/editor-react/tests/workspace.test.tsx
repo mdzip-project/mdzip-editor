@@ -13,6 +13,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setDensityOptions = vi.fn();
     public readonly setImageHydrationAnimation = vi.fn();
     public readonly setImageInsertOptions = vi.fn();
+    public readonly setImageEditOptions = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly destroy = vi.fn();

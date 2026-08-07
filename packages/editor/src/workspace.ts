@@ -2,6 +2,7 @@ import {
   MdzArchiveCore,
   MdzPackagerCore,
   type MdzManifest,
+  type MdzOpenWorkspaceOptions,
   type MdzValidationResult,
   type MdzValidationStatus,
   type MdzWorkspace,
@@ -16,6 +17,7 @@ import {
   type ArchiveEntry,
   type OpenedArchive
 } from './archive-utils.js';
+import { MdzArchiveWorkerClient } from './mdz-archive.worker-client.js';
 import {
   displayTitleFromManifest,
   fileBaseNameFromPath,
@@ -53,9 +55,20 @@ export interface MdzipWorkspaceOpenOptions {
    * use it to find content without invoking lazy ZIP readers on a later open.
    */
   assetSourceId?: string;
+  /**
+   * Dedicated Worker running `@mdzip/editor`'s `mdz-archive.worker.js`. When
+   * provided, archive parsing and byte/text reads (initial open, and any
+   * later reload after an edit) happen off the main thread instead of
+   * blocking it — recommended for large archives with many embedded assets.
+   * The caller constructs the `Worker` (URL resolution varies by host
+   * bundler); this service owns its lifecycle from there and terminates it
+   * in `dispose()`. Omitted entirely, the previous synchronous main-thread
+   * path runs unchanged.
+   */
+  worker?: Worker;
 }
 
-type ResolvedMdzipWorkspaceOpenOptions = Required<Omit<MdzipWorkspaceOpenOptions, 'archiveBytes' | 'assetSourceId'>>;
+type ResolvedMdzipWorkspaceOpenOptions = Required<Omit<MdzipWorkspaceOpenOptions, 'archiveBytes' | 'assetSourceId' | 'worker'>>;
 
 export interface MdzipWorkspaceSnapshot {
   mode: MdzipWorkspaceMode;
@@ -160,12 +173,14 @@ export class MdzipWorkspaceService {
   private fileName: string;
   // Orphaned paths derived from the current in-memory text; null means use contentValue.
   private liveOrphanedPaths: string[] | null = null;
+  private workerClient?: MdzArchiveWorkerClient;
 
   private constructor(
     bytes: Uint8Array,
     workspace: MdzWorkspace,
     content: OpenedArchive,
-    options: ResolvedMdzipWorkspaceOpenOptions
+    options: ResolvedMdzipWorkspaceOpenOptions,
+    workerClient?: MdzArchiveWorkerClient
   ) {
     this.archiveBytes = bytes;
     this.workspaceValue = workspace;
@@ -175,6 +190,7 @@ export class MdzipWorkspaceService {
     this.sourceFormatValue = options.sourceFormat;
     this.modeValue = options.mode;
     this.fileName = options.fileName;
+    this.workerClient = workerClient;
   }
 
   public static async open(
@@ -187,30 +203,37 @@ export class MdzipWorkspaceService {
       sourceFormat: options.sourceFormat ?? inferMdzipSourceFormat(bytes, fileName),
       fileName
     };
+    const workerClient = options.worker ? new MdzArchiveWorkerClient(options.worker) : undefined;
 
-    if (resolvedOptions.sourceFormat === 'markdown') {
-      const markdown = new TextDecoder('utf-8').decode(bytes);
-      const title = suggestedTitleFromMarkdown(markdown, fileBaseNameFromPath(resolvedOptions.fileName));
-      const archiveBytes = await buildNewArchiveBytesWithTitle(markdown, title);
-      const coreWorkspace = await MdzArchiveCore.openWorkspace(archiveBytes, {
-        includeOrphanedAssetAnalysis: false,
-        includeLazyDocumentReaders: true
-      });
-      const workspace = new MdzipWorkspaceService(
-        archiveBytes,
+    try {
+      if (resolvedOptions.sourceFormat === 'markdown') {
+        const markdown = new TextDecoder('utf-8').decode(bytes);
+        const title = suggestedTitleFromMarkdown(markdown, fileBaseNameFromPath(resolvedOptions.fileName));
+        const archiveBytes = await buildNewArchiveBytesWithTitle(markdown, title);
+        const coreWorkspace = await openCoreWorkspace(archiveBytes, workerClient);
+        const workspace = new MdzipWorkspaceService(
+          archiveBytes,
+          coreWorkspace,
+          await openedArchiveFromWorkspace(coreWorkspace),
+          resolvedOptions,
+          workerClient
+        );
+        workspace.currentTextValue = markdown;
+        return workspace;
+      }
+
+      const coreWorkspace = await openCoreWorkspace(bytes, workerClient);
+      return new MdzipWorkspaceService(
+        bytes,
         coreWorkspace,
         await openedArchiveFromWorkspace(coreWorkspace),
-        resolvedOptions
+        resolvedOptions,
+        workerClient
       );
-      workspace.currentTextValue = markdown;
-      return workspace;
+    } catch (error) {
+      workerClient?.dispose();
+      throw error;
     }
-
-    const coreWorkspace = await MdzArchiveCore.openWorkspace(bytes, {
-      includeOrphanedAssetAnalysis: false,
-      includeLazyDocumentReaders: true
-    });
-    return new MdzipWorkspaceService(bytes, coreWorkspace, await openedArchiveFromWorkspace(coreWorkspace), resolvedOptions);
   }
 
   public static async openWorkspace(
@@ -226,7 +249,8 @@ export class MdzipWorkspaceService {
       options.archiveBytes ?? new Uint8Array(),
       workspace,
       await openedArchiveFromWorkspace(workspace),
-      resolvedOptions
+      resolvedOptions,
+      options.worker ? new MdzArchiveWorkerClient(options.worker) : undefined
     );
   }
 
@@ -385,6 +409,11 @@ export class MdzipWorkspaceService {
       return undefined;
     }
     return this.readWorkspacePathBytes(target.path);
+  }
+
+  /** Terminates the backing archive worker, if one was configured. Safe to call even without one. */
+  public dispose(): void {
+    this.workerClient?.dispose();
   }
 
   public async addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void> {
@@ -787,10 +816,7 @@ export class MdzipWorkspaceService {
 
   private async reload(bytes: Uint8Array): Promise<void> {
     this.archiveBytes = bytes;
-    this.workspaceValue = await MdzArchiveCore.openWorkspace(bytes, {
-      includeOrphanedAssetAnalysis: false,
-      includeLazyDocumentReaders: true
-    });
+    this.workspaceValue = await openCoreWorkspace(bytes, this.workerClient);
     this.contentValue = await openedArchiveFromWorkspace(this.workspaceValue);
     this.currentTextValue = this.contentValue.markdownText;
     this.currentPathValue = this.contentValue.entryPoint;
@@ -810,10 +836,7 @@ export class MdzipWorkspaceService {
     // pane is reopened.
     const hadOrphanedAnalysis = this.liveOrphanedPaths !== null;
     this.archiveBytes = bytes;
-    this.workspaceValue = await MdzArchiveCore.openWorkspace(bytes, {
-      includeOrphanedAssetAnalysis: false,
-      includeLazyDocumentReaders: true
-    });
+    this.workspaceValue = await openCoreWorkspace(bytes, this.workerClient);
     this.contentValue = await openedArchiveFromWorkspace(this.workspaceValue);
     this.liveOrphanedPaths = null;
     this.clearPendingChanges();
@@ -984,7 +1007,9 @@ export class MdzipWorkspaceService {
     if (asset?.readBytes) {
       return asset.readBytes();
     }
-    return readBinaryFileFromArchive(this.archiveBytes, archivePath);
+    return this.workerClient
+      ? this.workerClient.readBytes(archivePath)
+      : readBinaryFileFromArchive(this.archiveBytes, archivePath);
   }
 
   private editorSnapshot(bytes: Uint8Array): MdzipEditorSnapshot {
@@ -1266,4 +1291,22 @@ function bytesToBlob(bytes: Uint8Array, sourceFormat: MdzipSourceFormat = 'mdz')
   return new Blob([buffer], {
     type: sourceFormat === 'markdown' ? 'text/markdown;charset=utf-8' : 'application/vnd.mdzip'
   });
+}
+
+const WORKSPACE_OPEN_OPTIONS: MdzOpenWorkspaceOptions = {
+  includeOrphanedAssetAnalysis: false,
+  includeLazyDocumentReaders: true
+};
+
+/**
+ * Opens `bytes` into an `MdzWorkspace`, routing through `workerClient` (off
+ * the main thread) when one is present, otherwise calling `MdzArchiveCore`
+ * directly. Shared by the initial `open()`/`openWorkspace()` factories and by
+ * `reload()`/`reloadPreservingCurrentText()` after an edit, so a worker-backed
+ * service keeps reading through the same worker for its whole lifetime.
+ */
+function openCoreWorkspace(bytes: Uint8Array, workerClient?: MdzArchiveWorkerClient): Promise<MdzWorkspace> {
+  return workerClient
+    ? workerClient.open(bytes, WORKSPACE_OPEN_OPTIONS)
+    : MdzArchiveCore.openWorkspace(bytes, WORKSPACE_OPEN_OPTIONS);
 }

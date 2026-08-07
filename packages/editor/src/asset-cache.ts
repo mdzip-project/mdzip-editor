@@ -238,6 +238,50 @@ export class MdzipAssetSession {
     return template.innerHTML;
   }
 
+  /**
+   * Like {@link rewriteHtml}, but embeds each image as a self-contained
+   * `data:` URL (via {@link resolveDataUrl}) instead of an object URL — the
+   * representation an external app needs, since a `blob:` URL only resolves
+   * within the tab that created it (pasting rendered content into e.g. Word
+   * is the motivating case). Processes images in small concurrent batches,
+   * yielding between them and reporting progress, rather than one
+   * `Promise.all` over every image at once — a document with thousands of
+   * images would otherwise base64-encode all of them in one synchronous
+   * burst once their promises settle.
+   */
+  public async rewriteHtmlEmbeddingImages(
+    html: string,
+    currentPath: string,
+    signal: AbortSignal,
+    onProgress?: (done: number, total: number) => void
+  ): Promise<string> {
+    const template = this.ownerDocument.createElement('template');
+    template.innerHTML = html;
+    const images = Array.from(template.content.querySelectorAll<HTMLImageElement>('img[src]'));
+    const total = images.length;
+    const BATCH_SIZE = 6;
+    const yieldToEventLoop = (): Promise<void> => new Promise((resolve) => {
+      const scheduler = this.ownerDocument.defaultView?.requestAnimationFrame;
+      if (scheduler) scheduler(() => resolve());
+      else setTimeout(resolve, 0);
+    });
+    for (let start = 0; start < images.length; start += BATCH_SIZE) {
+      if (signal.aborted) throw new DOMException('Rendering aborted.', 'AbortError');
+      const batch = images.slice(start, start + BATCH_SIZE);
+      await Promise.all(batch.map(async (image) => {
+        const source = image.getAttribute('src');
+        if (!source) return;
+        const resolved = await this.resolveDataUrl(source, currentPath);
+        if (!signal.aborted && resolved) image.setAttribute('src', resolved);
+      }));
+      onProgress?.(Math.min(start + BATCH_SIZE, total), total);
+      if (start + BATCH_SIZE >= images.length) break;
+      if (signal.aborted) throw new DOMException('Rendering aborted.', 'AbortError');
+      await yieldToEventLoop();
+    }
+    return template.innerHTML;
+  }
+
   public destroy(): void {
     this.destroyed = true;
     const urlApi = this.ownerDocument.defaultView?.URL;

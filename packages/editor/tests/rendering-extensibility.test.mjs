@@ -16,6 +16,7 @@ import {
   MdzipWorkspaceView,
   buildNewArchiveBytesWithTitle,
   defaultSafeMarkdownRenderer,
+  groupTokensIntoChunks,
   mdzipExtensionMatcher,
   mdzipPathMatcher
 } from '../dist/index.js';
@@ -134,6 +135,77 @@ test('aborted async renders reject with AbortError', async () => {
   const pending = service.renderMarkdown('# slow', renderContext({ signal: controller.signal }));
   controller.abort();
   await assert.rejects(pending, (error) => error.name === 'AbortError');
+});
+
+// --- chunked rendering (tokenizeMarkdown / groupTokensIntoChunks / renderChunk) ---
+
+const CHUNK_FIXTURE = [
+  '# Title',
+  '',
+  'First paragraph with **bold** text.',
+  '',
+  'Second paragraph referencing a [link][ref] by reference.',
+  '',
+  '```js',
+  'const x = 1;',
+  '```',
+  '',
+  '| A | B |',
+  '| --- | --- |',
+  '| 1 | 2 |',
+  '',
+  'Third paragraph after the table.',
+  '',
+  '[ref]: https://example.com "Example"',
+  ''
+].join('\n');
+
+async function renderChunkedConcat(service, markdown, context, chunkOptions) {
+  const tokens = await service.tokenizeMarkdown(markdown, context);
+  const chunks = groupTokensIntoChunks(tokens, chunkOptions);
+  const rendered = [];
+  for (const chunk of chunks) {
+    rendered.push(await service.renderChunk(chunk, context));
+  }
+  return rendered.join('');
+}
+
+test('chunked rendering (one token per chunk) byte-matches whole-document renderMarkdown()', async () => {
+  const service = new MdzipRenderingService(defaultSafeMarkdownRenderer, []);
+  const context = renderContext();
+
+  const whole = await service.renderMarkdown(CHUNK_FIXTURE, context);
+  const chunked = await renderChunkedConcat(service, CHUNK_FIXTURE, context, { tokenCap: 1 });
+
+  assert.equal(chunked, whole);
+  assert.match(chunked, /<h1>Title<\/h1>/);
+  assert.match(chunked, /href="https:\/\/example.com"/, 'reference-style link resolves even split into its own chunk');
+  assert.match(chunked, /class="hljs language-js"/, 'code fence is still syntax-highlighted');
+  assert.match(chunked, /<table>/);
+});
+
+test('chunked rendering with a per-block transformHtml extension matches whole-document output', async () => {
+  // Mirrors the shape of the mermaid extension: scans whatever HTML string
+  // it's given for a specific marker and only touches matches, independent
+  // of anything else in the document — the property chunking depends on.
+  const markMermaid = (html) => html.replace(/<pre><code class="hljs language-js">/g, '<pre class="mdzip-marked"><code class="hljs language-js">');
+  const extensions = [{ name: 'mark', transformHtml: markMermaid }];
+  const context = renderContext();
+
+  const whole = await new MdzipRenderingService(defaultSafeMarkdownRenderer, extensions)
+    .renderMarkdown(CHUNK_FIXTURE, context);
+  const chunkedService = new MdzipRenderingService(defaultSafeMarkdownRenderer, extensions);
+  const chunked = await renderChunkedConcat(chunkedService, CHUNK_FIXTURE, context, { tokenCap: 1 });
+
+  assert.equal(chunked, whole);
+  assert.match(chunked, /class="mdzip-marked"/);
+});
+
+test('tokenizeMarkdown/renderChunk reject a custom (non-default) renderer', async () => {
+  const service = new MdzipRenderingService({ render: () => '<p>custom</p>' });
+  const context = renderContext();
+  assert.throws(() => service.tokenizeMarkdown('x', context), /only supports the default marked-based renderer/);
+  assert.throws(() => service.renderChunk([], context), /only supports the default marked-based renderer/);
 });
 
 test('legacy render() keeps its synchronous contract', () => {

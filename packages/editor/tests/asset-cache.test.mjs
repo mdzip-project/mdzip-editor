@@ -141,3 +141,49 @@ test('resolveDataUrl returns a data: URL fallback regardless of object-URL suppo
   session.destroy();
   assert.equal(await session.resolveDataUrl('images/logo.png', 'index.md'), undefined);
 });
+
+test('rewriteHtmlEmbeddingImages replaces archive images with data: URLs and leaves external ones alone', async () => {
+  const dom = new JSDOM('');
+  const reads = [];
+  const assets = [
+    asset('images/first.png', new Uint8Array([1]), reads),
+    asset('images/second.png', new Uint8Array([2]), reads)
+  ];
+  const workspace = {
+    readPathBytes: async (path) => assets.find((item) => item.path === path)?.readBytes()
+  };
+  const session = new MdzipAssetSession(workspace, assets, dom.window.document);
+  const signal = new AbortController().signal;
+  const progress = [];
+
+  const html = await session.rewriteHtmlEmbeddingImages(
+    '<img src="images/first.png"><img src="images/second.png"><img src="https://example.com/external.png">',
+    'index.md',
+    signal,
+    (done, total) => progress.push([done, total])
+  );
+
+  assert.match(html, /<img src="data:image\/png;base64,AQ==">/);
+  assert.match(html, /<img src="data:image\/png;base64,Ag==">/);
+  assert.match(html, /<img src="https:\/\/example\.com\/external\.png">/, 'external image is left untouched');
+  assert.deepEqual(progress, [[3, 3]], 'progress reported once for the one batch (3 images, batch size 6)');
+  session.destroy();
+});
+
+test('rewriteHtmlEmbeddingImages aborts without embedding any images once the signal fires', async () => {
+  const dom = new JSDOM('');
+  const reads = [];
+  const assets = [asset('images/logo.png', new Uint8Array([1]), reads)];
+  const workspace = {
+    readPathBytes: async (path) => assets.find((item) => item.path === path)?.readBytes()
+  };
+  const session = new MdzipAssetSession(workspace, assets, dom.window.document);
+  const abort = new AbortController();
+  abort.abort();
+
+  await assert.rejects(
+    session.rewriteHtmlEmbeddingImages('<img src="images/logo.png">', 'index.md', abort.signal),
+    (error) => error.name === 'AbortError'
+  );
+  session.destroy();
+});
