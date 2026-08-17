@@ -4689,15 +4689,37 @@ export class MdzipWorkspaceView {
 
   private renderMetadata(snapshot: MdzipWorkspaceSnapshot): void {
     const manifest = snapshot.content.manifest;
+    const isMdz = snapshot.sourceFormat === 'mdz';
     const fields: Array<[string, string]> = [
       ['Filename', snapshot.fileName],
-      ['Format', snapshot.sourceFormat === 'mdz' ? 'MDZ package' : 'Markdown'],
+      ['Format', isMdz ? 'MDZ package' : 'Markdown'],
+      // For .mdz, archiveBytes really is what a save right now would write —
+      // current in-memory bytes, edits included, not a stale re-read of disk.
+      // For plain Markdown, archiveBytes is *not* that: it's some internally
+      // wrapped representation with its own fixed overhead (verified: a
+      // 5-byte markdown document reported 462 "archive" bytes) — use the
+      // actual text's encoded size instead, which is what a .md save writes.
+      ['Size', formatByteSize(
+        isMdz ? snapshot.archiveBytes.length : new TextEncoder().encode(snapshot.currentText).length
+      )],
       ['Document title', snapshot.displayTitle],
       ['First heading', snapshot.headingFallback ?? 'Not found'],
       ['Created', formatMetadataValue(manifest?.created)],
       ['Modified', formatMetadataValue(manifest?.modified)],
-      ['Entry point', snapshot.sourceFormat === 'mdz' ? snapshot.content.entryPoint : 'Not applicable']
+      ['Entry point', isMdz ? snapshot.content.entryPoint : 'Not applicable'],
+      ['Documents', isMdz ? String(snapshot.workspace.documents.length) : 'Not applicable'],
+      ['Assets', isMdz ? String(snapshot.workspace.assets.length) : 'Not applicable']
     ];
+    // Only shown when actually read-only — most documents are editable, and a
+    // "Read-only: No" row for the common case would just be noise. Spelled
+    // out as a filesystem condition rather than an editor state: this mode is
+    // driven entirely by the host (see MdzipWorkspaceOpenOptions.mode) — most
+    // often because a host checked the file's OS/disk permissions, as the
+    // vscode extension does — not something toggled inside the editor itself,
+    // so the wording should point users at their file, not at this UI.
+    if (snapshot.mode === 'read-only') {
+      fields.splice(1, 0, ['Read-only', 'Yes — the file on disk (or its host) is not writable']);
+    }
 
     this.elMetadataList.replaceChildren(...fields.map(([label, value]) => {
       return this.createMetadataRow(label, value);
@@ -7269,6 +7291,26 @@ function padHtmlImageBlock(
     ? ''
     : after.startsWith('\n') ? '\n' : '\n\n';
   return `${prefix}${html}${suffix}`;
+}
+
+function formatByteSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return 'Not available';
+  }
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  // One decimal below 10 of a unit (e.g. "1.4 MB"), none above (e.g. "23 MB") —
+  // matches how OS file managers commonly round these.
+  const formatted = value < 10 ? value.toFixed(1) : Math.round(value).toString();
+  return `${formatted} ${units[unitIndex]}`;
 }
 
 function formatMetadataValue(value: unknown): string {
