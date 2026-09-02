@@ -30,5 +30,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.61.0",
     "vitest": "^3.2.6"
+  },
+  "dependencies": {
+    "@mdzip/core-js": "file:../mdzip-core-js/mdzip-core-js-1.4.0.tgz"
   }
 }

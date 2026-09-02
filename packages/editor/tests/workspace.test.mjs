@@ -1871,15 +1871,17 @@ test('packFilesAsWorkspace shows the built-in dialog for multiple Markdown files
   });
 
   try {
-    // The dialog is part of render(), which no-ops until a workspace is
-    // open (same reason every image-insert dialog test opens a document
-    // first) — packFilesAsWorkspace can build a document with nothing open,
-    // but showing the *dialog* needs an active view first.
-    await view.open(await buildNewArchiveBytesWithTitle('# Placeholder\n', 'Placeholder'), {
-      mode: 'editable',
-      fileName: 'placeholder.mdz'
-    });
-
+    // Deliberately no view.open() first: this is the real host scenario (a
+    // fresh view deciding how to create a workspace, e.g. mdzip-vscode's
+    // convertFolderToMdz) — the dialog must show with nothing open yet.
+    // Regression test for a real bug (found 2026-08-19 via mdzip-vscode
+    // integration testing): render()'s no-snapshot early return used to sit
+    // *before* the pack-files-dialog visibility toggle, so packFilesAsWorkspace
+    // set its dialog state correctly but the DOM never reflected it — the
+    // empty-state placeholder stayed up and the promise hung forever. This
+    // test used to work around exactly that by opening a placeholder workspace
+    // first, rationalizing the workaround as "showing the dialog needs an
+    // active view first" — that was the bug's symptom, not a real requirement.
     const pending = view.packFilesAsWorkspace(multiMarkdownFiles());
     await new Promise((resolve) => setTimeout(resolve, 0));
 

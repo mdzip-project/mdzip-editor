@@ -3685,6 +3685,24 @@ export class MdzipWorkspaceView {
     this.elEmptyState.hidden = snapshot !== null;
     this.elWorkspaceShell.hidden = snapshot === null;
 
+    // Must run before the no-snapshot early return below: the pack-files dialog is
+    // deciding how to create a workspace, so it opens (via openPackFilesDialog ->
+    // render()) precisely when no workspace exists yet. Bug found 2026-08-19 —
+    // this used to live after the return, making it dead code for this dialog's
+    // entire lifetime; the dialog's state was set correctly but never reached the
+    // DOM, leaving the empty-state placeholder showing and the caller's promise
+    // hanging forever.
+    this.elPackFilesDialog.hidden = this.packFilesDialogState === null;
+    if (this.packFilesDialogState) {
+      const { request } = this.packFilesDialogState;
+      this.elPackFilesEntrySelect.innerHTML = request.markdownFiles
+        .map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`)
+        .join('');
+      this.elPackFilesEntrySelect.value = request.suggestedEntryPoint;
+      this.elPackFilesModeDocument.checked = true;
+      this.elPackFilesModeProject.checked = false;
+    }
+
     if (!snapshot) {
       this.elDocumentStrip.hidden = true;
       this.elToolbar.hidden = true;
@@ -3880,16 +3898,6 @@ export class MdzipWorkspaceView {
         : '';
       this.elImageInsertPositionSelect.value = 'inline';
       this.updateImageInsertOptionControls();
-    }
-    this.elPackFilesDialog.hidden = this.packFilesDialogState === null;
-    if (this.packFilesDialogState) {
-      const { request } = this.packFilesDialogState;
-      this.elPackFilesEntrySelect.innerHTML = request.markdownFiles
-        .map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p)}</option>`)
-        .join('');
-      this.elPackFilesEntrySelect.value = request.suggestedEntryPoint;
-      this.elPackFilesModeDocument.checked = true;
-      this.elPackFilesModeProject.checked = false;
     }
     this.elCopyRenderDialog.hidden = this.copyRenderDialogState === null
       && this.copyReadyState === null
