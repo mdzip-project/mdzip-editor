@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.4.0] - 2026-09-08
+
+### Added
+- Document-statistics helpers, exported from the package root:
+  `computeDocumentStats(text)` returns
+  `{ words, characters, charactersNoSpaces, lines, readingTimeMinutes }`
+  (`MdzipDocumentStats`), alongside `MDZIP_DEFAULT_READING_WORDS_PER_MINUTE`
+  (200) and the underlying `countWords` / `countLines` /
+  `countCharactersExcludingWhitespace`. Operates on raw Markdown source (e.g.
+  `MdzipWorkspaceSnapshot.currentText`) for a live word / character /
+  reading-time readout in the host UI.
+- The document-info panel shows more for `.mdz` archives: on-disk **Size**,
+  **Documents** and **Assets** counts, and a **Read-only** row when the host
+  opened the file read-only. Plain-Markdown **Size** reports the encoded text
+  length (what a `.md` save actually writes), not the wrapped archive
+  representation.
+- Editor content inside fenced/indented code blocks, inline code spans, and
+  link/image URLs is marked `spellcheck="false"`, so the browser spellchecker
+  stops underlining shell syntax, filenames, and paths.
+
+### Changed
+- `@mdzip/core-js` updated to 1.5.0. Image-reference extraction now delegates
+  to `MdzArchiveCore.extractImageReferences` instead of a private in-package
+  copy of the regexes, and archive DEFLATE goes through `fflate` (via
+  core-js), removing a large per-call `CompressionStream` overhead in
+  Electron / VS Code webviews.
+
+### Fixed
+- The built-in "pack files" dialog could stay visible after the workspace was
+  closed; its visibility now tracks whether a workspace is open.
+
 ## [1.3.21] - 2026-07-24
 
 ### Added

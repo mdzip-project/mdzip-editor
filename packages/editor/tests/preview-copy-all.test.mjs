@@ -1036,8 +1036,11 @@ test('syncScrollToPreviewBottom shows a progress toast past a debounce, then hid
     const drainPromise = view.syncScrollToPreviewBottom();
     assert.equal(view.elCopyToast.hidden, true, 'debounce has not elapsed yet');
 
-    await wait(260);
-    assert.equal(view.elCopyToast.hidden, false, 'toast appears once the wait clears the debounce');
+    // The toast is debounced by 200ms; poll for it rather than waiting a fixed
+    // interval just over that, so a congested event loop (the whole suite
+    // running at once) can't race the assertion.
+    for (let i = 0; view.elCopyToast.hidden && i < 40; i++) await wait(50);
+    assert.equal(view.elCopyToast.hidden, false, 'toast appears once the debounce elapses');
     assert.match(view.elCopyToast.textContent, /Catching up the preview/);
 
     await drainPromise;
