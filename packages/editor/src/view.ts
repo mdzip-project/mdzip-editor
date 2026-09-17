@@ -118,6 +118,7 @@ import {
   type MdzipRenderHandle,
   type Token
 } from './rendering.js';
+import { mdzipFrontMatterExtension, type MdzipFrontMatterOptions } from './front-matter-extension.js';
 import { WORKSPACE_CSS } from './view-css.js';
 import type { MdzipWorkspaceSnapshot } from './workspace.js';
 
@@ -733,6 +734,14 @@ export interface MdzipWorkspaceViewOptions {
    * the fallback. Handles are destroyed on selection change and destroy().
    */
   entryRenderers?: readonly MdzipEntryRenderer[];
+  /**
+   * Controls how a leading `---`-delimited YAML front matter block renders
+   * in the preview — display (table/raw), the collapsible expander, and its
+   * label. Unlike `markdownExtensions` (which is entirely opt-in), front
+   * matter handling is always registered; this only configures it. See
+   * {@link MdzipFrontMatterOptions}.
+   */
+  frontMatter?: MdzipFrontMatterOptions;
 }
 
 /** Options accepted by {@link MdzipWorkspaceView.setRenderingOptions}. */
@@ -741,6 +750,7 @@ export interface MdzipRenderingOptions {
   markdownRenderer?: MdzipMarkdownRenderer | null;
   markdownExtensions?: readonly MdzipMarkdownRenderExtension[];
   entryRenderers?: readonly MdzipEntryRenderer[];
+  frontMatter?: MdzipFrontMatterOptions;
 }
 
 const ALL_HEADINGS: MdzipHeadingLevel[] = [1, 2, 3, 4, 5, 6];
@@ -1667,6 +1677,7 @@ export class MdzipWorkspaceView {
 
   private markdownRenderer?: MdzipMarkdownRenderer;
   private markdownExtensions: readonly MdzipMarkdownRenderExtension[] = [];
+  private frontMatterOptions: MdzipFrontMatterOptions = {};
   private entryRenderers: readonly MdzipEntryRenderer[] = [];
   private renderingService = new MdzipRenderingService();
   // Preview render memo: the preview pipeline only re-runs when one of these
@@ -1792,10 +1803,11 @@ export class MdzipWorkspaceView {
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
     this.markdownRenderer = options.markdownRenderer;
     this.markdownExtensions = options.markdownExtensions ?? [];
+    this.frontMatterOptions = options.frontMatter ?? {};
     this.entryRenderers = options.entryRenderers ?? [];
     this.renderingService = new MdzipRenderingService(
       this.markdownRenderer ?? defaultSafeMarkdownRenderer,
-      this.markdownExtensions
+      this.pipelineMarkdownExtensions()
     );
     injectStyles(container.ownerDocument);
     container.replaceChildren();
@@ -2262,17 +2274,33 @@ export class MdzipWorkspaceView {
     if (options.markdownExtensions) {
       this.markdownExtensions = options.markdownExtensions;
     }
+    if (options.frontMatter) {
+      this.frontMatterOptions = options.frontMatter;
+    }
     if (options.entryRenderers) {
       this.entryRenderers = options.entryRenderers;
     }
     this.renderingService = new MdzipRenderingService(
       this.markdownRenderer ?? defaultSafeMarkdownRenderer,
-      this.markdownExtensions
+      this.pipelineMarkdownExtensions()
     );
     this.resetPreviewState();
     this.teardownEntryRenderer();
     this.entryMatchMissKey = null;
     this.render();
+  }
+
+  /**
+   * The extensions actually handed to `MdzipRenderingService`: the front
+   * matter extension first (always on — see `frontMatterOptions`), then
+   * whatever extensions the host passed via `markdownExtensions`. A fresh
+   * front matter extension instance is created each time this runs (view
+   * construction, `setRenderingOptions`), which is fine — its per-render
+   * state lives in a `WeakMap` keyed by the render context, not on the
+   * extension instance across renders.
+   */
+  private pipelineMarkdownExtensions(): readonly MdzipMarkdownRenderExtension[] {
+    return [mdzipFrontMatterExtension(this.frontMatterOptions), ...this.markdownExtensions];
   }
 
   /**

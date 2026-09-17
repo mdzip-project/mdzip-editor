@@ -388,6 +388,41 @@ CSP-restricted host, mermaid bundles into the consumer's webview script (no new
 `img-src` needs); if you lazy-load its chunk, serve it under the existing
 `script-src` nonce.
 
+### Front matter
+
+A leading `---`-delimited YAML block is recognized automatically — no
+`markdownExtensions` wiring needed — and no longer falls through to `marked`
+as a stray `<hr>` plus paragraph/setext heading. Control how it renders with
+`frontMatter`:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  frontMatter: {
+    enabled: true,        // default; false strips it with nothing rendered in its place
+    display: 'table',     // default; 'raw' shows the YAML source as a syntax-highlighted code block
+    collapsible: true,    // default; false renders a static, always-visible block (no collapse toggle)
+    label: 'Front matter' // default; a custom string, or the sentinel 'first-line' — see below
+  }
+});
+```
+
+- `display: 'table'` (default) — a key/value table. `'raw'` — the block's YAML
+  source as a fenced, syntax-highlighted `yaml` code block. Either way the
+  panel is wrapped the same: same header, same expand/collapse behavior.
+- `collapsible: false` turns off the collapsible `<details>` wrapper,
+  rendering a static block with the same header and body instead.
+- `label` sets the header text — a fixed string (`'Front Matter'`, `'Metadata'`,
+  etc.), or the sentinel `'first-line'` to use the block's own first raw YAML
+  line instead (e.g. `title: My Document`), falling back to the default label
+  when that line is blank.
+- `enabled: false` strips the block with nothing rendered in its place.
+
+`setRenderingOptions({ frontMatter })` updates it live. A manifest-less
+`.md` file's front matter `title:` also feeds the title-fallback chain
+(`suggestedTitleFromMarkdown`), ahead of the first heading and filename. The
+parser itself (`parseFrontMatter`, DOM-free) is exported from the package
+root for hosts that want the raw data without the render extension.
+
 ## Developer Guide
 
 See the [Developer Guide](https://github.com/mdzip-project/mdzip-editor/blob/main/docs/developer-guide.md)

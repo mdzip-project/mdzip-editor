@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- Front matter rendering: a leading `---`-delimited YAML block is now parsed
+  (`parseFrontMatter`, exported from the package root) and no longer falls
+  through to `marked` as a stray `<hr>` plus paragraph/setext heading. The
+  new `mdzipFrontMatterExtension` is registered by default in
+  `MdzipWorkspaceView` (no host wiring needed), configurable via the new
+  `frontMatter` option (also settable live via `setRenderingOptions`):
+  `enabled` (default `true`; `false` strips it with nothing rendered in its
+  place), `display` (`'table'` default, or `'raw'` for a syntax-highlighted
+  fenced `yaml` code block), `collapsible` (default `true` for a collapsible
+  `<details>`; `false` for a static always-visible block), and `label` (the
+  header text — a custom string, or the `'first-line'` sentinel to use the
+  block's own first raw YAML line). A manifest-less `.md` file's `title:`
+  front matter field also feeds `suggestedTitleFromMarkdown`, ahead of the
+  first heading and filename fallbacks. Uses `js-yaml` for parsing. Closes #43.
+  The same `frontMatter` config is now also exposed as a prop/input on the
+  `editor-react`, `editor-vue`, and `editor-ng` wrappers (diffed by deep
+  equality, applied in place — never a workspace rebuild).
+
 ## [1.4.0] - 2026-09-08
 
 ### Added

@@ -14,6 +14,7 @@ import type {
   MdzipEditorSnapshot,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
+  MdzipFrontMatterOptions,
   MdzipImageEditHandler,
   MdzipImageHydrationAnimation,
   MdzipImageInsertHandler,
@@ -49,11 +50,15 @@ export type MdzipRenderEntry = (context: MdzipEntryRenderContext) => ReactNode |
 // array literals with equivalent contents never trigger an update.
 function renderingConfigKey(
   extensions: readonly MdzipMarkdownRenderExtension[] | undefined,
-  entryRenderers: readonly MdzipEntryRenderer[] | undefined
+  entryRenderers: readonly MdzipEntryRenderer[] | undefined,
+  frontMatter: MdzipFrontMatterOptions | undefined
 ): string {
   return JSON.stringify([
     (extensions ?? []).map((extension) => extension.name),
     (entryRenderers ?? []).map((renderer) => [renderer.id, renderer.priority ?? 0]),
+    // frontMatter carries no functions, so plain deep equality via
+    // JSON.stringify is enough — no need for the name/id treatment above.
+    frontMatter ?? null,
   ]);
 }
 
@@ -187,6 +192,14 @@ export interface MdzipWorkspaceProps {
   /** Entry renderers, diffed by `id`/`priority` — inline arrays are safe. */
   entryRenderers?: readonly MdzipEntryRenderer[];
   /**
+   * Controls how a leading `---`-delimited YAML front matter block renders
+   * in the preview — display (table/raw), the collapsible expander, and its
+   * label. Front matter handling is always registered (unlike
+   * `markdownExtensions`); this only configures it. Diffed by deep equality
+   * — inline object literals are safe.
+   */
+  frontMatter?: MdzipFrontMatterOptions;
+  /**
    * Catch-all entry render function. Return a React node to claim the
    * selected entry's content area, or `undefined` to delegate to
    * `entryRenderers` and the built-in rendering. The wrapper owns the React
@@ -260,6 +273,7 @@ function MdzipWorkspace({
   markdownRenderer,
   markdownExtensions,
   entryRenderers,
+  frontMatter,
   renderEntry,
   renderEntryPriority,
 }, forwardedRef) {
@@ -323,11 +337,12 @@ function MdzipWorkspace({
 
   // Latest rendering props, read at view-create and apply time so prop
   // identity changes alone never rebuild the workspace view.
-  const renderingRef = useRef({ markdownRenderer, markdownExtensions, entryRenderers, renderEntry });
-  renderingRef.current = { markdownRenderer, markdownExtensions, entryRenderers, renderEntry };
+  const renderingRef = useRef({ markdownRenderer, markdownExtensions, entryRenderers, frontMatter, renderEntry });
+  renderingRef.current = { markdownRenderer, markdownExtensions, entryRenderers, frontMatter, renderEntry };
   const renderingKey = renderingConfigKey(
     markdownExtensions,
-    composeEntryRenderers(entryRenderers, adapterRef.current, renderEntry)
+    composeEntryRenderers(entryRenderers, adapterRef.current, renderEntry),
+    frontMatter
   );
 
   // Keep the mounted entry content live with parent state: every commit
@@ -413,6 +428,7 @@ function MdzipWorkspace({
         adapterRef.current!,
         renderingRef.current.renderEntry
       ),
+      frontMatter: renderingRef.current.frontMatter,
     });
     viewRef.current = view;
     if (firstCreateRef.current) {
@@ -495,6 +511,10 @@ function MdzipWorkspace({
         adapterRef.current!,
         renderingRef.current.renderEntry
       ),
+      // Explicit {} fallback (not undefined) so removing the prop resets to
+      // the view's own default rather than leaving the last value in place —
+      // setRenderingOptions only touches fields it's actually given.
+      frontMatter: renderingRef.current.frontMatter ?? {},
     });
   }, [markdownRenderer, renderingKey]);
 

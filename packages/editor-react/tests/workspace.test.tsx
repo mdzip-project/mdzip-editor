@@ -137,6 +137,21 @@ test('inline prop identities with stable ids never recreate or re-apply', () => 
     .toEqual(['changed', 'mdzip-react-render-entry']);
 });
 
+test('frontMatter prop reaches the view at creation and re-applies on deep-equality change', () => {
+  const { rerender } = render(<MdzipWorkspace frontMatter={{ display: 'raw' }} />);
+  const view = latestView();
+  expect(view.options['frontMatter']).toEqual({ display: 'raw' });
+
+  // A new object with equal contents must not trigger an update.
+  rerender(<MdzipWorkspace frontMatter={{ display: 'raw' }} />);
+  expect(view.setRenderingOptions).not.toHaveBeenCalled();
+
+  rerender(<MdzipWorkspace frontMatter={{ display: 'raw', collapsible: false, label: 'Metadata' }} />);
+  expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
+  const applied = view.setRenderingOptions.mock.calls[0][0] as { frontMatter: unknown };
+  expect(applied.frontMatter).toEqual({ display: 'raw', collapsible: false, label: 'Metadata' });
+});
+
 test('controls, density, and image animation props update in place', () => {
   const before = { preset: 'standalone-editor', lineNumbers: true } as const;
   const after = { preset: 'standalone-editor', lineNumbers: false } as const;

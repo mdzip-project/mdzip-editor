@@ -99,6 +99,7 @@ showUnchanged? }`) to opt any of them out.
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — inline arrays are safe |
 | `renderEntry` | `(context) => ReactNode \| undefined` | — | Catch-all entry renderer: return a node to claim the selected entry, `undefined` to delegate |
 | `renderEntryPriority` | `number` | `0` | Matching priority of `renderEntry` relative to `entryRenderers` |
+| `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; inline objects are safe |
 
 `controls`, density, `imageHydrationAnimation`, and rendering prop changes apply in
 place — they never recreate the workspace view. Line-number visibility changes

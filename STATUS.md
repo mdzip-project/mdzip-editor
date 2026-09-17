@@ -1,34 +1,46 @@
 Status: ready-to-commit
-Last: Implemented click-to-edit for existing images (closes #39)
+Last: Renamed the front matter option expandable to collapsible (feedback)
 
-Clicking an existing image reference (Markdown `![]()` or raw HTML `<img>`,
-incl. `<p align>`-wrapped) in the source editor now shows a small edit
-affordance; clicking it invokes a new opt-in `imageEditHandler` hook with
-the image's current alt/width/height/position, and rewrites that exact
-reference in place with the returned decision (reuses `imageInsertHandler`'s
-decision shape, per the issue). Fully opt-in like the issue's acceptance
-criteria specify — no handler set means no affordance ever appears, no
-built-in fallback dialog (scope decision, confirmed with the human).
+Front matter parsing + configurable rendering is implemented across
+`@mdzip/editor` core and the `editor-react`/`editor-vue`/`editor-ng`
+wrappers (see prior entries in this file's history / CHANGELOG.md's
+Unreleased section): `enabled` / `display` (table|raw) / `collapsible` /
+`label` (custom string or the `'first-line'` sentinel).
 
-New `packages/editor/src/image-edit.ts`: offset-aware parser using the
-Lezer markdown syntax tree (`Image`/`URL`/`LinkMark` nodes for Markdown,
-`HTMLBlock`/`HTMLTag` + a small attribute regex for raw HTML) plus
-`formatImageEditMarkdown`. `view.ts` adds a click-triggered
-`Decoration.widget` affordance, `MdzipImageEditRequest`/`MdzipImageEditHandler`
-types, `setImageEditOptions()`, and `openImageEditFlow()` (with a
-revalidate-before-apply guard against the doc changing while the handler's
-promise is pending). Wired through `editor-ng`/`editor-react`/`editor-vue`
-identically to `imageInsertHandler`. `mdzip.org`'s editor-demo got a real
-interactive host dialog (`editor-demo/app/src/image-edit-dialog.ts`) behind
-a new "Image edit (host dialog)" Settings toggle, so the feature is
-click-through-able in a browser, not just unit tested.
+Kyle's feedback on the naming: "expandable doesn't make sense, the option is
+really if it is collapsable or not." Renamed `expandable` -> `collapsible`
+(same boolean semantics — `true` default wraps the panel in `<details>`,
+`false` renders a static block; no value inversion, just the name). It's a
+real accuracy fix, not just cosmetic: the panel starts *open*, so "can this
+be collapsed" describes the actual affordance better than "can this be
+expanded" (which implies starting closed).
 
-Verified: full test suite (195 + 29 editor tests, plus editor-ng/-react/-vue
-suites) and lint/typecheck all pass; also drove the actual demo end-to-end
-with Playwright (dev server + headless Chromium) — affordance appears only
-when the handler is set, dialog pre-fills correctly, both Markdown and
-HTML+size+position rewrites land correctly, no console errors. READMEs
-updated (editor, editor-ng, editor-react, editor-vue). Not yet committed.
+Renamed everywhere the field name appears as an identifier or in prose:
+`packages/editor/src/front-matter-extension.ts` (the option itself + the
+`renderPanel` check), its test file, all three wrapper README prop tables
+and test files (`expandable: false` -> `collapsible: false` in the
+passthrough-test object literals), and the root CHANGELOG.md entry. The
+wrapper packages' own source needed no changes — `frontMatter` passes
+through them as an opaque `MdzipFrontMatterOptions`, so the field name never
+appears as an identifier there. Also renamed throughout
+`mdzip.org/editor-demo/app` (checkbox id `frontmatter-expandable-toggle` ->
+`frontmatter-collapsible-toggle`, its label "FM expandable" -> "FM
+collapsible", `DemoFrontMatterChoice.expandable` -> `.collapsible`, and the
+matching state var/listener/status-line text in `main.ts`).
+
+Verified: full editor suite (`node --test` incl. all 15 front-matter cases)
+and vitest pass; editor-react/-vue/-ng each pass their existing suite plus
+the renamed `frontMatter` passthrough test; `vite build --base ./` for
+editor-demo/app succeeds (same three pre-existing, unrelated `tsc --noEmit`
+artifacts as before — Uint8Array generics, a duplicate-Vue-copy prop-type
+blowup from linking, vite.config.ts's `node:url` types — none block the
+actual esbuild-based build). Confirmed via Playwright against both the dev
+server and the IIS site: the new `#frontmatter-collapsible-toggle` id is
+present and working (toggling it switches the default-loaded
+developer-guide.mdz's front matter panel between `<details>` and the static
+`<div>` variant), the old `#frontmatter-expandable-toggle` id is gone. Not
+yet committed — layered on top of the already-uncommitted front matter work
+from earlier in this session.
 
 <!-- Dashboard reads these two lines.
      Status: idle | in-progress | awaiting-test | ready-to-commit | blocked

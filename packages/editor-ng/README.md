@@ -105,6 +105,7 @@ showUnchanged? }`) to opt any of them out.
 | `markdownRenderer` | `MdzipMarkdownRenderer` | — | Custom markdown renderer (keep the reference stable) |
 | `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — new array identities with the same names are safe |
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — new array identities with the same ids are safe |
+| `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; new object identities with equal contents are safe |
 
 `controls`, density, `imageHydrationAnimation`, and rendering input changes apply in
 place — they never recreate the workspace view. Line-number visibility changes

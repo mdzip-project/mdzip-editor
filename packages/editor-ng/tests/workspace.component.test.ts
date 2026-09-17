@@ -179,6 +179,26 @@ test('identity changes with stable ids never recreate or re-apply', () => {
   expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
 });
 
+test('frontMatter input reaches the view at creation and re-applies on deep-equality change', () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.componentRef.setInput('frontMatter', { display: 'raw' });
+  fixture.detectChanges();
+  const view = latestView();
+  expect(view.options['frontMatter']).toEqual({ display: 'raw' });
+
+  // A new object with equal contents must not trigger an update.
+  fixture.componentRef.setInput('frontMatter', { display: 'raw' });
+  fixture.detectChanges();
+  expect(view.setRenderingOptions).not.toHaveBeenCalled();
+
+  fixture.componentRef.setInput('frontMatter', { display: 'raw', collapsible: false, label: 'Metadata' });
+  fixture.detectChanges();
+  expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
+  const applied = view.setRenderingOptions.mock.calls[0][0] as { frontMatter: unknown };
+  expect(applied.frontMatter).toEqual({ display: 'raw', collapsible: false, label: 'Metadata' });
+});
+
 test('setColorScheme updates the live view without recreating it', () => {
   TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
   const fixture = TestBed.createComponent(MdzipWorkspaceComponent);

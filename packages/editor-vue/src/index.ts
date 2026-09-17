@@ -29,6 +29,7 @@ import type {
   MdzipEditorCommand,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
+  MdzipFrontMatterOptions,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
   MdzipImageEditHandler,
@@ -55,11 +56,15 @@ import type {
 // array bindings with equivalent contents never trigger an update.
 function renderingConfigKey(
   extensions: readonly MdzipMarkdownRenderExtension[],
-  entryRenderers: readonly MdzipEntryRenderer[]
+  entryRenderers: readonly MdzipEntryRenderer[],
+  frontMatter: MdzipFrontMatterOptions
 ): string {
   return JSON.stringify([
     extensions.map((extension) => extension.name),
     entryRenderers.map((renderer) => [renderer.id, renderer.priority ?? 0]),
+    // frontMatter carries no functions, so plain deep equality via
+    // JSON.stringify is enough — no need for the name/id treatment above.
+    frontMatter,
   ]);
 }
 
@@ -187,6 +192,17 @@ export const MdzipWorkspace = defineComponent({
     entryRenderers: {
       type: Array as PropType<readonly MdzipEntryRenderer[]>,
       default: () => []
+    },
+    /**
+     * Controls how a leading `---`-delimited YAML front matter block renders
+     * in the preview — display (table/raw), the collapsible expander, and
+     * its label. Front matter handling is always registered (unlike
+     * `markdownExtensions`); this only configures it. Diffed by deep
+     * equality — inline object literals are safe.
+     */
+    frontMatter: {
+      type: Object as PropType<MdzipFrontMatterOptions>,
+      default: () => ({})
     },
     /** Matching priority of the `#entry` slot relative to `entryRenderers`. */
     entrySlotPriority: { type: Number, default: 0 },
@@ -327,6 +343,7 @@ export const MdzipWorkspace = defineComponent({
         markdownRenderer: props.markdownRenderer ?? undefined,
         markdownExtensions: props.markdownExtensions,
         entryRenderers: composedEntryRenderers(),
+        frontMatter: props.frontMatter,
       });
       if (props.workspace) {
         void view.openWorkspace(props.workspace, {
@@ -407,7 +424,7 @@ export const MdzipWorkspace = defineComponent({
     watch(
       () => [
         props.markdownRenderer,
-        renderingConfigKey(props.markdownExtensions, composedEntryRenderers())
+        renderingConfigKey(props.markdownExtensions, composedEntryRenderers(), props.frontMatter)
       ] as const,
       ([renderer, key], previous) => {
         if (previous && renderer === previous[0] && key === previous[1]) {
@@ -417,6 +434,7 @@ export const MdzipWorkspace = defineComponent({
           markdownRenderer: renderer ?? null,
           markdownExtensions: props.markdownExtensions,
           entryRenderers: composedEntryRenderers(),
+          frontMatter: props.frontMatter,
         });
       }
     );

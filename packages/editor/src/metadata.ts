@@ -1,7 +1,19 @@
+import { parseFrontMatter } from './front-matter.js';
+
 /** Extract the first ATX heading, for example `# Title`, from markdown text. */
 export function firstMarkdownHeading(markdown: string): string | undefined {
   const match = markdown.match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m);
   return match?.[1]?.trim();
+}
+
+/** Extract a non-empty string `title:` from a leading front matter block, if any. */
+function frontMatterTitle(markdown: string): string | undefined {
+  const title = parseFrontMatter(markdown)?.data.title;
+  if (typeof title !== 'string') {
+    return undefined;
+  }
+  const trimmed = title.trim();
+  return trimmed || undefined;
 }
 
 /** Derive the file base name, without extension, from a path string. */
@@ -11,9 +23,9 @@ export function fileBaseNameFromPath(path: string): string {
   return fileName.replace(/\.[^.]+$/, '') || 'document';
 }
 
-/** Resolve a stable title fallback from markdown heading or filename. */
+/** Resolve a stable title fallback from front matter `title:`, markdown heading, or filename. */
 export function suggestedTitleFromMarkdown(markdown: string, fileBaseName: string): string {
-  return firstMarkdownHeading(markdown) || fileBaseName;
+  return frontMatterTitle(markdown) || firstMarkdownHeading(markdown) || fileBaseName;
 }
 
 /** Resolve display title from manifest title with filename fallback. */

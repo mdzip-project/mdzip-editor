@@ -32,6 +32,7 @@ import type {
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
   MdzipEntryRenderer,
+  MdzipFrontMatterOptions,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
   MdzipImageEditHandler,
@@ -57,11 +58,15 @@ import type {
 // trigger an update.
 function renderingConfigKey(
   extensions: readonly MdzipMarkdownRenderExtension[],
-  entryRenderers: readonly MdzipEntryRenderer[]
+  entryRenderers: readonly MdzipEntryRenderer[],
+  frontMatter: MdzipFrontMatterOptions
 ): string {
   return JSON.stringify([
     extensions.map((extension) => extension.name),
     entryRenderers.map((renderer) => [renderer.id, renderer.priority ?? 0]),
+    // frontMatter carries no functions, so plain deep equality via
+    // JSON.stringify is enough — no need for the name/id treatment above.
+    frontMatter,
   ]);
 }
 
@@ -132,6 +137,14 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() markdownExtensions: readonly MdzipMarkdownRenderExtension[] = [];
   /** Entry renderers, diffed by `id`/`priority`. */
   @Input() entryRenderers: readonly MdzipEntryRenderer[] = [];
+  /**
+   * Controls how a leading `---`-delimited YAML front matter block renders
+   * in the preview — display (table/raw), the collapsible expander, and its
+   * label. Front matter handling is always registered (unlike
+   * `markdownExtensions`); this only configures it. Diffed by deep equality
+   * — object literals produced fresh each change-detection cycle are safe.
+   */
+  @Input() frontMatter: MdzipFrontMatterOptions = {};
   @Output() readonly changed = new EventEmitter<MdzipWorkspaceChange>();
   @Output() readonly saved = new EventEmitter<MdzipWorkspaceSave>();
   @Output() readonly workspaceChanged = new EventEmitter<MdzipDocumentChangeEvent>();
@@ -208,7 +221,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       this.syncView();
     }
     if (this.view && (changes['markdownRenderer'] || changes['markdownExtensions']
-      || changes['entryRenderers'])) {
+      || changes['entryRenderers'] || changes['frontMatter'])) {
       this.applyRenderingOptions(Boolean(changes['markdownRenderer']));
     }
   }
@@ -354,8 +367,9 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       markdownRenderer: this.markdownRenderer,
       markdownExtensions: this.markdownExtensions,
       entryRenderers: this.composedEntryRenderers(),
+      frontMatter: this.frontMatter,
     });
-    this.renderingKey = renderingConfigKey(this.markdownExtensions, this.composedEntryRenderers());
+    this.renderingKey = renderingConfigKey(this.markdownExtensions, this.composedEntryRenderers(), this.frontMatter);
   }
 
   private composedEntryRenderers(): readonly MdzipEntryRenderer[] {
@@ -370,7 +384,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   // that produce new array identities each cycle are safe.
   private applyRenderingOptions(rendererChanged: boolean): void {
     const composed = this.composedEntryRenderers();
-    const key = renderingConfigKey(this.markdownExtensions, composed);
+    const key = renderingConfigKey(this.markdownExtensions, composed, this.frontMatter);
     if (!rendererChanged && key === this.renderingKey) {
       return;
     }
@@ -379,6 +393,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       markdownRenderer: this.markdownRenderer ?? null,
       markdownExtensions: this.markdownExtensions,
       entryRenderers: composed,
+      frontMatter: this.frontMatter,
     });
   }
 }

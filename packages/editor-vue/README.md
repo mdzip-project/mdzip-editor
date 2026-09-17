@@ -103,6 +103,7 @@ prop (`{ navigation?, changeTraversal?, showUnchanged? }`) to opt any out.
 | `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — inline arrays are safe |
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — inline arrays are safe |
 | `entrySlotPriority` | `number` | `0` | Matching priority of the `#entry` slot relative to `entryRenderers` |
+| `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; inline objects are safe |
 
 `controls`, density, `imageHydrationAnimation`, and rendering prop changes apply in
 place — they never recreate the workspace view. Line-number visibility changes

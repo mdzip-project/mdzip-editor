@@ -1443,6 +1443,50 @@ export const WORKSPACE_CSS = `
   }
 }
 
+.mdzip-root .preview-content .mdzip-frontmatter {
+  margin: 0 0 1em 0;
+  border: 1px solid var(--mdzip-border-color);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.mdzip-root .preview-content .mdzip-frontmatter-summary {
+  padding: 6px 12px;
+  background: var(--mdzip-widget-background-color);
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 0.8em;
+  border-bottom: 1px solid var(--mdzip-border-color);
+}
+
+/* Only the collapsible (<details>) variant is interactive — the static
+   variant's header is a plain <div>, never clickable. */
+.mdzip-root .preview-content details.mdzip-frontmatter > .mdzip-frontmatter-summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.mdzip-root .preview-content .mdzip-frontmatter-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mdzip-root .preview-content .mdzip-frontmatter-table th,
+.mdzip-root .preview-content .mdzip-frontmatter-table td {
+  padding: 4px 12px;
+  border: none;
+  text-align: left;
+  vertical-align: top;
+  font-size: 0.85em;
+}
+
+.mdzip-root .preview-content .mdzip-frontmatter-table th {
+  width: 1%;
+  white-space: nowrap;
+  color: var(--mdzip-muted-foreground-color);
+  font-weight: 600;
+  background: none;
+}
+
 .mdzip-root .preview-content .mdzip-mermaid {
   display: flex;
   justify-content: center;
