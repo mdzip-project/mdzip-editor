@@ -109,6 +109,7 @@ import {
   MdzipRenderingService,
   defaultSafeMarkdownRenderer,
   groupTokensIntoChunks,
+  chunkSourceKey,
   type MdzipEntryRenderContext,
   type MdzipEntryRenderHandle,
   type MdzipEntryRenderer,
@@ -1490,6 +1491,21 @@ interface MdzipPreviewMemo {
   colorScheme: MdzipColorScheme;
 }
 
+// One chunk's mounted state, keyed by its source text (`chunkSourceKey`) so a
+// same-document text edit can tell which chunks are unaffected. `root`/`html`
+// are null until the chunk is actually mounted (it may still be waiting in
+// the lazy-load tail under progressive rendering). `handles` are that
+// chunk's own extension/code-block-control handles — kept separate from the
+// view's flat `previewHandles` array so an unaffected chunk's handles are
+// never destroyed when a sibling chunk is replaced.
+interface MdzipChunkRecord {
+  key: string;
+  tokens: readonly Token[];
+  root: HTMLElement | null;
+  html: string | null;
+  handles: MdzipRenderHandle[];
+}
+
 // Browsers apply raw HTML width/height attributes as presentational sizing
 // hints, but the preview's `img { height: auto }` rule (for responsive
 // scaling) overrides that hint via the normal CSS cascade — so an author's
@@ -1559,19 +1575,40 @@ export class MdzipWorkspaceView {
   } | null = null;
   // Tracks an in-progress progressive (chunked) preview render so Copy All
   // can force-drain whatever's left unmounted. `cursor` is how many of
-  // `chunks` are mounted so far; null once everything's mounted (or when
+  // `records` are mounted so far; null once everything's mounted (or when
   // progressive rendering isn't active at all) — that's Copy All's signal
   // to skip the dialog and copy instantly. `sentinelHandle` is the
   // scroll-driven continuation's IntersectionObserver, if one is currently
   // armed; Copy All tears it down before manually draining so the two don't
   // race and double-mount the same chunk.
+  //
+  // Each record carries its own mounted DOM root and extension/code-block
+  // handles (rather than those living only in the flat `previewHandles`
+  // array below) so that a same-document text edit can reconcile against the
+  // *previous* render's records: chunks whose `chunkSourceKey` didn't change
+  // keep their existing `root`/`handles` untouched — see
+  // `applyChunkReconciliation`.
   private chunkedRenderState: {
-    chunks: readonly Token[][];
+    records: MdzipChunkRecord[];
     cursor: number;
     context: MdzipMarkdownRenderContext;
     generation: number;
     animateImageHydration: boolean;
     sentinelHandle: MdzipRenderHandle | null;
+    // True while an edit-triggered batch mount (the initial cold-start batch,
+    // or a reconciliation's replacement middle range) is in flight for this
+    // generation — as opposed to a scroll-triggered sentinel continuation,
+    // which mounts an independent, non-overlapping range and is safe to run
+    // concurrently. `reconcileEligible` (updatePreview) requires this to be
+    // false: reconciling against a `cursor` that doesn't yet reflect an
+    // in-flight mount's real progress could destroy/re-mount a range that
+    // overlaps what's still being appended, leaving orphaned duplicate DOM
+    // behind (the appending mount's own generation guard stops it from
+    // adding *more* once superseded, but never retroactively removes what it
+    // already appended in earlier loop iterations of the same call). Falling
+    // back to a full reset when this is true is always correct — replaceChildren()
+    // wipes out any such orphaned nodes unconditionally.
+    mounting: boolean;
   } | null = null;
   // Per-generation memo of renderChunk's raw HTML output, keyed by chunk
   // index, shared between the DOM-mount path (renderAndMountChunkBatch) and
@@ -2442,6 +2479,18 @@ export class MdzipWorkspaceView {
         this.options.onFailed?.(error);
       }
     }
+    // Per-chunk handles live on their own records (see MdzipChunkRecord), not
+    // in the flat array above — a full reset must still destroy every one of
+    // them, the same as it always destroyed everything in previewHandles.
+    for (const record of this.chunkedRenderState?.records ?? []) {
+      for (const handle of record.handles) {
+        try {
+          handle.destroy();
+        } catch (error) {
+          this.options.onFailed?.(error);
+        }
+      }
+    }
     // A new render generation invalidates any in-progress chunk draining —
     // Copy All's own abort check unwinds it and hides the dialog. It also
     // invalidates a "ready to copy" or "done" dialog left over from a
@@ -2487,9 +2536,34 @@ export class MdzipWorkspaceView {
     }
 
     const animateImageHydration = this.shouldAnimateImageHydration(memo, snapshot);
+
+    // A same-document, text-only edit with an existing chunked structure can
+    // be reconciled against (only the chunks whose source actually changed
+    // get touched) instead of torn down and rebuilt from scratch. Every
+    // other case — first render, a path/pathType/colorScheme change, a
+    // non-default renderer, a prior explicit reset that already cleared
+    // chunkedRenderState, or an edit-triggered batch mount still in flight
+    // for the current generation (`mounting` — see its doc comment: its
+    // `cursor` doesn't yet reflect where that mount actually is, so
+    // reconciling against it risks orphaned duplicate DOM) — falls through
+    // to today's full reset + cold start, unchanged.
+    const reconcileEligible =
+      !!memo
+      && memo.path === snapshot.currentPath
+      && memo.pathType === snapshot.currentPathType
+      && memo.colorScheme === this.colorScheme
+      && snapshot.currentPathType === 'markdown'
+      && this.renderingService.supportsChunking
+      && !!this.chunkedRenderState
+      && this.chunkedRenderState.generation === this.previewGeneration
+      && !this.chunkedRenderState.mounting;
+    const priorChunkedState = reconcileEligible ? this.chunkedRenderState : null;
+
     this.previewAbort?.abort();
     this.previewAbort = null;
-    this.destroyPreviewHandles();
+    if (!priorChunkedState) {
+      this.destroyPreviewHandles();
+    }
     const generation = ++this.previewGeneration;
     this.previewHydrated = false;
     this.previewMemo = {
@@ -2523,8 +2597,12 @@ export class MdzipWorkspaceView {
     this.previewAbort = abort;
     const context = this.createMarkdownContext(snapshot, abort.signal);
 
-    if (this.progressiveTextRendering && this.renderingService.supportsChunking) {
-      this.renderChunkedPreview(snapshot, context, generation, animateImageHydration);
+    if (this.renderingService.supportsChunking) {
+      if (priorChunkedState) {
+        this.reconcileChunkedPreview(snapshot, context, generation, animateImageHydration, priorChunkedState);
+      } else {
+        this.renderChunkedPreview(snapshot, context, generation, animateImageHydration);
+      }
       return;
     }
 
@@ -2882,6 +2960,233 @@ export class MdzipWorkspaceView {
   }
 
   /**
+   * Same-document, text-only-edit counterpart to {@link renderChunkedPreview}:
+   * tokenizes the new text, then reconciles against the *previous* render's
+   * records (`priorState`) instead of tearing everything down. Only reachable
+   * when `updatePreview` determined the prior chunked structure is still
+   * reuse-eligible (same path/pathType/colorScheme); the caller already
+   * checked that.
+   */
+  private reconcileChunkedPreview(
+    snapshot: MdzipWorkspaceSnapshot,
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean,
+    priorState: NonNullable<MdzipWorkspaceView['chunkedRenderState']>
+  ): void {
+    let tokens: ReturnType<MdzipRenderingService['tokenizeMarkdown']>;
+    try {
+      tokens = this.renderingService.tokenizeMarkdown(snapshot.currentText, context);
+    } catch (error) {
+      this.options.onFailed?.(error);
+      // Can't reconcile without tokens — fall back to a hard reset.
+      this.destroyPreviewHandles();
+      this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
+      this.firePreviewRendered(snapshot, generation);
+      this.fireAssetsHydrated(snapshot, generation);
+      return;
+    }
+
+    const proceed = (resolvedTokens: readonly Token[]): void => {
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      this.applyChunkReconciliation(resolvedTokens, snapshot, context, generation, animateImageHydration, priorState);
+    };
+
+    if (Array.isArray(tokens)) {
+      proceed(tokens);
+      return;
+    }
+    void tokens.then(proceed).catch((error) => {
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      if ((error as { name?: string } | null)?.name !== 'AbortError') {
+        this.options.onFailed?.(error);
+      }
+    });
+  }
+
+  /** Destroys one chunk record's mounted DOM and handles (but not the record object itself). */
+  private teardownChunkRecord(record: MdzipChunkRecord): void {
+    for (const handle of record.handles) {
+      try {
+        handle.destroy();
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+    }
+    record.root?.remove();
+  }
+
+  /**
+   * Diffs the new tokenize pass's chunks against `priorState.records` by
+   * source-text identity (`chunkSourceKey`) and reconciles: chunks in the
+   * matched leading/trailing run keep their existing DOM and handles
+   * untouched (never re-rendered, never re-mounted — see
+   * `chunkSourceKey`'s doc comment for why that matters for extensions like
+   * mermaid); only the "middle" range that actually changed is torn down and
+   * remounted. Uses prefix/suffix matching rather than a general LCS — a
+   * text editor's edits are localized, so this is both simpler and correct
+   * for the real-world case.
+   */
+  private applyChunkReconciliation(
+    tokens: readonly Token[],
+    snapshot: MdzipWorkspaceSnapshot,
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean,
+    priorState: NonNullable<MdzipWorkspaceView['chunkedRenderState']>
+  ): void {
+    // Tear down any live sentinel from the prior state before touching DOM —
+    // same reasoning as drainRemainingChunks: stops it from racing this
+    // reconciliation and double-mounting a chunk.
+    priorState.sentinelHandle?.destroy();
+    this.previewHandles = this.previewHandles.filter((h) => h !== priorState.sentinelHandle);
+
+    const newChunks = groupTokensIntoChunks(tokens);
+    const oldRecords = priorState.records;
+    const oldCursor = priorState.cursor;
+
+    if (newChunks.length === 0) {
+      // Whole document collapsed to nothing renderable — nothing to reuse.
+      for (const record of oldRecords) {
+        this.teardownChunkRecord(record);
+      }
+      this.elPreviewContent.replaceChildren();
+      this.chunkedRenderState = null;
+      this.firePreviewRendered(snapshot, generation);
+      this.fireAssetsHydrated(snapshot, generation);
+      return;
+    }
+
+    const oldKeys = oldRecords.map((r) => r.key);
+    const newKeys = newChunks.map((c) => chunkSourceKey(c));
+
+    const maxMatch = Math.min(oldKeys.length, newKeys.length);
+    let prefixLen = 0;
+    while (prefixLen < maxMatch && oldKeys[prefixLen] === newKeys[prefixLen]) prefixLen += 1;
+    const maxSuffix = maxMatch - prefixLen;
+    let suffixLen = 0;
+    while (
+      suffixLen < maxSuffix
+      && oldKeys[oldKeys.length - 1 - suffixLen] === newKeys[newKeys.length - 1 - suffixLen]
+    ) suffixLen += 1;
+
+    const oldMiddleStart = prefixLen;
+    const oldMiddleEnd = oldRecords.length - suffixLen;
+    const newMiddleStart = prefixLen;
+    const newMiddleEnd = newChunks.length - suffixLen;
+
+    const newRecords: MdzipChunkRecord[] = [];
+    for (let i = 0; i < prefixLen; i += 1) {
+      newRecords.push({ ...oldRecords[i], key: newKeys[i], tokens: newChunks[i] });
+    }
+    for (let i = newMiddleStart; i < newMiddleEnd; i += 1) {
+      newRecords.push({ key: newKeys[i], tokens: newChunks[i], root: null, html: null, handles: [] });
+    }
+    for (let i = 0; i < suffixLen; i += 1) {
+      const oi = oldRecords.length - suffixLen + i;
+      const ni = newChunks.length - suffixLen + i;
+      newRecords.push({ ...oldRecords[oi], key: newKeys[ni], tokens: newChunks[ni] });
+    }
+
+    // Destroy DOM+handles for old-middle records that were actually mounted
+    // (bounded by the old cursor — everything from there on was still
+    // waiting in the lazy-load tail, never mounted, nothing to destroy).
+    const oldMountedMiddleEnd = Math.min(oldCursor, oldMiddleEnd);
+    for (let i = oldMiddleStart; i < oldMountedMiddleEnd; i += 1) {
+      this.teardownChunkRecord(oldRecords[i]);
+    }
+    const oldMountedMiddleCount = Math.max(0, oldMountedMiddleEnd - oldMiddleStart);
+
+    // Reference node for splicing in the new middle's DOM: the first
+    // surviving *mounted* suffix record (mounted suffix records are
+    // contiguous from newMiddleEnd by construction), else null (append).
+    let insertBeforeNode: HTMLElement | null = null;
+    for (let i = newMiddleEnd; i < newRecords.length; i += 1) {
+      if (newRecords[i].root) {
+        insertBeforeNode = newRecords[i].root;
+        break;
+      }
+    }
+
+    this.chunkedRenderState = {
+      records: newRecords,
+      cursor: oldCursor,
+      context,
+      generation,
+      animateImageHydration,
+      sentinelHandle: null,
+      mounting: oldMountedMiddleCount > 0
+    };
+
+    if (oldMountedMiddleCount === 0) {
+      // The edit is entirely beyond what was mounted (progressive mode,
+      // still in the lazy-load tail) — nothing was destroyed, nothing needs
+      // mounting now. Cursor is unaffected: every index below it is an
+      // untouched prefix survivor, valid at the same index in newRecords. The
+      // old sentinel was already torn down above, so a fresh one has to be
+      // armed to keep the lazy-load tail continuing.
+      if (oldCursor < newRecords.length) {
+        this.armChunkSentinel(newRecords, oldCursor, context, generation, animateImageHydration);
+      }
+      this.firePreviewRendered(snapshot, generation);
+      this.fireAssetsHydrated(snapshot, generation);
+      return;
+    }
+
+    void this.mountReconciledMiddle(
+      newRecords, newMiddleStart, newMiddleEnd, insertBeforeNode, context, generation, animateImageHydration, snapshot, oldCursor, oldMiddleEnd
+    );
+  }
+
+  /**
+   * Mounts a reconciliation's replacement "middle" range in full (uncapped —
+   * a single edit only ever touches 1-2 chunks in practice; see the plan's
+   * disclosed v1 risk for the pathological large-paste case), then carries
+   * forward however much of the surviving suffix was already mounted before
+   * reconciling, and re-arms the sentinel for whatever's still left.
+   */
+  private async mountReconciledMiddle(
+    records: MdzipChunkRecord[],
+    middleStart: number,
+    middleEnd: number,
+    insertBeforeNode: HTMLElement | null,
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean,
+    snapshot: MdzipWorkspaceSnapshot,
+    oldCursor: number,
+    oldMiddleEnd: number
+  ): Promise<void> {
+    let cursor = middleStart;
+    let mountedRoots: HTMLElement[] = [];
+    while (cursor < middleEnd) {
+      const batch = await this.renderAndMountChunkBatch(records, cursor, context, generation, insertBeforeNode);
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      if (batch.cursor === cursor) break; // Aborted/superseded mid-loop with no progress.
+      cursor = batch.cursor;
+      mountedRoots = mountedRoots.concat(batch.mountedRoots);
+    }
+    if (generation !== this.previewGeneration || context.signal.aborted) return;
+
+    const carriedSuffixMounted = Math.max(0, oldCursor - oldMiddleEnd);
+    const finalCursor = Math.min(records.length, Math.max(cursor, middleEnd) + carriedSuffixMounted);
+    this.recordChunkProgress(generation, records, finalCursor);
+    if (this.chunkedRenderState?.generation === generation) {
+      this.chunkedRenderState.mounting = false;
+    }
+
+    const pending = this.collectPendingImages(mountedRoots, context, generation, animateImageHydration);
+    this.hydrateImages(pending, context, generation, animateImageHydration, () => {
+      this.fireAssetsHydrated(snapshot, generation);
+    });
+    this.firePreviewRendered(snapshot, generation);
+
+    if (this.chunkedRenderState?.generation === generation && finalCursor < records.length) {
+      this.armChunkSentinel(records, finalCursor, context, generation, animateImageHydration);
+    }
+  }
+
+  /**
    * Groups tokens into chunks and mounts them: an initial batch synchronously
    * (enough for a small document to behave exactly like the non-chunked
    * path), then the rest as the user scrolls near a trailing sentinel
@@ -2909,33 +3214,102 @@ export class MdzipWorkspaceView {
       this.fireAssetsHydrated(snapshot, generation);
       return;
     }
-    this.chunkedRenderState = { chunks, cursor: 0, context, generation, animateImageHydration, sentinelHandle: null };
+    const records: MdzipChunkRecord[] = chunks.map((chunkTokens) => ({
+      key: chunkSourceKey(chunkTokens),
+      tokens: chunkTokens,
+      root: null,
+      html: null,
+      handles: []
+    }));
+    this.chunkedRenderState = {
+      records, cursor: 0, context, generation, animateImageHydration, sentinelHandle: null,
+      // Set for the whole initial batch/eager mount below — see the field's
+      // doc comment: an edit landing before this settles must not reconcile
+      // against a `cursor` that doesn't yet reflect this in-flight mount.
+      mounting: true
+    };
 
-    void this.mountChunkBatch(chunks, 0, context, generation, animateImageHydration, () => {
-      this.fireAssetsHydrated(snapshot, generation);
-    }).then((cursor) => {
-      if (generation !== this.previewGeneration || context.signal.aborted) return;
-      this.recordChunkProgress(generation, chunks, cursor);
-      this.firePreviewRendered(snapshot, generation);
-      if (cursor < chunks.length) {
-        this.armChunkSentinel(chunks, cursor, context, generation, animateImageHydration);
-      }
-    });
+    if (this.progressiveTextRendering) {
+      // Mount an initial batch synchronously (enough for a small document to
+      // behave exactly like a non-progressive mount), then lazily continue
+      // the rest as the user scrolls near a trailing sentinel.
+      void this.mountChunkBatch(records, 0, context, generation, animateImageHydration, () => {
+        this.fireAssetsHydrated(snapshot, generation);
+      }).then((cursor) => {
+        if (generation !== this.previewGeneration || context.signal.aborted) return;
+        this.recordChunkProgress(generation, records, cursor);
+        if (this.chunkedRenderState?.generation === generation) {
+          this.chunkedRenderState.mounting = false;
+        }
+        this.firePreviewRendered(snapshot, generation);
+        if (cursor < records.length) {
+          this.armChunkSentinel(records, cursor, context, generation, animateImageHydration);
+        }
+      });
+      return;
+    }
+
+    // Not opted into lazy-load-on-scroll: mount every chunk up front, same
+    // visible end state as the old monolithic non-chunked path, but yielding
+    // a frame between batches (mirroring drainRemainingChunks) instead of
+    // blocking the main thread for one giant synchronous render — see the
+    // plan's disclosed cold-start tradeoff.
+    void this.mountAllChunksEagerly(records, context, generation, animateImageHydration, snapshot);
   }
 
   /**
-   * Updates `chunkedRenderState.cursor` after a batch mounts, or clears the
-   * whole state once every chunk is in the DOM — that `null` is Copy All's
-   * signal that there's nothing left to force-render. A no-op if a newer
-   * render generation has already superseded this one.
+   * Mounts every chunk of a non-progressive (`progressiveTextRendering:
+   * false`) document up front — same end state as the old monolithic
+   * non-chunked path (the whole document mounted before `onPreviewRendered`
+   * fires), but yielding a frame between batches (mirroring
+   * `drainRemainingChunks`) instead of blocking the main thread for one
+   * giant synchronous render.
    */
-  private recordChunkProgress(generation: number, chunks: readonly Token[][], cursor: number): void {
-    if (this.chunkedRenderState?.generation !== generation) return;
-    if (cursor >= chunks.length) {
-      this.chunkedRenderState = null;
-    } else {
-      this.chunkedRenderState.cursor = cursor;
+  private async mountAllChunksEagerly(
+    records: MdzipChunkRecord[],
+    context: MdzipMarkdownRenderContext,
+    generation: number,
+    animateImageHydration: boolean,
+    snapshot: MdzipWorkspaceSnapshot
+  ): Promise<void> {
+    const allPending: { image: HTMLImageElement; source: string }[] = [];
+    while (generation === this.previewGeneration && !context.signal.aborted) {
+      const cursorBefore = this.chunkedRenderState?.generation === generation
+        ? this.chunkedRenderState.cursor
+        : records.length;
+      if (cursorBefore >= records.length) break;
+      const { cursor, mountedRoots } = await this.renderAndMountChunkBatch(records, cursorBefore, context, generation);
+      if (generation !== this.previewGeneration || context.signal.aborted) return;
+      allPending.push(...this.collectPendingImages(mountedRoots, context, generation, animateImageHydration));
+      this.recordChunkProgress(generation, records, cursor);
+      if (cursor >= records.length) break;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
+    if (generation === this.previewGeneration && !context.signal.aborted) {
+      if (this.chunkedRenderState?.generation === generation) {
+        this.chunkedRenderState.mounting = false;
+      }
+      this.firePreviewRendered(snapshot, generation);
+      this.hydrateImages(allPending, context, generation, animateImageHydration, () => {
+        this.fireAssetsHydrated(snapshot, generation);
+      });
+    }
+  }
+
+  /**
+   * Updates `chunkedRenderState.cursor` after a batch mounts. A no-op if a
+   * newer render generation has already superseded this one. Deliberately
+   * never nulls `chunkedRenderState` out just because `cursor` reached
+   * `records.length` — the records stay alive for the whole generation so a
+   * later same-document edit can reconcile against them (see
+   * `applyChunkReconciliation`). Callers that need "is there still an
+   * unmounted lazy tail" (Copy All's instant path, the scroll-to-bottom fast
+   * path) check `cursor < records.length` directly instead of this field's
+   * truthiness.
+   */
+  private recordChunkProgress(generation: number, records: readonly MdzipChunkRecord[], cursor: number): void {
+    if (this.chunkedRenderState?.generation !== generation) return;
+    this.chunkedRenderState.cursor = cursor;
   }
 
   /**
@@ -2956,10 +3330,11 @@ export class MdzipWorkspaceView {
    * {@link drainRemainingChunks} for the two different ways callers pace it.
    */
   private async renderAndMountChunkBatch(
-    chunks: readonly Token[][],
+    records: MdzipChunkRecord[],
     startCursor: number,
     context: MdzipMarkdownRenderContext,
-    generation: number
+    generation: number,
+    insertBeforeNode: Node | null = null
   ): Promise<{ cursor: number; mountedRoots: HTMLElement[] }> {
     const BATCH_CHAR_BUDGET = 4000;
     const BATCH_TIME_BUDGET_MS = 10;
@@ -2968,13 +3343,14 @@ export class MdzipWorkspaceView {
     let cursor = startCursor;
     let renderedChars = 0;
     const mountedRoots: HTMLElement[] = [];
+    const batchStartCursor = startCursor;
     while (
-      cursor < chunks.length
+      cursor < records.length
       && renderedChars < BATCH_CHAR_BUDGET
       && (mountedRoots.length === 0 || clock.now() - batchStart < BATCH_TIME_BUDGET_MS)
     ) {
       if (generation !== this.previewGeneration || context.signal.aborted) return { cursor, mountedRoots };
-      const chunkTokens = chunks[cursor];
+      const chunkTokens = records[cursor].tokens;
       const chunkIndex = cursor;
       cursor += 1;
       let html: string;
@@ -3005,16 +3381,19 @@ export class MdzipWorkspaceView {
         }
         this.chunkHtmlCache.html.set(chunkIndex, html);
       }
-      const root = this.appendChunkHtml(html);
+      const root = this.appendChunkHtml(html, insertBeforeNode);
+      records[chunkIndex].root = root;
+      records[chunkIndex].html = html;
       mountedRoots.push(root);
       renderedChars += html.length;
     }
 
-    for (const root of mountedRoots) {
-      this.mountPreviewExtensions(context, generation, root);
-      const codeBlockHandle = this.mountCodeBlockControls(root);
+    for (const record of records.slice(batchStartCursor, cursor)) {
+      if (!record.root) continue;
+      this.mountPreviewExtensions(context, generation, record.root, record.handles);
+      const codeBlockHandle = this.mountCodeBlockControls(record.root);
       if (codeBlockHandle) {
-        this.previewHandles.push(codeBlockHandle);
+        record.handles.push(codeBlockHandle);
       }
     }
     return { cursor, mountedRoots };
@@ -3030,14 +3409,14 @@ export class MdzipWorkspaceView {
    * batch never has a chance to pile up against another.
    */
   private async mountChunkBatch(
-    chunks: readonly Token[][],
+    records: MdzipChunkRecord[],
     startCursor: number,
     context: MdzipMarkdownRenderContext,
     generation: number,
     animateImageHydration: boolean,
     onImagesSettled: () => void
   ): Promise<number> {
-    const { cursor, mountedRoots } = await this.renderAndMountChunkBatch(chunks, startCursor, context, generation);
+    const { cursor, mountedRoots } = await this.renderAndMountChunkBatch(records, startCursor, context, generation);
     // Same relative order as the non-chunked path: cheap image pass, then
     // the (expensive) slot/observe pass.
     const pending = this.collectPendingImages(mountedRoots, context, generation, animateImageHydration);
@@ -3045,13 +3424,22 @@ export class MdzipWorkspaceView {
     return cursor;
   }
 
-  /** Wraps one chunk's rendered HTML in a mount boundary and appends it. See the `.mdzip-chunk` CSS rules for why. */
-  private appendChunkHtml(html: string): HTMLElement {
+  /**
+   * Wraps one chunk's rendered HTML in a mount boundary and appends it (or,
+   * given `beforeNode`, splices it in ahead of that still-attached node —
+   * used by reconciliation to insert a replacement chunk ahead of a
+   * surviving mounted suffix). See the `.mdzip-chunk` CSS rules for why.
+   */
+  private appendChunkHtml(html: string, beforeNode: Node | null = null): HTMLElement {
     const doc = this.elPreviewContent.ownerDocument;
     const wrapper = doc.createElement('div');
     wrapper.className = 'mdzip-chunk';
     wrapper.innerHTML = html;
-    this.elPreviewContent.appendChild(wrapper);
+    if (beforeNode && beforeNode.parentNode === this.elPreviewContent) {
+      this.elPreviewContent.insertBefore(wrapper, beforeNode);
+    } else {
+      this.elPreviewContent.appendChild(wrapper);
+    }
     return wrapper;
   }
 
@@ -3064,7 +3452,7 @@ export class MdzipWorkspaceView {
    * when IntersectionObserver isn't available, matching `hydrateImages`.
    */
   private armChunkSentinel(
-    chunks: readonly Token[][],
+    records: MdzipChunkRecord[],
     cursor: number,
     context: MdzipMarkdownRenderContext,
     generation: number,
@@ -3074,12 +3462,21 @@ export class MdzipWorkspaceView {
     const observerWindow = doc.defaultView;
 
     const mountNext = (nextCursor: number): void => {
-      void this.mountChunkBatch(chunks, nextCursor, context, generation, animateImageHydration, () => {})
+      // Same race this field guards against everywhere else: an edit landing
+      // while this scroll-triggered continuation is mid-flight must not
+      // reconcile against a cursor that doesn't yet reflect it.
+      if (this.chunkedRenderState?.generation === generation) {
+        this.chunkedRenderState.mounting = true;
+      }
+      void this.mountChunkBatch(records, nextCursor, context, generation, animateImageHydration, () => {})
         .then((newCursor) => {
           if (generation !== this.previewGeneration || context.signal.aborted) return;
-          this.recordChunkProgress(generation, chunks, newCursor);
-          if (newCursor < chunks.length) {
-            this.armChunkSentinel(chunks, newCursor, context, generation, animateImageHydration);
+          this.recordChunkProgress(generation, records, newCursor);
+          if (this.chunkedRenderState?.generation === generation) {
+            this.chunkedRenderState.mounting = false;
+          }
+          if (newCursor < records.length) {
+            this.armChunkSentinel(records, newCursor, context, generation, animateImageHydration);
           }
         });
     };
@@ -3196,7 +3593,8 @@ export class MdzipWorkspaceView {
   private mountPreviewExtensions(
     context: MdzipMarkdownRenderContext,
     generation: number,
-    root: HTMLElement = this.elPreviewContent
+    root: HTMLElement = this.elPreviewContent,
+    collector: MdzipRenderHandle[] = this.previewHandles
   ): void {
     for (const extension of this.markdownExtensions) {
       if (!extension.mount) {
@@ -3217,14 +3615,14 @@ export class MdzipWorkspaceView {
               }
               return;
             }
-            this.previewHandles.push(handle);
+            collector.push(handle);
           }).catch((error) => {
             if (generation === this.previewGeneration) {
               this.options.onFailed?.(error);
             }
           });
         } else if (mounted) {
-          this.previewHandles.push(mounted);
+          collector.push(mounted);
         }
       } catch (error) {
         this.options.onFailed?.(error);
@@ -5674,21 +6072,23 @@ export class MdzipWorkspaceView {
    * Copies the entire rendered document as plain text (same fidelity as
    * `copyPreviewSelection` — no HTML, no `ClipboardItem`), regardless of how
    * much of it is currently mounted under progressive rendering. If
-   * everything's already mounted (small doc, non-chunked render, or the user
-   * already scrolled through it) this is instant — `chunkedRenderState` is
-   * null in exactly that case. Otherwise it force-drains the rest first,
-   * showing a cancelable progress dialog once the wait clears a short
-   * debounce so fast documents never flicker it into view.
+   * everything's already mounted (small doc, eager/non-progressive mount, or
+   * the user already scrolled through it) this is instant —
+   * `chunkedRenderState` is either null (no markdown open, or a non-default
+   * renderer) or has nothing left to mount (`cursor >= records.length`) in
+   * exactly that case. Otherwise it force-drains the rest first, showing a
+   * cancelable progress dialog once the wait clears a short debounce so fast
+   * documents never flicker it into view.
    */
   private async copyAllPreviewContent(): Promise<void> {
     const pending = this.chunkedRenderState;
-    if (!pending) {
+    if (!pending || pending.cursor >= pending.records.length) {
       const outcome = await this.copyPreviewSelection(this.elPreviewContent.textContent ?? '');
       this.finishCopyNotification(false, outcome);
       return;
     }
 
-    const total = pending.chunks.length;
+    const total = pending.records.length;
     const abort = new AbortController();
     let dialogShown = false;
     const label = 'Rendering the full document';
@@ -5720,8 +6120,9 @@ export class MdzipWorkspaceView {
       // Cancelled partway through — whatever's left stays unmounted, so
       // re-arm the usual scroll-driven continuation for it.
       const remaining = this.chunkedRenderState;
-      if (remaining && remaining.generation === pending.generation && !remaining.sentinelHandle) {
-        this.armChunkSentinel(remaining.chunks, remaining.cursor, remaining.context, remaining.generation, remaining.animateImageHydration);
+      if (remaining && remaining.generation === pending.generation && !remaining.sentinelHandle
+        && remaining.cursor < remaining.records.length) {
+        this.armChunkSentinel(remaining.records, remaining.cursor, remaining.context, remaining.generation, remaining.animateImageHydration);
       }
       return;
     }
@@ -6001,29 +6402,36 @@ export class MdzipWorkspaceView {
     onProgress: (done: number, total: number) => void,
     signal: AbortSignal
   ): Promise<void> {
-    const { chunks, context, generation, animateImageHydration } = state;
+    const { records, context, generation, animateImageHydration } = state;
     // Draining is instead of the scroll-driven continuation, not alongside
     // it — tearing down any armed sentinel first stops the two from racing
     // and double-mounting the same chunk.
     state.sentinelHandle?.destroy();
     if (this.chunkedRenderState?.generation === generation) {
       this.chunkedRenderState.sentinelHandle = null;
+      // Same race the `mounting` field guards against elsewhere: an edit
+      // landing mid-drain must not reconcile against a cursor this loop is
+      // actively advancing out from under it.
+      this.chunkedRenderState.mounting = true;
     }
 
     const allPending: { image: HTMLImageElement; source: string }[] = [];
     try {
-      while (this.chunkedRenderState?.generation === generation && this.chunkedRenderState.cursor < chunks.length) {
+      while (this.chunkedRenderState?.generation === generation && this.chunkedRenderState.cursor < records.length) {
         if (signal.aborted || generation !== this.previewGeneration || context.signal.aborted) return;
         const cursor = this.chunkedRenderState.cursor;
-        const { cursor: newCursor, mountedRoots } = await this.renderAndMountChunkBatch(chunks, cursor, context, generation);
+        const { cursor: newCursor, mountedRoots } = await this.renderAndMountChunkBatch(records, cursor, context, generation);
         if (generation !== this.previewGeneration || context.signal.aborted) return;
         allPending.push(...this.collectPendingImages(mountedRoots, context, generation, animateImageHydration));
-        this.recordChunkProgress(generation, chunks, newCursor);
-        onProgress(newCursor, chunks.length);
+        this.recordChunkProgress(generation, records, newCursor);
+        onProgress(newCursor, records.length);
         if (signal.aborted) return;
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
       }
     } finally {
+      if (this.chunkedRenderState?.generation === generation) {
+        this.chunkedRenderState.mounting = false;
+      }
       if (generation === this.previewGeneration && !context.signal.aborted) {
         this.hydrateImages(allPending, context, generation, animateImageHydration, () => {});
       }
@@ -7121,7 +7529,7 @@ export class MdzipWorkspaceView {
     // position, so comparing it to the document length is exact regardless
     // of any height estimation drift.
     const atDocEnd = this.cmEditor.viewport.to >= this.cmEditor.state.doc.length;
-    if (atDocEnd && this.chunkedRenderState) {
+    if (atDocEnd && this.chunkedRenderState && this.chunkedRenderState.cursor < this.chunkedRenderState.records.length) {
       void this.syncScrollToPreviewBottom();
       return;
     }
@@ -7165,7 +7573,7 @@ export class MdzipWorkspaceView {
     }
     let showToastTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
       showToastTimer = null;
-      this.scrollCatchUpState = { done: state.cursor, total: state.chunks.length };
+      this.scrollCatchUpState = { done: state.cursor, total: state.records.length };
       this.updateScrollCatchUpToast();
     }, 200);
     try {

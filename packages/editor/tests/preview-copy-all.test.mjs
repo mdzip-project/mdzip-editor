@@ -393,8 +393,15 @@ test('Copy All on a small progressively-rendered document copies instantly with 
   const restore = stubClipboard({ writeText: async (text) => { written.push(text); } });
   try {
     // A doc this small fits entirely in the initial synchronous batch, so
-    // chunkedRenderState is already null by the time Copy All runs.
-    assert.equal(view.chunkedRenderState, null, 'sanity: nothing left pending after the initial mount');
+    // there's nothing left pending by the time Copy All runs. Chunk records
+    // stay alive across the whole generation now (for same-document edit
+    // reconciliation), so "nothing pending" is cursor reaching the end, not
+    // the field going null.
+    assert.equal(
+      view.chunkedRenderState.cursor,
+      view.chunkedRenderState.records.length,
+      'sanity: nothing left pending after the initial mount'
+    );
 
     pressCtrlA(previewPane);
     assert.equal(view.elCopyRenderDialog.hidden, true, 'dialog never shown for an instant copy');
@@ -440,7 +447,7 @@ test('Copy All on a large progressively-rendered document shows a progress dialo
     assert.equal(view.elCopyRenderDialog.hidden, false, 'dialog stays visible, now asking to confirm the copy');
     assert.equal(view.copyRenderDialogState, null, 'progress state is cleared');
     assert.ok(view.copyReadyState, 'armed, waiting for the Copy button');
-    assert.equal(view.chunkedRenderState, null, 'every chunk is now mounted');
+    assert.equal(view.chunkedRenderState.cursor, view.chunkedRenderState.records.length, 'every chunk is now mounted');
     assert.equal(view.elPreviewContent.querySelector('.mdzip-chunk-sentinel'), null, 'no sentinel left — nothing more to mount');
     assert.equal(written.length, 0, 'nothing copied yet — waiting on the Copy button click');
 
@@ -487,7 +494,7 @@ test('cancelling the Copy All dialog aborts the drain without writing to the cli
     assert.equal(view.elCopyRenderDialog.hidden, true, 'dialog is dismissed on cancel');
     assert.ok(view.chunkedRenderState, 'the document is still only partially mounted');
     assert.ok(
-      view.chunkedRenderState.cursor < view.chunkedRenderState.chunks.length,
+      view.chunkedRenderState.cursor < view.chunkedRenderState.records.length,
       'sanity: the cancel actually landed mid-drain, not after it finished on its own'
     );
     assert.ok(
@@ -962,7 +969,11 @@ test('syncScrollToPreviewBottom force-drains remaining chunks and jumps the prev
     // a single direct await avoids that entirely.
     await view.syncScrollToPreviewBottom();
 
-    assert.equal(view.chunkedRenderState, null, 'every chunk mounted by the forced drain');
+    assert.equal(
+      view.chunkedRenderState.cursor,
+      view.chunkedRenderState.records.length,
+      'every chunk mounted by the forced drain'
+    );
     const paragraphCount = view.elPreviewContent.querySelectorAll('p').length;
     assert.equal(paragraphCount, 800, 'every paragraph mounted, not just the initial batch');
     const expectedTarget = (100 + paragraphCount * 20) - 500;
@@ -1005,7 +1016,11 @@ test('syncScrollToPreviewBottom leaves the preview alone if the editor scrolls a
     setTimeout(() => setEditorAtDocEnd(view, false), 50);
     await drainPromise;
 
-    assert.equal(view.chunkedRenderState, null, 'the drain still runs to completion');
+    assert.equal(
+      view.chunkedRenderState.cursor,
+      view.chunkedRenderState.records.length,
+      'the drain still runs to completion'
+    );
     assert.equal(previewScrollTop, 0, 'no stale bottom-jump applied once the editor is no longer at its bottom');
   } finally {
     cleanup();
@@ -1074,7 +1089,7 @@ test('a chunk drained by a concurrent scroll-to-bottom catch-up is not re-render
   });
   try {
     assert.ok(view.chunkedRenderState, 'sanity: still unmounted chunks');
-    const totalChunks = view.chunkedRenderState.chunks.length;
+    const totalChunks = view.chunkedRenderState.records.length;
 
     // Genuine overlap: neither call is awaited before the other starts, so
     // the scroll-driven catch-up drain and Copy All with Images's own
@@ -1084,7 +1099,11 @@ test('a chunk drained by a concurrent scroll-to-bottom catch-up is not re-render
       view.copyAllWithImagesPreviewContent()
     ]);
 
-    assert.equal(view.chunkedRenderState, null, 'sanity: the drain completed');
+    assert.equal(
+      view.chunkedRenderState.cursor,
+      view.chunkedRenderState.records.length,
+      'sanity: the drain completed'
+    );
     assert.equal(written.length, 1, 'sanity: the copy completed');
     assert.equal(
       renderCount,

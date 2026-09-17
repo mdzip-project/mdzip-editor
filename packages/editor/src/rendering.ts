@@ -535,6 +535,24 @@ export function groupTokensIntoChunks(
   return chunks;
 }
 
+/**
+ * Stable identity key for a chunk: the exact source text `marked` consumed
+ * for it (concatenation of each token's `.raw`). Two chunks with the same key
+ * are guaranteed to have identical source text, since `.raw` slices tile the
+ * whole input contiguously — safe to use as a plain string equality key (no
+ * hashing needed; chunks are budget-capped ~2000 chars, and a render involves
+ * at most a few dozen of them).
+ *
+ * Deliberately keys on SOURCE text only, never on rendered output: an
+ * extension's `transformHtml` can be side-effecting per call (e.g. the
+ * mermaid extension's per-call SVG id counter), so identical keys must never
+ * be treated as license to re-run rendering — only as license to skip it and
+ * reuse whatever is already mounted for that chunk.
+ */
+export function chunkSourceKey(chunk: readonly Token[]): string {
+  return chunk.map((token) => token.raw ?? '').join('');
+}
+
 function rewriteAssetSources(markdown: string, resolver: MdzipAssetUrlResolver): string {
   return markdown.replace(
     /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/g,

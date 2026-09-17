@@ -3,12 +3,18 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 
 // Same DOM bootstrap pattern as rendering-extensibility.test.mjs / preview-chunking.test.mjs.
+// `pretendToBeVisual: true` also gives us a real requestAnimationFrame, which
+// the non-progressive (eager) chunk-mounting path yields on between batches.
 if (typeof globalThis.window === 'undefined') {
-  globalThis.window = new JSDOM('<!doctype html><html><body></body></html>').window;
+  globalThis.window = new JSDOM('<!doctype html><html><body></body></html>', {
+    pretendToBeVisual: true
+  }).window;
 }
 globalThis.document = globalThis.window.document;
 globalThis.HTMLElement = globalThis.window.HTMLElement;
 globalThis.Node = globalThis.window.Node;
+globalThis.requestAnimationFrame = globalThis.window.requestAnimationFrame.bind(globalThis.window);
+globalThis.cancelAnimationFrame = globalThis.window.cancelAnimationFrame.bind(globalThis.window);
 
 class FakeIntersectionObserver {
   static instances = [];
