@@ -2628,7 +2628,7 @@ export class MdzipWorkspaceView {
     // controls mount, same relative order as always — see
     // collectPendingImages for why it's split from the (expensive) slot
     // creation that follows.
-    const pending = this.collectPendingImages([this.elPreviewContent], animateImageHydration);
+    const pending = this.collectPendingImages([this.elPreviewContent], context, generation, animateImageHydration);
     this.mountPreviewExtensions(context, generation);
     const codeBlockHandle = this.mountCodeBlockControls();
     if (codeBlockHandle) {
@@ -2649,9 +2649,22 @@ export class MdzipWorkspaceView {
    * class, if any — they never get a slot). Returns `[]` without touching
    * anything when there's no asset session to resolve archive images
    * against, matching `mountPreviewHtml`'s no-op image handling.
+   *
+   * An image this session has *already* resolved once (e.g. it was already
+   * on screen before an edit elsewhere caused its chunk to remount) is
+   * applied immediately here via `resolveKnownImage` — no slot, no loading
+   * class, no `hydrateImages`/`IntersectionObserver` round trip — instead of
+   * being handed to the async placeholder-then-swap path meant for an image
+   * that's genuinely being resolved for the first time. Skipping that path
+   * for a re-mount of an already-known image is what actually avoids the
+   * visible flash; still going through it (even instantly) briefly blanks
+   * the image, since a fresh `<img>` element never carries over its
+   * predecessor's already-resolved `src`.
    */
   private collectPendingImages(
     roots: readonly HTMLElement[],
+    context: MdzipMarkdownRenderContext,
+    generation: number,
     animateImageHydration: boolean
   ): { image: HTMLImageElement; source: string }[] {
     if (!this.assetSession) {
@@ -2668,6 +2681,22 @@ export class MdzipWorkspaceView {
           if (alignClass) {
             image.classList.add(alignClass);
           }
+          continue;
+        }
+        const known = this.assetSession.resolveKnownImage(source, context.currentPath);
+        if (known) {
+          if (known.width && known.height && !image.hasAttribute('width') && !image.hasAttribute('height')) {
+            image.setAttribute('width', String(known.width));
+            image.setAttribute('height', String(known.height));
+          }
+          // No slot wrapper on this path — same direct-on-image alignment as
+          // the external-URL branch above, not the slot's own align classes.
+          const alignClass = rawHtmlImageAlignClass(image);
+          if (alignClass) {
+            image.classList.add(alignClass);
+          }
+          this.attachImageLoadHandlers(image, source, known.url, context, generation);
+          image.setAttribute('src', known.url);
           continue;
         }
         image.removeAttribute('src');
@@ -3011,7 +3040,7 @@ export class MdzipWorkspaceView {
     const { cursor, mountedRoots } = await this.renderAndMountChunkBatch(chunks, startCursor, context, generation);
     // Same relative order as the non-chunked path: cheap image pass, then
     // the (expensive) slot/observe pass.
-    const pending = this.collectPendingImages(mountedRoots, animateImageHydration);
+    const pending = this.collectPendingImages(mountedRoots, context, generation, animateImageHydration);
     this.hydrateImages(pending, context, generation, animateImageHydration, onImagesSettled);
     return cursor;
   }
@@ -5988,7 +6017,7 @@ export class MdzipWorkspaceView {
         const cursor = this.chunkedRenderState.cursor;
         const { cursor: newCursor, mountedRoots } = await this.renderAndMountChunkBatch(chunks, cursor, context, generation);
         if (generation !== this.previewGeneration || context.signal.aborted) return;
-        allPending.push(...this.collectPendingImages(mountedRoots, animateImageHydration));
+        allPending.push(...this.collectPendingImages(mountedRoots, context, generation, animateImageHydration));
         this.recordChunkProgress(generation, chunks, newCursor);
         onProgress(newCursor, chunks.length);
         if (signal.aborted) return;

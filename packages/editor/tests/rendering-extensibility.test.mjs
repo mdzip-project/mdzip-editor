@@ -789,6 +789,8 @@ test('image hydration animation can run only for initial document load', async (
     assert.equal(firstImage.classList.contains('mdzip-image-loading'), true);
     assert.equal(firstSlot.classList.contains('mdzip-image-open'), false, 'initial slot starts collapsed');
     await view.whenRendered();
+    await waitFor(() => assert.ok(firstImage.getAttribute('src'), 'image resolves to a real src on initial load'));
+    const resolvedSrc = firstImage.getAttribute('src');
 
     view.workspace.editText('# Title\n\n![logo](images/logo.png)\n\nTyping update');
 
@@ -799,11 +801,13 @@ test('image hydration animation can run only for initial document load', async (
 
     const editedImage = container.querySelector('[data-ref="preview-content"] img');
     assert.ok(editedImage, 'image element remains in the edited preview');
-    const editedSlot = editedImage.parentElement;
-    assert.equal(editedSlot.classList.contains('mdzip-image-slot'), true);
-    assert.equal(editedSlot.classList.contains('mdzip-image-open'), true, 'edited slot opens immediately');
-    assert.equal(editedSlot.classList.contains('mdzip-image-animation-off'), true);
+    // This asset was already resolved during the initial load, so a
+    // same-document edit that remounts its chunk applies the already-known
+    // URL immediately (collectPendingImages' resolveKnownImage fast path) —
+    // no slot wrapper, no loading class, no placeholder-then-swap flash.
+    assert.equal(editedImage.getAttribute('src'), resolvedSrc, 'already-resolved src is reapplied immediately, not re-fetched');
     assert.equal(editedImage.classList.contains('mdzip-image-loading'), false, 'edit render does not pulse');
+    assert.ok(!editedImage.parentElement.classList.contains('mdzip-image-slot'), 'no slot wrapper for an already-known image');
   } finally {
     view.destroy();
     container.remove();

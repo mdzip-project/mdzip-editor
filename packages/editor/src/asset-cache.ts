@@ -173,6 +173,17 @@ export class MdzipAssetSession {
     return assetPath ? this.urls.get(assetPath.toLowerCase()) : undefined;
   }
 
+  /** Synchronous counterpart to {@link resolveImage}, for an asset this session has already resolved once this document open. */
+  public resolveKnownImage(path: string, currentPath: string): MdzipResolvedImage | undefined {
+    const assetPath = resolveAssetPath(path, currentPath, this.assets);
+    if (!assetPath) return undefined;
+    const key = assetPath.toLowerCase();
+    const url = this.urls.get(key);
+    if (!url) return undefined;
+    const size = this.sizes.get(key);
+    return size ? { url, width: size.width, height: size.height } : { url };
+  }
+
   public async resolve(path: string, currentPath: string): Promise<string | undefined> {
     if (this.destroyed) return undefined;
     const assetPath = resolveAssetPath(path, currentPath, this.assets);

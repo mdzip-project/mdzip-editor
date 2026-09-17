@@ -120,6 +120,42 @@ test('resolveImage returns the URL plus sniffed intrinsic dimensions', async () 
   session.destroy();
 });
 
+test('resolveKnownImage is undefined before resolution and returns the cached URL+size synchronously after', async () => {
+  const dom = new JSDOM('');
+  const reads = [];
+  const assets = [
+    asset('images/logo.png', PNG_1X1, reads),
+    asset('images/unused.png', PNG_1X1, reads)
+  ];
+  const workspace = {
+    readPathBytes: async (path) => assets.find((item) => item.path === path)?.readBytes()
+  };
+  const session = new MdzipAssetSession(workspace, assets, dom.window.document);
+
+  // Not resolved yet — no network/decode work has happened, so there is
+  // nothing to return synchronously.
+  assert.equal(session.resolveKnownImage('images/logo.png', 'index.md'), undefined);
+
+  const resolved = await session.resolveImage('images/logo.png', 'index.md');
+
+  // Now that it's been resolved once, a same-session re-check returns the
+  // exact cached URL and size with no async work at all — this is the fast
+  // path a preview re-mount uses to reapply an already-known image
+  // immediately instead of going through the placeholder/IntersectionObserver
+  // hydration cycle meant for a genuinely new image.
+  const known = session.resolveKnownImage('images/logo.png', 'index.md');
+  assert.ok(known);
+  assert.equal(known.url, resolved.url);
+  assert.equal(known.width, 1);
+  assert.equal(known.height, 1);
+
+  // Still undefined for a real asset that exists but was never resolved,
+  // and for a path that doesn't match any asset at all.
+  assert.equal(session.resolveKnownImage('images/unused.png', 'index.md'), undefined);
+  assert.equal(session.resolveKnownImage('images/missing.png', 'index.md'), undefined);
+  session.destroy();
+});
+
 test('resolveDataUrl returns a data: URL fallback regardless of object-URL support', async () => {
   // Stub createObjectURL so resolve() returns blob:, proving resolveDataUrl is
   // an independent data: path (the CSP-blocked-blob recovery in the view).

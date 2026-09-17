@@ -1,46 +1,38 @@
 Status: ready-to-commit
-Last: Renamed the front matter option expandable to collapsible (feedback)
+Last: Image hydration fast path — already-resolved images no longer flash on re-mount
 
-Front matter parsing + configurable rendering is implemented across
-`@mdzip/editor` core and the `editor-react`/`editor-vue`/`editor-ng`
-wrappers (see prior entries in this file's history / CHANGELOG.md's
-Unreleased section): `enabled` / `display` (table|raw) / `collapsible` /
-`label` (custom string or the `'first-line'` sentinel).
+Kyle reported the preview visibly flashing embedded images on unrelated
+edits, and confirmed it by comparing versions: mdzip-studio v1.3.20 does not
+have the issue, the current published 1.4.0 does.
 
-Kyle's feedback on the naming: "expandable doesn't make sense, the option is
-really if it is collapsable or not." Renamed `expandable` -> `collapsible`
-(same boolean semantics — `true` default wraps the panel in `<details>`,
-`false` renders a static block; no value inversion, just the name). It's a
-real accuracy fix, not just cosmetic: the panel starts *open*, so "can this
-be collapsed" describes the actual affordance better than "can this be
-expanded" (which implies starting closed).
+Diffed `view.ts` between `v1.3.20` and `v1.4.0` directly to find the cause.
+In v1.3.20, `mountProgressivePreview` created each image's slot and started
+`resolveImage()` immediately, synchronously, no intersection check. Commit
+`f5da4a5` (progressive/chunked rendering) split this into
+`collectPendingImages` (still sync) + `hydrateImages`, which now creates an
+`IntersectionObserver` and only calls `resolveImage()` once its callback
+confirms the image is near the viewport — a real async detour v1.3.20 never
+had. Every re-mount of a chunk containing an image now pays that detour
+again, even for an image already fully resolved earlier in the session:
+a fresh, blank `<img>` sits there for at least one intersection-callback
+tick before resolution even restarts.
 
-Renamed everywhere the field name appears as an identifier or in prose:
-`packages/editor/src/front-matter-extension.ts` (the option itself + the
-`renderPanel` check), its test file, all three wrapper README prop tables
-and test files (`expandable: false` -> `collapsible: false` in the
-passthrough-test object literals), and the root CHANGELOG.md entry. The
-wrapper packages' own source needed no changes — `frontMatter` passes
-through them as an opaque `MdzipFrontMatterOptions`, so the field name never
-appears as an identifier there. Also renamed throughout
-`mdzip.org/editor-demo/app` (checkbox id `frontmatter-expandable-toggle` ->
-`frontmatter-collapsible-toggle`, its label "FM expandable" -> "FM
-collapsible", `DemoFrontMatterChoice.expandable` -> `.collapsible`, and the
-matching state var/listener/status-line text in `main.ts`).
+Fix: `MdzipAssetSession` gets a new synchronous `resolveKnownImage(path,
+currentPath)` (asset-cache.ts) — mirrors `resolveImage` but reads only the
+already-cached URL+size, no async work. `collectPendingImages` (view.ts)
+checks it first for every archive-relative image: a cache hit applies the
+URL immediately, in place, with no slot wrapper, no loading class, and no
+`hydrateImages`/`IntersectionObserver` involvement at all — matching how an
+external image is already handled. Only a genuinely first-time image (never
+resolved this session) still goes through the async placeholder path.
 
-Verified: full editor suite (`node --test` incl. all 15 front-matter cases)
-and vitest pass; editor-react/-vue/-ng each pass their existing suite plus
-the renamed `frontMatter` passthrough test; `vite build --base ./` for
-editor-demo/app succeeds (same three pre-existing, unrelated `tsc --noEmit`
-artifacts as before — Uint8Array generics, a duplicate-Vue-copy prop-type
-blowup from linking, vite.config.ts's `node:url` types — none block the
-actual esbuild-based build). Confirmed via Playwright against both the dev
-server and the IIS site: the new `#frontmatter-collapsible-toggle` id is
-present and working (toggling it switches the default-loaded
-developer-guide.mdz's front matter panel between `<details>` and the static
-`<div>` variant), the old `#frontmatter-expandable-toggle` id is gone. Not
-yet committed — layered on top of the already-uncommitted front matter work
-from earlier in this session.
+Verified: 257 `node --test` cases (new `resolveKnownImage` unit test in
+asset-cache.test.mjs; updated the one existing test whose assertions
+described the old "still slotted, just not animated" behavior — now
+correctly asserts no slot at all for a known image) + 49 vitest, all green;
+lint clean. Not yet built/redeployed to mdzip.org's demo under this specific
+commit boundary — see the next commit for the reconciliation work layered on
+top and the combined redeploy.
 
 <!-- Dashboard reads these two lines.
      Status: idle | in-progress | awaiting-test | ready-to-commit | blocked
