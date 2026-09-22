@@ -1,50 +1,73 @@
 Status: ready-to-commit
-Last: Fixed a real race in reconciliation — an edit landing mid-mount could duplicate/orphan preview DOM
+Last: Fixed editor/preview scroll jumping on edit (#46), plus webview bundle-size fix (#45)
 
-Kyle spotted this from a screenshot: after a minor edit, the preview pane
-showed unrelated later-document content stacked at the top instead of the
-front matter/heading he was editing near. Correctly read as a genuine
-reconciliation bug, not a scroll artifact.
+Two independent pieces of work, both verified against real reproductions
+(not just synthetic tests) and ready to commit.
 
-Root cause: `chunkedRenderState.cursor` is only updated *after* an edit's
-batch mount (cold start's initial batch, or a reconciliation's replacement
-middle range) fully completes — but `updatePreview`'s `reconcileEligible`
-check only required the state to exist and match the current generation, not
-that any of its own async mounting had actually finished. If a second edit
-(or the tail end of the initial cold-start mount) landed while a batch mount
-for the *same* generation was still in flight — a real possibility once
-`renderChunk` genuinely crosses a macrotask boundary (an async extension, or
-`mountAllChunksEagerly`'s `requestAnimationFrame` yields between batches,
-matching ordinary typing speed against non-trivial documents) — the new
-reconciliation would diff against a `cursor`/`records` snapshot that didn't
-yet reflect the in-flight mount's real progress. The in-flight mount's own
-generation guard stops it from appending *more* once superseded, but never
-retroactively removes what it had already appended in earlier loop
-iterations of the same call — those nodes were simply orphaned, duplicated
-alongside whatever the newer operation mounted in their place.
+## Scroll jumping on edit (#46)
 
-Fix: `chunkedRenderState` gains a `mounting: boolean` field, true for the
-whole duration of any edit-triggered batch mount (cold-start's initial
-batch/eager mount, a reconciliation's middle-mount, a sentinel-triggered
-lazy continuation, and Copy All's force-drain), false once it settles.
-`reconcileEligible` now also requires `!mounting`. When that fails, the
-existing "not eligible" path already does a full reset — `replaceChildren()`
-unconditionally wipes any orphaned nodes the stale in-flight mount left
-behind, so falling back is always correct, just loses the reconciliation
-optimization for that one edit (rare in practice — requires typing during a
-render that's still crossing an macrotask boundary).
+Kyle reported both the source editor and the preview jumping scroll
+position — sometimes on every keystroke, sometimes seconds later,
+decoupled from any edit — on a real file with images and a mermaid
+diagram. Every fix below was driven by live debug logging added to a test
+build and read back from Kyle's actual DevTools console; none of this
+reproduced in a synthetic repro, and three earlier attempted fixes each
+turned out to be real but insufficient on their own. Root cause was two
+independent, compounding problems:
 
-Verified: added two tests to `preview-chunking.test.mjs` using a
-`transformHtml` extension with a real `setTimeout`-based delay (so the mount
-genuinely spans a macrotask, the same condition needed for a real keystroke
-to land mid-mount) — one edit landing during the initial cold-start mount,
-one landing during a prior edit's own reconciliation. Confirmed both
-actually catch the bug: temporarily reverted the `mounting` guard and
-re-ran — both failed with duplicated/missing paragraphs, exactly the
-reported symptom; restored the fix and both pass. Full suite: 267 `node
---test` + 49 vitest, all green; `npm run verify` clean across every wrapper
-package. Redeployed to mdzip.org's `demo/`/`dist/` (IIS) via the same manual
-pipeline as the two prior fixes.
+1. **Cross-pane propagation of non-user scroll events.** An edit that
+   changes a mounted element's height (mermaid re-render, image decode,
+   CodeMirror's own line-height re-measurement) can produce a genuine,
+   non-echo `scroll` event with no explicit write behind it — native CSS
+   scroll anchoring, or CodeMirror's own internal viewport/anchor
+   recalculation, silently adjusting `scrollTop` (visible at one point as a
+   `Viewport failed to stabilize` console warning). Indistinguishable from
+   a real user scroll to the editor/preview sync listeners, so it
+   propagated to the other pane. Fixed by requiring positive evidence of
+   user intent: `syncScrollFromPreview`/`syncScrollToPreview` now only act
+   within a short window after a genuine wheel/touch/mousedown gesture on
+   that specific pane — deliberately not `keydown` on the editor side,
+   since `.cm-scroller` receives every keystroke typed, not just
+   navigation keys (a real bug in an earlier iteration: ordinary typing
+   kept the gesture window "warm", letting edit-driven scroll noise
+   through on every keystroke).
+2. **The preview's own scroll position getting silently clamped.** Every
+   preview re-render — a chunk reconcile or a full cold-start reset — has
+   a real window where the preview is shorter than before (old DOM torn
+   down, replacement mounted asynchronously). If scroll position no longer
+   fits that transient shrink, the browser clamps `scrollTop` and never
+   un-clamps once the real height returns. Fixed by capturing `scrollTop`
+   at the start of every `updatePreview()` call and restoring it in
+   `firePreviewRendered`, the one point every rendering path (reconciled or
+   cold-start) already calls once mounted.
+
+Also landed along the way, both real fixes but insufficient alone against
+the two root causes above: `overflow-anchor: none` on both scroll panes,
+and a real-scrollable-overflow guard on `syncScrollToPreview`'s "is the
+editor at the document's end" check (a document that simply fits within
+the viewport was tripping it).
+
+Verified: added tests to `preview-copy-all.test.mjs` covering the
+gesture-gate settle window and both scroll-clamp scenarios (reconcile and
+cold-start) — jsdom doesn't implement real layout, so these simulate the
+browser's clamp-on-shrink behavior directly at the DOM-mutation point.
+Confirmed each new test fails without its fix and passes with it. Full
+suite: 271 `node --test` + 49 vitest, all green.
+
+## Reduce webview bundle size (#45)
+
+`highlight.js`'s default entry point registers all ~384 bundled language
+grammars at import time. New `highlight-core.ts` imports
+`highlight.js/lib/core` plus only the languages
+`DEFAULT_CODE_BLOCK_LANGUAGES` (view.ts) actually offers in the code-block
+picker; `rendering.ts` and `front-matter-extension.ts` import from it
+instead of the raw package. A fenced code block naming an uncurated
+language now renders unhighlighted instead of highlighted — both call
+sites already guarded with `hljs.getLanguage(language)` before
+highlighting, so this degrades the same way an unrecognized language name
+already did.
+
+Measured: mdzip-vscode's webview bundle dropped from ~5.3MB to ~4.3MB.
 
 <!-- Dashboard reads these two lines.
      Status: idle | in-progress | awaiting-test | ready-to-commit | blocked

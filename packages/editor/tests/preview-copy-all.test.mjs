@@ -911,10 +911,31 @@ test('a clipboard write that never settles is treated as a failure instead of ha
 // from where it actually clamps scrollTop (confirmed live against an
 // 88,000-line file), so a fixed pixel epsilon never matched there either.
 function setEditorAtDocEnd(view, atEnd) {
+  // Bypass the post-edit settle window (see `lastContentChangeTime` in
+  // view.ts) — these tests call the sync methods directly, immediately after
+  // mounting (which itself runs updatePreview once for the initial render),
+  // and aren't testing the settle window itself.
+  view.lastContentChangeTime = 0;
+  // Bypass the user-gesture gate (see `lastEditorGestureTime`) the same
+  // way — these tests simulate the editor already being scrolled to a given
+  // position via a direct `syncScrollToPreview()` call, not a real wheel/
+  // touch/keyboard gesture, and aren't testing the gesture gate itself.
+  view.lastEditorGestureTime = performance.now();
   Object.defineProperty(view.cmEditor, 'viewport', {
     configurable: true,
     get: () => ({ from: 0, to: atEnd ? view.cmEditor.state.doc.length : 10 })
   });
+  // jsdom leaves every element's scrollHeight/clientHeight at 0, which would
+  // make the real-overflow guard (a short document that trivially satisfies
+  // `viewport.to >= doc.length` because it fits within the viewport, with
+  // nothing to actually scroll) indistinguishable from these tests' intended
+  // scenario: a large document genuinely scrolled to its true end. Stub
+  // real overflow on the scroller regardless of `atEnd` — these tests are
+  // about reaching vs. leaving the bottom of a long document, not about
+  // whether the document has any scrollable content at all.
+  const cmScroller = view.cmEditor.dom.querySelector('.cm-scroller');
+  Object.defineProperty(cmScroller, 'scrollHeight', { configurable: true, value: 5000 });
+  Object.defineProperty(cmScroller, 'clientHeight', { configurable: true, value: 500 });
 }
 
 test('scrolling the editor to its true bottom routes to the force-drain path, not an ordinary ratio-based jump', async () => {
@@ -932,6 +953,176 @@ test('scrolling the editor to its true bottom routes to the force-drain path, no
     view.syncScrollToPreview();
 
     assert.equal(bottomDrainCalls, 1, 'editor at the document end routes through the force-drain path');
+  } finally {
+    cleanup();
+  }
+});
+
+test('a document that fits entirely within the viewport does not route to the force-drain path', async () => {
+  // Regression test: `viewport.to >= doc.length` is also trivially true for
+  // any document short enough that it never needs scrolling at all — that
+  // is not the same thing as "the user scrolled to the true end of a long
+  // document," and treating it the same way used to force-drain every
+  // remaining chunk and jump the preview to its bottom off of an incidental
+  // scroll event mid-edit (most visible on documents with images, since
+  // per-chunk image-slot mounting is slow enough to leave a real window
+  // where a chunk is still unmounted right after an edit). See the
+  // `hasScrollableOverflow` guard in `syncScrollToPreview`.
+  const { view, cleanup } = await mountView({
+    progressiveTextRendering: true,
+    source: manyParagraphMarkdown(800)
+  });
+  try {
+    assert.ok(view.chunkedRenderState, 'sanity: more of the document is still unmounted');
+    view.lastContentChangeTime = 0; // bypass the post-edit settle window — see setEditorAtDocEnd's comment
+    Object.defineProperty(view.cmEditor, 'viewport', {
+      configurable: true,
+      get: () => ({ from: 0, to: view.cmEditor.state.doc.length })
+    });
+    // No stubbed overflow this time — scrollHeight/clientHeight stay at
+    // jsdom's default 0/0, i.e. "the whole document is visible already."
+    let bottomDrainCalls = 0;
+    view.syncScrollToPreviewBottom = () => { bottomDrainCalls += 1; return Promise.resolve(); };
+
+    view.syncScrollToPreview();
+
+    assert.equal(bottomDrainCalls, 0, 'a fully-visible document must not force-drain or jump to the bottom');
+  } finally {
+    cleanup();
+  }
+});
+
+test('scroll-sync is suppressed for a brief settle window right after a content change, then resumes', async () => {
+  // Regression coverage for the "editor and preview both jump on the first
+  // keystroke" report: a content change that alters a mounted element's
+  // rendered height (mermaid re-render, image decode, CodeMirror's own
+  // line-height re-measurement) can produce a genuine, non-echo 'scroll'
+  // event with no explicit write behind it — native scroll anchoring or
+  // CodeMirror's internal viewport/anchor recalculation adjusting scrollTop
+  // on its own. `lastContentChangeTime` gives settling layout a brief window
+  // to finish before treating a scroll event as sync-worthy.
+  const { view, cleanup } = await mountView({
+    progressiveTextRendering: true,
+    source: manyParagraphMarkdown(800)
+  });
+  try {
+    let cmScrollTop = 0;
+    const cmScroller = view.cmEditor.dom.querySelector('.cm-scroller');
+    Object.defineProperty(cmScroller, 'scrollTop', {
+      configurable: true,
+      get: () => cmScrollTop,
+      set: (value) => { cmScrollTop = value; }
+    });
+    Object.defineProperty(cmScroller, 'scrollHeight', { configurable: true, value: 5000 });
+    Object.defineProperty(cmScroller, 'clientHeight', { configurable: true, value: 500 });
+    Object.defineProperty(view.elPreviewPane, 'scrollHeight', { configurable: true, value: 2000 });
+    Object.defineProperty(view.elPreviewPane, 'clientHeight', { configurable: true, value: 500 });
+    Object.defineProperty(view.elPreviewPane, 'scrollTop', { configurable: true, value: 300 });
+    // This test is specifically about the settle window, not the user-gesture
+    // gate — simulate a fresh gesture so that gate doesn't also suppress it.
+    view.lastPreviewGestureTime = performance.now();
+
+    // mountView's initial render already ran updatePreview, so
+    // lastContentChangeTime is naturally recent — still inside the window.
+    view.syncScrollFromPreview();
+    assert.equal(cmScrollTop, 0, 'a scroll event within the settle window must not sync to the editor');
+
+    // Simulate the settle window having elapsed.
+    view.lastContentChangeTime = performance.now() - 1000;
+    view.syncScrollFromPreview();
+    assert.notEqual(cmScrollTop, 0, 'the same scroll event must sync once the settle window has passed');
+  } finally {
+    cleanup();
+  }
+});
+
+test('an edit-driven chunk reconcile restores preview scroll position across the teardown/remount gap', async () => {
+  // Regression coverage for the "view pane scrolled to the top" report:
+  // reconciling a changed chunk tears down its old DOM synchronously but
+  // mounts the replacement asynchronously (mountReconciledMiddle awaits the
+  // actual render). In a real browser, if that transient shrink makes the
+  // current scrollTop no longer fit, the browser clamps it (typically to 0)
+  // and never un-clamps once the replacement's DOM restores the true
+  // height — confirmed via live debug logging against a real document with
+  // a mermaid diagram, where no resize was ever observed (ruling out a
+  // reflow-without-compensation explanation) yet scrollTop still jumped to
+  // exactly 0. jsdom doesn't implement real layout so it won't clamp on its
+  // own; this simulates that exact clamp at the moment the old chunk's DOM
+  // is removed, then verifies applyChunkReconciliation/mountReconciledMiddle
+  // explicitly restores the pre-edit value once the replacement is mounted.
+  const { view, cleanup } = await mountView({
+    progressiveTextRendering: true,
+    source: manyParagraphMarkdown(800)
+  });
+  try {
+    assert.ok(view.chunkedRenderState, 'sanity: still unmounted chunks (large doc)');
+
+    let previewScrollTop = 500;
+    Object.defineProperty(view.elPreviewPane, 'scrollTop', {
+      configurable: true,
+      get: () => previewScrollTop,
+      set: (value) => { previewScrollTop = value; }
+    });
+
+    const originalTeardown = view.teardownChunkRecord.bind(view);
+    view.teardownChunkRecord = (record) => {
+      originalTeardown(record);
+      // Simulate the browser clamping scrollTop to fit the now-shrunk
+      // content, the instant the old chunk's DOM is removed.
+      previewScrollTop = 0;
+    };
+
+    // Edits "Paragraph number 0" — the very first chunk — so the reconcile's
+    // prefix match is empty and the first (already-mounted) chunk is what
+    // gets torn down and remounted, exactly the case that shrinks content
+    // above/at a scroll position set deeper into the document.
+    view.workspace.editText(manyParagraphMarkdown(800).replace('Paragraph number 0 ', 'REPLACED PARAGRAPH ZERO '));
+
+    await waitFor(() => assert.equal(previewScrollTop, 500), 200);
+  } finally {
+    cleanup();
+  }
+});
+
+test('a cold-start preview reset (not a reconcile) also restores preview scroll position', async () => {
+  // Regression coverage for the same "view pane scrolled" report, but for
+  // the *other* rendering path: an edit lands while a prior async mount is
+  // still in flight (chunkedRenderState.mounting), so updatePreview's
+  // reconcileEligible check fails and it falls through to the full
+  // cold-start reset (mountChunkedPreview's unconditional
+  // `elPreviewContent.replaceChildren()`) instead of a reconcile — confirmed
+  // live as the actual path taken on a real edit where the earlier
+  // reconcile-only fix didn't help. The fix now lives in firePreviewRendered
+  // (called by every rendering path, reconciled or cold-start), not in the
+  // reconcile path specifically.
+  const { view, cleanup } = await mountView({
+    progressiveTextRendering: true,
+    source: manyParagraphMarkdown(800)
+  });
+  try {
+    assert.ok(view.chunkedRenderState, 'sanity: still unmounted chunks (large doc)');
+
+    let previewScrollTop = 500;
+    Object.defineProperty(view.elPreviewPane, 'scrollTop', {
+      configurable: true,
+      get: () => previewScrollTop,
+      set: (value) => { previewScrollTop = value; }
+    });
+
+    const originalReplaceChildren = view.elPreviewContent.replaceChildren.bind(view.elPreviewContent);
+    view.elPreviewContent.replaceChildren = (...args) => {
+      originalReplaceChildren(...args);
+      // Simulate the browser clamping scrollTop to fit the now-empty
+      // content, the instant the cold-start reset wipes everything.
+      previewScrollTop = 0;
+    };
+
+    // Force reconcileEligible to fail so this edit takes the cold-start path.
+    view.chunkedRenderState.mounting = true;
+
+    view.workspace.editText(manyParagraphMarkdown(800).replace('Paragraph number 0 ', 'REPLACED PARAGRAPH ZERO '));
+
+    await waitFor(() => assert.equal(previewScrollTop, 500), 200);
   } finally {
     cleanup();
   }

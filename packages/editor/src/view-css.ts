@@ -917,6 +917,19 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root .preview-pane {
   overflow: auto;
+  /* Chrome's scroll-anchoring tries to keep the same visible content pinned
+   * when a layout shift happens above the viewport (e.g. a chunk reconcile
+   * re-rendering a mermaid diagram to a different height, or an image
+   * finishing decode) by silently adjusting scrollTop on its own — firing a
+   * genuine, non-echo 'scroll' event with no explicit write behind it. The
+   * editor/preview scroll-sync listeners can't distinguish that from a real
+   * user scroll, so they propagate it to the other pane, whose own
+   * anchoring can then react in turn, compounding into a visible jump on
+   * the very next edit after a layout-affecting mount. Disabling anchoring
+   * here means a layout shift leaves scrollTop exactly where it was
+   * instead of "helpfully" moving it.
+   */
+  overflow-anchor: none;
 }
 
 .mdzip-root .preview-pane:focus {
@@ -936,6 +949,16 @@ export const WORKSPACE_CSS = `
 .mdzip-root .edit-pane {
   overflow: hidden;
   flex-direction: column;
+}
+
+/* See the matching comment on .preview-pane's overflow-anchor: none — same
+ * reasoning applies here. CodeMirror's own line-height re-measurement after
+ * an edit can shift content above the viewport too, and native scroll
+ * anchoring reacting to that is indistinguishable, from the sync listener's
+ * side, from the user actually scrolling.
+ */
+.mdzip-root .cm-scroller {
+  overflow-anchor: none;
 }
 
 .mdzip-root .edit-pane.active {

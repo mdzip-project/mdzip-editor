@@ -1701,6 +1701,54 @@ export class MdzipWorkspaceView {
   // syncScrollFromPreview/syncScrollToPreview).
   private lastSyncedEditorScrollTop: number | null = null;
   private lastSyncedPreviewScrollTop: number | null = null;
+  // Timestamp of the most recent updatePreview() call (edit-driven or
+  // otherwise). A content change that alters a mounted element's rendered
+  // height (a chunk reconcile re-rendering a mermaid diagram, an image
+  // finishing decode, CodeMirror re-measuring line heights after the edit
+  // that triggered it) can cause a 'scroll' event with no explicit write
+  // behind it — the browser's own scroll anchoring, or CodeMirror's internal
+  // viewport/anchor recalculation, adjusting scrollTop on its own to keep
+  // content visually pinned. That's indistinguishable from a real user
+  // scroll to the listeners below, so within a brief window after a content
+  // change we treat scroll events as noise from settling layout rather than
+  // sync-worthy user intent — otherwise this class's own ratio-based writes
+  // (raw pixel values that don't correspond to any document position
+  // CodeMirror has actually measured) can themselves destabilize
+  // CodeMirror's virtualized viewport measurement mid-settle.
+  private lastContentChangeTime = 0;
+  private static readonly SCROLL_SYNC_SETTLE_MS = 250;
+  // Timestamp of the most recent genuine user-input gesture (wheel, touch,
+  // mousedown — including a scrollbar-thumb drag, which lands on the same
+  // element — or a key press) on each pane. Content-change-adjacent 'scroll'
+  // events (see lastContentChangeTime above) turned out to be one of several
+  // distinct ways a non-user-driven scroll can fire: native CSS scroll
+  // anchoring reacting to an unrelated element's height changing — a chunk
+  // reconcile, an image decode, or (confirmed live) an image/mermaid reveal
+  // transition finishing several seconds after the edit that triggered it —
+  // can smoothly drive scrollTop, frame by frame, all the way to a pane's
+  // absolute end, entirely decoupled from any edit and well outside any
+  // settle window. Rather than continuing to special-case each newly
+  // discovered non-user cause after the fact, sync is now gated on positive
+  // evidence of real user intent: a 'scroll' event is only treated as
+  // sync-worthy if a genuine input gesture on that same pane happened very
+  // recently. Everything else — anchoring, our own reconcile restores,
+  // CodeMirror's internal viewport correction — is left alone by definition.
+  private lastEditorGestureTime = 0;
+  private lastPreviewGestureTime = 0;
+  private static readonly SCROLL_SYNC_GESTURE_WINDOW_MS = 500;
+  // Every preview re-render — whether reconciled or a full cold-start reset
+  // (mountChunkedPreview unconditionally does `elPreviewContent.
+  // replaceChildren()`) — has a real window where the preview is shorter
+  // than before (old DOM torn down, replacement mounted asynchronously: a
+  // chunk reconcile, a full reset, mermaid's async completion). If the
+  // current scroll position no longer fits that transient shrink, the
+  // browser clamps scrollTop to what does fit and never un-clamps once the
+  // replacement's DOM restores the true height. Captured once per
+  // updatePreview() call (before anything moves), restored in
+  // firePreviewRendered — the one point every rendering path (reconcile,
+  // cold-start, progressive, eager, mermaid-triggered or not) already calls
+  // once its content is back in the DOM.
+  private pendingPreviewScrollRestore: { scrollTop: number; generation: number } | null = null;
   // Guards syncScrollToPreviewBottom against overlapping drains: set to the
   // chunkedRenderState generation currently being force-drained, null when
   // none is in flight. A second bottom-edge sync that arrives mid-drain
@@ -2515,6 +2563,10 @@ export class MdzipWorkspaceView {
   }
 
   private updatePreview(snapshot: MdzipWorkspaceSnapshot, entryClaimed: boolean): void {
+    this.lastContentChangeTime = performance.now();
+    // Captured before anything below can move it — see
+    // `pendingPreviewScrollRestore`'s doc comment.
+    const previewScrollTopBeforeUpdate = this.elPreviewPane.scrollTop;
     if (entryClaimed) {
       // The entry renderer owns the pane stack; release preview resources so
       // a later fallback re-renders from scratch.
@@ -2565,6 +2617,7 @@ export class MdzipWorkspaceView {
       this.destroyPreviewHandles();
     }
     const generation = ++this.previewGeneration;
+    this.pendingPreviewScrollRestore = { scrollTop: previewScrollTopBeforeUpdate, generation };
     this.previewHydrated = false;
     this.previewMemo = {
       path: snapshot.currentPath,
@@ -3779,10 +3832,26 @@ export class MdzipWorkspaceView {
     if (generation !== this.previewGeneration) {
       return;
     }
+    this.restorePendingPreviewScroll(generation);
     try {
       this.options.onPreviewRendered?.(snapshot);
     } catch (error) {
       this.options.onFailed?.(error);
+    }
+  }
+
+  /** See `pendingPreviewScrollRestore`'s doc comment. */
+  private restorePendingPreviewScroll(generation: number): void {
+    const pending = this.pendingPreviewScrollRestore;
+    if (!pending || pending.generation !== generation) {
+      return;
+    }
+    this.pendingPreviewScrollRestore = null;
+    if (this.elPreviewPane.scrollTop !== pending.scrollTop) {
+      this.syncing = true;
+      this.lastSyncedPreviewScrollTop = pending.scrollTop;
+      this.elPreviewPane.scrollTop = pending.scrollTop;
+      this.syncing = false;
     }
   }
 
@@ -4109,6 +4178,19 @@ export class MdzipWorkspaceView {
     // Attach scroll listener to sync with preview
     const scroller = editor.dom.querySelector('.cm-scroller');
     if (scroller) {
+      // No 'keydown' here, deliberately: .cm-scroller receives every keystroke
+      // typed into the editor, not just navigation keys, so it can't tell
+      // "user pressed PageDown to scroll" apart from "user typed a letter" —
+      // confirmed live, where ordinary typing was arming this gesture window
+      // and letting CodeMirror's own small post-edit viewport-correction
+      // scroll (a real native behavior) through as if it were a deliberate
+      // scroll, on every keystroke. Wheel/touch/mousedown (which also covers
+      // a scrollbar-thumb drag, since that lands on this same element) are
+      // unambiguous and cover the vast majority of real scrolling.
+      const markEditorGesture = () => { self.lastEditorGestureTime = performance.now(); };
+      scroller.addEventListener('wheel', markEditorGesture, { passive: true });
+      scroller.addEventListener('touchstart', markEditorGesture, { passive: true });
+      scroller.addEventListener('mousedown', markEditorGesture);
       scroller.addEventListener('scroll', () => self.syncScrollToPreview());
     }
 
@@ -4935,6 +5017,11 @@ export class MdzipWorkspaceView {
       }
     });
 
+    const markPreviewGesture = () => { this.lastPreviewGestureTime = performance.now(); };
+    this.elPreviewPane.addEventListener('wheel', markPreviewGesture, { passive: true });
+    this.elPreviewPane.addEventListener('touchstart', markPreviewGesture, { passive: true });
+    this.elPreviewPane.addEventListener('mousedown', markPreviewGesture);
+    this.elPreviewPane.addEventListener('keydown', markPreviewGesture);
     this.elPreviewPane.addEventListener('scroll', () => this.syncScrollFromPreview());
     // Gives the pane logical focus on click so a subsequent Ctrl/Cmd+A (below)
     // can be scoped to it. tabindex="-1" keeps it out of Tab order; this is
@@ -7471,6 +7558,12 @@ export class MdzipWorkspaceView {
     if (this.syncing || !this.cmEditor || this.layout !== 'split') {
       return;
     }
+    if (performance.now() - this.lastPreviewGestureTime > MdzipWorkspaceView.SCROLL_SYNC_GESTURE_WINDOW_MS) {
+      return;
+    }
+    if (performance.now() - this.lastContentChangeTime < MdzipWorkspaceView.SCROLL_SYNC_SETTLE_MS) {
+      return;
+    }
     const currentTop = this.elPreviewPane.scrollTop;
     // Recognize this event as the echo of our own prior write (from
     // syncScrollToPreview) by comparing values instead of racing timing.
@@ -7502,6 +7595,12 @@ export class MdzipWorkspaceView {
     if (this.syncing || !this.cmEditor || this.layout !== 'split') {
       return;
     }
+    if (performance.now() - this.lastEditorGestureTime > MdzipWorkspaceView.SCROLL_SYNC_GESTURE_WINDOW_MS) {
+      return;
+    }
+    if (performance.now() - this.lastContentChangeTime < MdzipWorkspaceView.SCROLL_SYNC_SETTLE_MS) {
+      return;
+    }
     const cmScroller = this.cmEditor.dom.querySelector('.cm-scroller');
     if (!cmScroller) {
       return;
@@ -7528,7 +7627,22 @@ export class MdzipWorkspaceView {
     // CodeMirror has actually decided to draw for the current scroll
     // position, so comparing it to the document length is exact regardless
     // of any height estimation drift.
-    const atDocEnd = this.cmEditor.viewport.to >= this.cmEditor.state.doc.length;
+    //
+    // `viewport.to >= doc.length` alone is a false positive whenever the
+    // whole document already fits within the editor's visible area — there
+    // is no scrolling at all in that case, so `viewport.to` trivially covers
+    // the full document from position 0 regardless of scroll intent. Without
+    // the overflow check below, a short-to-medium document (especially one
+    // with images, which slow down per-chunk mounting enough to leave a real
+    // window where `cursor < records.length`) could hit this branch off of
+    // an incidental scroll event fired mid-edit — e.g. focus or cursor
+    // movement nudging `scrollTop` by a sub-pixel amount — and force-drain
+    // plus jump the preview to its bottom for no reason the user asked for,
+    // which (via the echo-breaking reflow that follows, since late-arriving
+    // image layout shifts the "bottom" after the jump) can drag the editor's
+    // own scroll down to match through `syncScrollFromPreview`'s echo path.
+    const hasScrollableOverflow = editorHeight > 0;
+    const atDocEnd = hasScrollableOverflow && this.cmEditor.viewport.to >= this.cmEditor.state.doc.length;
     if (atDocEnd && this.chunkedRenderState && this.chunkedRenderState.cursor < this.chunkedRenderState.records.length) {
       void this.syncScrollToPreviewBottom();
       return;

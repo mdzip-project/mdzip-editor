@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import hljs from 'highlight.js';
+import hljs from './highlight-core.js';
 import { Marked, type Token, type Tokens, type TokensList } from 'marked';
 
 export type { Token, TokensList };

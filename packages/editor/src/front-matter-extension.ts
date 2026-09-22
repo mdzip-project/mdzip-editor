@@ -1,4 +1,4 @@
-import hljs from 'highlight.js';
+import hljs from './highlight-core.js';
 import type { MdzipFrontMatter } from './front-matter.js';
 import { parseFrontMatter } from './front-matter.js';
 import type { MdzipMarkdownRenderContext, MdzipMarkdownRenderExtension } from './rendering.js';

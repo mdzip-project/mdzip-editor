@@ -21,6 +21,57 @@
   `editor-react`, `editor-vue`, and `editor-ng` wrappers (diffed by deep
   equality, applied in place — never a workspace rebuild).
 
+### Changed
+- Syntax highlighting now imports `highlight.js/lib/core` plus a curated set
+  of languages (`highlight.js/lib/languages/*`, matching
+  `DEFAULT_CODE_BLOCK_LANGUAGES`) instead of the full `highlight.js` package,
+  which registers every bundled grammar at import time. Shrinks the VS Code
+  extension's webview bundle from ~5.3MB to ~4.3MB. A fenced code block or
+  front-matter block naming a language outside the curated set now renders
+  unhighlighted instead of highlighted — both call sites already guarded with
+  `hljs.getLanguage(language)` before highlighting, so this degrades the same
+  way an unrecognized language name already did. Closes #45.
+
+### Fixed
+- **Editor and preview both jumping scroll position when starting to edit**
+  (reported on a real document with images and a mermaid diagram; every fix
+  below was driven by live debug logging against that file — none of it
+  reproduced in a synthetic test). Root cause was two independent problems
+  compounding each other:
+  - A same-document edit that changes a mounted element's rendered height (a
+    chunk reconcile re-rendering a mermaid diagram, an image finishing
+    decode, CodeMirror re-measuring line heights) can produce a genuine,
+    non-echo `scroll` event with no explicit write behind it — native CSS
+    scroll anchoring, or CodeMirror's own internal viewport/anchor
+    recalculation, silently adjusting `scrollTop` to keep content visually
+    pinned (in the editor's case, sometimes visible in DevTools as a
+    `Viewport failed to stabilize` warning). That's indistinguishable from a
+    real user scroll to the editor/preview scroll-sync listeners, so it
+    propagated to the other pane and could compound further there. Fixed by
+    making sync require positive evidence of user intent instead of trusting
+    every `scroll` event: both `syncScrollFromPreview` and `syncScrollToPreview`
+    now only act within a short window after a genuine wheel/touch/mousedown
+    gesture on that specific pane (deliberately *not* `keydown` on the
+    editor — `.cm-scroller` receives every keystroke typed, not just
+    navigation keys, so it can't tell "user pressed PageDown" apart from
+    "user typed a letter"). `.preview-pane`/`.cm-scroller` also set
+    `overflow-anchor: none`, and `syncScrollToPreview`'s "is the editor at
+    the document's end" check now requires genuine scrollable overflow first
+    (`viewport.to >= doc.length` is also trivially true for a document that
+    simply fits within the visible editor area) — both real, independent
+    fixes, but neither sufficient alone against the anchoring/gesture issue.
+  - Separately, every preview re-render — a reconcile *or* a full cold-start
+    reset (`mountChunkedPreview` unconditionally does `elPreviewContent.
+    replaceChildren()`) — has a real window where the preview is shorter
+    than before (old DOM torn down, replacement mounted asynchronously). If
+    the current scroll position no longer fits that transient shrink, the
+    browser clamps `scrollTop` to what does fit and never un-clamps once the
+    replacement's DOM restores the true height. Fixed by capturing
+    `scrollTop` at the start of every `updatePreview()` call and restoring
+    it in `firePreviewRendered` — the one point every rendering path already
+    calls once its content is back in the DOM.
+  Closes #46.
+
 ## [1.4.0] - 2026-09-08
 
 ### Added
