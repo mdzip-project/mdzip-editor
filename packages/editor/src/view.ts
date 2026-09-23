@@ -110,6 +110,8 @@ import {
   defaultSafeMarkdownRenderer,
   groupTokensIntoChunks,
   chunkSourceKey,
+  tokenEmbedsImage,
+  tokenIsHeading,
   type MdzipEntryRenderContext,
   type MdzipEntryRenderHandle,
   type MdzipEntryRenderer,
@@ -117,6 +119,7 @@ import {
   type MdzipMarkdownRenderer,
   type MdzipMarkdownRenderExtension,
   type MdzipRenderHandle,
+  type MdzipChunkOptions,
   type Token
 } from './rendering.js';
 import { mdzipFrontMatterExtension, type MdzipFrontMatterOptions } from './front-matter-extension.js';
@@ -2389,6 +2392,23 @@ export class MdzipWorkspaceView {
   }
 
   /**
+   * Chunking options combining every registered extension's
+   * {@link MdzipMarkdownRenderExtension.shouldIsolateChunk} — see that doc
+   * comment for why a token an extension owns needs its own chunk regardless
+   * of the size budget — with the same treatment built in for any token that
+   * embeds an image ({@link tokenEmbedsImage}'s doc comment), plus a forced
+   * chunk boundary at every heading ({@link tokenIsHeading}'s doc comment)
+   * so unrelated sections never share a chunk.
+   */
+  private chunkOptions(): MdzipChunkOptions {
+    const extensions = this.pipelineMarkdownExtensions();
+    return {
+      shouldIsolate: (token) => tokenEmbedsImage(token) || extensions.some((ext) => ext.shouldIsolateChunk?.(token)),
+      shouldStartChunk: tokenIsHeading
+    };
+  }
+
+  /**
    * Replaces the view control policy without recreating the workspace or
    * CodeMirror editor. In particular, `lineNumbers` is reconfigured through a
    * CodeMirror compartment so text, selection, focus, scroll, and undo history
@@ -3094,7 +3114,7 @@ export class MdzipWorkspaceView {
     priorState.sentinelHandle?.destroy();
     this.previewHandles = this.previewHandles.filter((h) => h !== priorState.sentinelHandle);
 
-    const newChunks = groupTokensIntoChunks(tokens);
+    const newChunks = groupTokensIntoChunks(tokens, this.chunkOptions());
     const oldRecords = priorState.records;
     const oldCursor = priorState.cursor;
 
@@ -3219,11 +3239,17 @@ export class MdzipWorkspaceView {
       cursor = batch.cursor;
       mountedRoots = mountedRoots.concat(batch.mountedRoots);
     }
-    if (generation !== this.previewGeneration || context.signal.aborted) return;
-
     const carriedSuffixMounted = Math.max(0, oldCursor - oldMiddleEnd);
     const finalCursor = Math.min(records.length, Math.max(cursor, middleEnd) + carriedSuffixMounted);
+    // See armChunkSentinel's mountNext for why this is recorded before the
+    // staleness check: finalCursor already correctly folds in the carried-
+    // forward suffix (chunks beyond the reconciled middle that were already
+    // mounted), so discarding it here just because a newer edit has since
+    // landed would regress chunkedRenderState.cursor back down — causing the
+    // next reconcile to re-arm a sentinel from that stale, lower cursor and
+    // re-mount (duplicate) chunks that are already correctly in the DOM.
     this.recordChunkProgress(generation, records, finalCursor);
+    if (generation !== this.previewGeneration || context.signal.aborted) return;
     if (this.chunkedRenderState?.generation === generation) {
       this.chunkedRenderState.mounting = false;
     }
@@ -3260,7 +3286,7 @@ export class MdzipWorkspaceView {
     this.elPreviewContent.replaceChildren();
     // Also called with no options in renderFullDocumentHtml — see the
     // comment there; keep both call sites' chunking in sync.
-    const chunks = groupTokensIntoChunks(tokens);
+    const chunks = groupTokensIntoChunks(tokens, this.chunkOptions());
     if (chunks.length === 0) {
       this.chunkedRenderState = null;
       this.firePreviewRendered(snapshot, generation);
@@ -3289,8 +3315,10 @@ export class MdzipWorkspaceView {
       void this.mountChunkBatch(records, 0, context, generation, animateImageHydration, () => {
         this.fireAssetsHydrated(snapshot, generation);
       }).then((cursor) => {
-        if (generation !== this.previewGeneration || context.signal.aborted) return;
+        // See armChunkSentinel's mountNext for why this is recorded before
+        // the staleness check below.
         this.recordChunkProgress(generation, records, cursor);
+        if (generation !== this.previewGeneration || context.signal.aborted) return;
         if (this.chunkedRenderState?.generation === generation) {
           this.chunkedRenderState.mounting = false;
         }
@@ -3332,9 +3360,14 @@ export class MdzipWorkspaceView {
         : records.length;
       if (cursorBefore >= records.length) break;
       const { cursor, mountedRoots } = await this.renderAndMountChunkBatch(records, cursorBefore, context, generation);
+      // See armChunkSentinel's mountNext for why this is recorded before the
+      // staleness check: the chunks this batch appended are physically in
+      // the DOM regardless of whether a newer edit has since landed, and
+      // recordChunkProgress's own generation check keeps this a safe no-op
+      // once chunkedRenderState has moved on.
+      this.recordChunkProgress(generation, records, cursor);
       if (generation !== this.previewGeneration || context.signal.aborted) return;
       allPending.push(...this.collectPendingImages(mountedRoots, context, generation, animateImageHydration));
-      this.recordChunkProgress(generation, records, cursor);
       if (cursor >= records.length) break;
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
@@ -3523,8 +3556,18 @@ export class MdzipWorkspaceView {
       }
       void this.mountChunkBatch(records, nextCursor, context, generation, animateImageHydration, () => {})
         .then((newCursor) => {
-          if (generation !== this.previewGeneration || context.signal.aborted) return;
+          // Record whatever this batch actually mounted regardless of
+          // whether a newer edit has since landed — recordChunkProgress's
+          // own generation check already makes this a safe no-op once
+          // chunkedRenderState has moved on. Skipping this call when stale
+          // was a real bug: the chunks this batch appended are physically in
+          // the DOM either way, but a newer edit's reconcile still saw the
+          // *old*, un-advanced cursor and re-armed a sentinel from the same
+          // starting point — re-rendering and re-appending (duplicating)
+          // chunks that were already mounted, visible as an already-settled
+          // image flashing back to broken as a fresh duplicate replaced it.
           this.recordChunkProgress(generation, records, newCursor);
+          if (generation !== this.previewGeneration || context.signal.aborted) return;
           if (this.chunkedRenderState?.generation === generation) {
             this.chunkedRenderState.mounting = false;
           }
@@ -6259,7 +6302,7 @@ export class MdzipWorkspaceView {
     // renderAndMountChunkBatch's caller (mountChunkedPreview) — keep both
     // call sites' chunking in sync, since chunk index is chunkHtmlCache's
     // only key.
-    const chunks = groupTokensIntoChunks(tokens);
+    const chunks = groupTokensIntoChunks(tokens, this.chunkOptions());
     const view = this.elPreviewContent.ownerDocument.defaultView;
     const clock = view?.performance ?? performance;
     const BATCH_TIME_BUDGET_MS = 10;

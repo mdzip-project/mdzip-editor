@@ -1,4 +1,5 @@
-import type { MdzipMarkdownRenderExtension } from './rendering.js';
+import type { Token } from 'marked';
+import type { MdzipMarkdownRenderContext, MdzipMarkdownRenderExtension } from './rendering.js';
 import { sanitizeMdzipHtml } from './rendering.js';
 
 export type MdzipMermaidTheme = 'auto' | 'default' | 'dark' | 'neutral' | 'forest' | 'base';
@@ -111,10 +112,74 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
   const load = options.loadMermaid ?? loadDefaultMermaid;
   let counter = 0;
 
+  // Split so a chunk with no mermaid blocks returns synchronously instead of
+  // through a Promise. Every markdown render extension's transformHtml runs
+  // for every chunk regardless of content — declaring this whole thing async
+  // (as an earlier version did) meant calling it always returned a Promise,
+  // even on this trivial no-op path, forcing the *entire* chunk-render
+  // pipeline (marked's `chainRenderStage`) onto a microtask chain for every
+  // chunk in every document once mermaid is registered, mermaid or not. That
+  // extra always-async hop was implicated in a real, visible per-keystroke
+  // flash in mdzip-studio: it delayed a reconciled chunk's replacement DOM
+  // landing just long enough, on top of everything else already sharing the
+  // event loop, to widen the window where the old chunk's DOM was already
+  // torn down but the new one hadn't landed yet.
+  async function renderMermaidBlocks(
+    template: HTMLTemplateElement,
+    blocks: HTMLElement[],
+    context: MdzipMarkdownRenderContext
+  ): Promise<string> {
+    const doc = requireDocument();
+    const mermaid = await load();
+    if (context.signal.aborted) {
+      return template.innerHTML;
+    }
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      // Render labels as SVG <text> rather than HTML inside <foreignObject>.
+      // The bundled sanitizer keeps the SVG but strips foreignObject HTML, so
+      // html labels would otherwise vanish — this keeps the emitted SVG
+      // self-consistent with the policy without re-allowing HTML in labels.
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      theme: resolveTheme(options.theme ?? 'auto', context.colorScheme),
+      // Stops mermaid from injecting its own error diagram into the DOM on
+      // failure; this extension renders its own error block instead.
+      suppressErrorRendering: true
+    });
+
+    for (const code of blocks) {
+      const pre = code.parentElement;
+      if (!pre) {
+        continue;
+      }
+      const source = code.textContent ?? '';
+      const container = doc.createElement('div');
+      try {
+        const { svg } = await withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
+        container.className = 'mdzip-mermaid';
+        container.innerHTML = sanitizeMdzipHtml(svg, [MERMAID_SANITIZE]);
+      } catch (error) {
+        container.className = 'mdzip-mermaid-error';
+        container.textContent = mermaidErrorMessage(error);
+      }
+      pre.replaceWith(container);
+      if (context.signal.aborted) {
+        return template.innerHTML;
+      }
+    }
+
+    return template.innerHTML;
+  }
+
   return {
     name: 'mermaid',
     sanitize: MERMAID_SANITIZE,
-    async transformHtml(html, context) {
+    shouldIsolateChunk(token: Token): boolean {
+      return token.type === 'code' && token.lang?.trim().toLowerCase() === 'mermaid';
+    },
+    transformHtml(html, context) {
       const doc = requireDocument();
       const template = doc.createElement('template');
       template.innerHTML = html;
@@ -124,48 +189,7 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
       if (blocks.length === 0) {
         return html;
       }
-
-      const mermaid = await load();
-      if (context.signal.aborted) {
-        return html;
-      }
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        // Render labels as SVG <text> rather than HTML inside <foreignObject>.
-        // The bundled sanitizer keeps the SVG but strips foreignObject HTML, so
-        // html labels would otherwise vanish — this keeps the emitted SVG
-        // self-consistent with the policy without re-allowing HTML in labels.
-        htmlLabels: false,
-        flowchart: { htmlLabels: false },
-        theme: resolveTheme(options.theme ?? 'auto', context.colorScheme),
-        // Stops mermaid from injecting its own error diagram into the DOM on
-        // failure; this extension renders its own error block instead.
-        suppressErrorRendering: true
-      });
-
-      for (const code of blocks) {
-        const pre = code.parentElement;
-        if (!pre) {
-          continue;
-        }
-        const source = code.textContent ?? '';
-        const container = doc.createElement('div');
-        try {
-          const { svg } = await withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
-          container.className = 'mdzip-mermaid';
-          container.innerHTML = sanitizeMdzipHtml(svg, [MERMAID_SANITIZE]);
-        } catch (error) {
-          container.className = 'mdzip-mermaid-error';
-          container.textContent = mermaidErrorMessage(error);
-        }
-        pre.replaceWith(container);
-        if (context.signal.aborted) {
-          return html;
-        }
-      }
-
-      return template.innerHTML;
+      return renderMermaidBlocks(template, blocks, context);
     }
   };
 }

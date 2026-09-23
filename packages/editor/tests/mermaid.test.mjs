@@ -143,3 +143,18 @@ test('non-mermaid content is untouched and mermaid is never loaded', async () =>
   assert.match(html, /language-js/, 'regular code blocks keep their language class');
   assert.doesNotMatch(html, /mdzip-mermaid/);
 });
+
+test('transformHtml returns synchronously (not a Promise) when a chunk has no mermaid block', () => {
+  // Regression for a real, visible per-keystroke flash in mdzip-studio: an
+  // earlier version declared transformHtml `async`, so calling it always
+  // returned a Promise even on this no-op path. Since every markdown render
+  // extension's transformHtml runs on every chunk regardless of content, that
+  // forced the *entire* chunk-render pipeline onto a microtask chain for
+  // every chunk in every document once mermaid was registered — mermaid or
+  // not — widening the window between a reconciled chunk's old DOM coming
+  // out and its replacement going back in.
+  const extension = mdzipMermaidExtension({ loadMermaid: async () => { throw new Error('must not load'); } });
+  const result = extension.transformHtml('<h1>Title</h1><p>No diagrams here.</p>', renderContext());
+  assert.equal(typeof result, 'string', 'no-op path returns the html string directly, not a Promise');
+  assert.equal(result, '<h1>Title</h1><p>No diagrams here.</p>');
+});

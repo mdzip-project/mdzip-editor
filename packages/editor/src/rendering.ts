@@ -188,6 +188,20 @@ export interface MdzipMarkdownRenderExtension {
     container: HTMLElement,
     context: MdzipMarkdownRenderContext
   ): void | MdzipRenderHandle | Promise<void | MdzipRenderHandle>;
+
+  /**
+   * Marks a top-level block token as expensive enough to isolate into its own
+   * chunk for {@link groupTokensIntoChunks}, regardless of the char/token
+   * budget — e.g. a mermaid extension claiming its own ` ```mermaid ` fence.
+   * Without this, a token this extension will re-render on every mount
+   * (diagram layout, not just syntax highlighting) shares a chunk with
+   * whatever nearby text the budget happened to group it with; editing any
+   * of that unrelated text still invalidates the whole chunk's source key,
+   * forcing an expensive re-render the edit had nothing to do with — most
+   * visible on a short document that fits within one or two chunks anyway,
+   * where *every* edit ends up re-rendering the diagram.
+   */
+  shouldIsolateChunk?(token: Token): boolean;
 }
 
 /**
@@ -500,6 +514,54 @@ export interface MdzipChunkOptions {
   tokenCap?: number;
   /** Approximate max raw markdown chars per chunk (via each token's `.raw.length`). Default 2000. */
   charBudget?: number;
+  /**
+   * When a token matches, it's isolated into its own chunk regardless of the
+   * budget: any chunk-in-progress is closed first, the matching token forms
+   * a chunk by itself, and accumulation resumes fresh after it. Callers
+   * combine every registered extension's {@link MdzipMarkdownRenderExtension.shouldIsolateChunk}
+   * into one predicate — see that doc comment for why this matters.
+   */
+  shouldIsolate?: (token: Token) => boolean;
+  /**
+   * When a token matches, any chunk-in-progress is closed first and the
+   * matching token starts a fresh one (unlike `shouldIsolate`, later tokens
+   * keep accumulating into that new chunk under the normal budget — the
+   * matching token doesn't get a chunk to itself). Used to keep unrelated
+   * sections from sharing a chunk: without this, a document short enough to
+   * fit several headings' worth of content under the budget lets an edit in
+   * one section's prose invalidate a sibling section's untouched heading and
+   * content too, tearing them out of the DOM and back in — a real, visible
+   * flash for content that never changed.
+   */
+  shouldStartChunk?: (token: Token) => boolean;
+}
+
+const IMAGE_MARKDOWN_PATTERN = /!\[[^\]]*\]\([^)]*\)/;
+const IMAGE_HTML_PATTERN = /<img\b/i;
+
+/**
+ * True when a token's raw source embeds an image (Markdown `![]()` syntax or
+ * a raw `<img>` tag). Used to isolate the token into its own chunk: without
+ * this, a short document can put an image in the same budget-sized chunk as
+ * unrelated surrounding prose, so an edit anywhere in that prose tears the
+ * image out of the DOM and reinserts it — a real, visible flash, since the
+ * browser has to redo layout for a freshly-inserted `<img>` even when its
+ * source is a cache hit.
+ */
+export function tokenEmbedsImage(token: Token): boolean {
+  const raw = token.raw ?? '';
+  return IMAGE_MARKDOWN_PATTERN.test(raw) || IMAGE_HTML_PATTERN.test(raw);
+}
+
+/**
+ * True for a heading token — used as {@link MdzipChunkOptions.shouldStartChunk}
+ * so a heading always begins a fresh chunk instead of merging with whatever
+ * content (and sibling headings) happened to precede it under the size
+ * budget. See that option's doc comment for why: it keeps an edit in one
+ * section from also tearing down an untouched sibling section.
+ */
+export function tokenIsHeading(token: Token): boolean {
+  return token.type === 'heading';
 }
 
 /**
@@ -509,7 +571,11 @@ export interface MdzipChunkOptions {
  * tiny tokens (e.g. a chat export's one-line-paragraph-per-message shape)
  * doesn't end up with one chunk per token. A single token larger than the
  * budget still gets its own chunk on its own (a chunk boundary can never
- * split a token).
+ * split a token). `shouldIsolate` overrides the budget in one direction —
+ * forcing a matching token into its own chunk even when the budget would
+ * have happily grouped it with neighbors; `shouldStartChunk` overrides it in
+ * the other — forcing a boundary before a matching token even when the
+ * budget would have merged it with what came before.
  */
 export function groupTokensIntoChunks(
   tokens: readonly Token[],
@@ -521,6 +587,20 @@ export function groupTokensIntoChunks(
   let current: Token[] = [];
   let currentChars = 0;
   for (const token of tokens) {
+    if (options.shouldIsolate?.(token)) {
+      if (current.length > 0) {
+        chunks.push(current);
+        current = [];
+        currentChars = 0;
+      }
+      chunks.push([token]);
+      continue;
+    }
+    if (options.shouldStartChunk?.(token) && current.length > 0) {
+      chunks.push(current);
+      current = [];
+      currentChars = 0;
+    }
     current.push(token);
     currentChars += token.raw?.length ?? 0;
     if (current.length >= tokenCap || currentChars >= charBudget) {

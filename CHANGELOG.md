@@ -71,6 +71,41 @@
     it in `firePreviewRendered` — the one point every rendering path already
     calls once its content is back in the DOM.
   Closes #46.
+- **Every keystroke re-rendering an embedded mermaid diagram, and later a
+  separate image, from scratch** in a short document (found while testing
+  #46 live against a real file). `groupTokensIntoChunks` groups tokens into
+  chunks purely by a char/token budget (2000 chars / 40 tokens by default),
+  so a document small enough to fit several sections under that budget put
+  expensive-to-render content (a mermaid diagram, an `<img>`) in the same
+  chunk as unrelated surrounding prose and sibling sections — any edit
+  anywhere in that shared chunk tore all of it down and rebuilt it, on every
+  keystroke, regardless of where the edit was made. Fixed with two new
+  `MdzipChunkOptions`: `shouldIsolate` (an optional
+  `MdzipMarkdownRenderExtension.shouldIsolateChunk(token)` hook forces a
+  matching token into its own chunk regardless of budget —
+  `mdzipMermaidExtension` implements it for fenced ` ```mermaid ` blocks; a
+  new built-in `tokenEmbedsImage` check does the same for Markdown `![]()`
+  and raw `<img>` tags) and `shouldStartChunk` (forces a fresh chunk
+  boundary at a matching token without isolating it alone — `view.ts` binds
+  it to `tokenIsHeading` so sibling sections never share a chunk).
+- **`mdzipMermaidExtension`'s `transformHtml` always returning a Promise**,
+  even for a chunk with no mermaid block, because the method was declared
+  `async`. Since every extension's `transformHtml` runs on every chunk
+  regardless of content, this forced the whole chunk-render pipeline onto a
+  microtask chain for every chunk in every document once mermaid was
+  registered — mermaid or not. The no-op path now returns synchronously,
+  only going async when there's an actual diagram to render.
+- **A chunk-mount progress race that duplicated already-mounted chunks.**
+  `armChunkSentinel`'s lazy continuation, `mountAllChunksEagerly`'s batch
+  loop, and `mountReconciledMiddle`'s completion all discarded a batch's
+  mount progress whenever a newer edit had landed by the time that batch's
+  work resolved — even though the chunks it mounted were already physically
+  in the DOM. The next edit's reconcile then saw a stale, un-advanced
+  cursor and re-mounted (duplicated) chunks that were already correctly
+  there. Progress is now recorded unconditionally at all three sites
+  (`recordChunkProgress` already guards against acting on a truly stale
+  generation), gating only further work — not the bookkeeping — on
+  staleness.
 
 ## [1.4.0] - 2026-09-08
 

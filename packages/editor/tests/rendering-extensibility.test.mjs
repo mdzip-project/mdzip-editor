@@ -18,7 +18,9 @@ import {
   defaultSafeMarkdownRenderer,
   groupTokensIntoChunks,
   mdzipExtensionMatcher,
-  mdzipPathMatcher
+  mdzipPathMatcher,
+  tokenEmbedsImage,
+  tokenIsHeading
 } from '../dist/index.js';
 
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -182,6 +184,110 @@ test('chunked rendering (one token per chunk) byte-matches whole-document render
   assert.match(chunked, /href="https:\/\/example.com"/, 'reference-style link resolves even split into its own chunk');
   assert.match(chunked, /class="hljs language-js"/, 'code fence is still syntax-highlighted');
   assert.match(chunked, /<table>/);
+});
+
+test('groupTokensIntoChunks isolates a shouldIsolate-matched token into its own chunk even under the default budget', async () => {
+  // Regression for the Studio per-keystroke flash: a short document (well
+  // under the char/token budget) that embeds one "expensive" block — modeled
+  // here the way the mermaid extension flags itself via shouldIsolateChunk —
+  // used to land entirely in one chunk, so any edit anywhere invalidated
+  // that chunk and forced the expensive block to re-render from scratch.
+  const markdown = [
+    'Some short intro text.',
+    '',
+    '```mermaid',
+    'graph TD; A-->B;',
+    '```',
+    '',
+    'Some short trailing text.'
+  ].join('\n');
+  const service = new MdzipRenderingService(defaultSafeMarkdownRenderer, []);
+  const tokens = await service.tokenizeMarkdown(markdown, renderContext());
+
+  const withoutIsolation = groupTokensIntoChunks(tokens);
+  assert.equal(withoutIsolation.length, 1, 'fixture is small enough to fit in a single default-budget chunk');
+
+  const isMermaid = (token) => token.type === 'code' && token.lang?.trim().toLowerCase() === 'mermaid';
+  const withIsolation = groupTokensIntoChunks(tokens, { shouldIsolate: isMermaid });
+
+  assert.ok(withIsolation.length >= 3, 'isolation splits surrounding text away from the mermaid block');
+  const mermaidChunkIndex = withIsolation.findIndex((chunk) => chunk.length === 1 && isMermaid(chunk[0]));
+  assert.notEqual(mermaidChunkIndex, -1, 'the mermaid token gets its own chunk');
+  for (const chunk of withIsolation) {
+    if (chunk.length === 1 && isMermaid(chunk[0])) continue;
+    assert.ok(!chunk.some(isMermaid), 'no other chunk contains the mermaid token');
+  }
+});
+
+test('tokenEmbedsImage detects Markdown and raw HTML image syntax', () => {
+  assert.equal(tokenEmbedsImage({ raw: '![alt text](./photo.png)\n' }), true);
+  assert.equal(tokenEmbedsImage({ raw: '<img src="./photo.png" alt="alt text">\n' }), true);
+  assert.equal(tokenEmbedsImage({ raw: 'Just a [link](./page.html), no image.\n' }), false);
+  assert.equal(tokenEmbedsImage({ raw: 'Plain text.\n' }), false);
+});
+
+test('groupTokensIntoChunks isolates an image-bearing token by default via tokenEmbedsImage', async () => {
+  // Regression for the Studio per-keystroke flash: a short document (well
+  // under the char/token budget) that embeds an image used to land the image
+  // in the same chunk as unrelated surrounding prose, so any edit anywhere
+  // tore the <img> out of the DOM and reinserted it on every keystroke — a
+  // real, visible flash even though the image itself never changed.
+  const markdown = [
+    '# Title',
+    '',
+    '![A photo](./photo.png)',
+    '',
+    'Some unrelated trailing paragraph.'
+  ].join('\n');
+  const service = new MdzipRenderingService(defaultSafeMarkdownRenderer, []);
+  const tokens = await service.tokenizeMarkdown(markdown, renderContext());
+
+  const withoutIsolation = groupTokensIntoChunks(tokens);
+  assert.equal(withoutIsolation.length, 1, 'fixture is small enough to fit in a single default-budget chunk');
+
+  const withIsolation = groupTokensIntoChunks(tokens, { shouldIsolate: tokenEmbedsImage });
+  assert.ok(withIsolation.length >= 2, 'isolation splits the image away from surrounding content');
+  const imageChunkIndex = withIsolation.findIndex((chunk) => chunk.length === 1 && tokenEmbedsImage(chunk[0]));
+  assert.notEqual(imageChunkIndex, -1, 'the image-bearing token gets its own chunk');
+  for (const chunk of withIsolation) {
+    if (chunk.length === 1 && tokenEmbedsImage(chunk[0])) continue;
+    assert.ok(!chunk.some(tokenEmbedsImage), 'no other chunk contains the image-bearing token');
+  }
+});
+
+test('groupTokensIntoChunks starts a new chunk at every heading via tokenIsHeading', async () => {
+  // Regression for the Studio per-keystroke flash: a short document (well
+  // under the char/token budget) with several sections used to merge them
+  // all into one chunk, so editing prose in one section tore down and
+  // rebuilt unrelated sibling sections too — including a table that never
+  // changed — producing a visible ~100ms gap where real content vanished.
+  const markdown = [
+    '## Section one',
+    '',
+    'Some prose in section one.',
+    '',
+    '## Section two',
+    '',
+    '| A | B |',
+    '| --- | --- |',
+    '| 1 | 2 |',
+    '',
+    '## Section three',
+    '',
+    'Trailing prose.'
+  ].join('\n');
+  const service = new MdzipRenderingService(defaultSafeMarkdownRenderer, []);
+  const tokens = await service.tokenizeMarkdown(markdown, renderContext());
+
+  const withoutBoundary = groupTokensIntoChunks(tokens);
+  assert.equal(withoutBoundary.length, 1, 'fixture is small enough to fit in a single default-budget chunk');
+
+  const withBoundary = groupTokensIntoChunks(tokens, { shouldStartChunk: tokenIsHeading });
+  assert.equal(withBoundary.length, 3, 'each heading starts its own chunk, one per section');
+  for (const chunk of withBoundary) {
+    assert.equal(chunk.filter(tokenIsHeading).length, 1, 'each chunk contains exactly one heading, at its start');
+    assert.ok(tokenIsHeading(chunk[0]), 'the heading is always the first token in its chunk');
+  }
 });
 
 test('chunked rendering with a per-block transformHtml extension matches whole-document output', async () => {
