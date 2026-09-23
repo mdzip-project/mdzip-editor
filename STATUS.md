@@ -1,8 +1,24 @@
 Status: ready-to-commit
-Last: Fixed a mount-progress race that duplicated chunks, and made mermaid's transformHtml synchronous when idle
+Last: Prepped v1.4.4 release — all four packages bumped in lockstep, CHANGELOG dated, full verify green
 
-Four pieces of work, all verified (including live confirmation in Studio
-for the chunking/mermaid fixes) and ready to commit.
+The chunk-isolation/mermaid-sync/mount-progress-race work (see below) is
+already committed locally (not yet pushed). Release prep on top of that:
+`package.json` bumped to 1.4.4 at the workspace root and in `editor-react`/
+`editor-vue` (matching `editor`/`editor-ng`, already at 1.4.4), their
+`@mdzip/editor` dependency/peerDependency pins bumped `^1.4.0` → `^1.4.4`,
+and `CHANGELOG.md`'s `[Unreleased]` heading dated to `[1.4.4] - 2026-09-23`
+— all following the same lockstep-version pattern used for the v1.4.0
+release. `npm run verify` (build + lint + test across all four packages)
+is green: 276 `node --test` + 49 vitest for `editor`, 6 for `editor-react`,
+7 for `editor-vue`, 8 for `editor-ng`, boundary checks pass.
+
+Still needed before this actually ships: push the commit(s), then `npm
+publish` `@mdzip/editor`, `@mdzip/editor-ng`, `@mdzip/editor-react`, and
+`@mdzip/editor-vue`, then tag `v1.4.4`. Not done — owner said not to push
+yet.
+
+Four pieces of work below this release, all verified (including live
+confirmation in Studio for the chunking/mermaid fixes):
 
 ## Scroll jumping on edit (#46)
 

@@ -1,111 +1,39 @@
 # Changelog
 
-## [Unreleased]
+## [1.4.4] - 2026-09-23
 
 ### Added
 - Front matter rendering: a leading `---`-delimited YAML block is now parsed
-  (`parseFrontMatter`, exported from the package root) and no longer falls
-  through to `marked` as a stray `<hr>` plus paragraph/setext heading. The
-  new `mdzipFrontMatterExtension` is registered by default in
-  `MdzipWorkspaceView` (no host wiring needed), configurable via the new
-  `frontMatter` option (also settable live via `setRenderingOptions`):
-  `enabled` (default `true`; `false` strips it with nothing rendered in its
-  place), `display` (`'table'` default, or `'raw'` for a syntax-highlighted
-  fenced `yaml` code block), `collapsible` (default `true` for a collapsible
-  `<details>`; `false` for a static always-visible block), and `label` (the
-  header text — a custom string, or the `'first-line'` sentinel to use the
-  block's own first raw YAML line). A manifest-less `.md` file's `title:`
-  front matter field also feeds `suggestedTitleFromMarkdown`, ahead of the
-  first heading and filename fallbacks. Uses `js-yaml` for parsing. Closes #43.
-  The same `frontMatter` config is now also exposed as a prop/input on the
-  `editor-react`, `editor-vue`, and `editor-ng` wrappers (diffed by deep
-  equality, applied in place — never a workspace rebuild).
+  (`parseFrontMatter`) instead of falling through to `marked` as a stray
+  `<hr>` plus heading. Configurable via the new `frontMatter` option
+  (`enabled`, `display`, `collapsible`, `label`), also exposed on the
+  `editor-react`, `editor-vue`, and `editor-ng` wrappers. A `.md` file's
+  `title:` front matter now also feeds `suggestedTitleFromMarkdown`. Closes
+  #43.
 
 ### Changed
-- Syntax highlighting now imports `highlight.js/lib/core` plus a curated set
-  of languages (`highlight.js/lib/languages/*`, matching
-  `DEFAULT_CODE_BLOCK_LANGUAGES`) instead of the full `highlight.js` package,
-  which registers every bundled grammar at import time. Shrinks the VS Code
-  extension's webview bundle from ~5.3MB to ~4.3MB. A fenced code block or
-  front-matter block naming a language outside the curated set now renders
-  unhighlighted instead of highlighted — both call sites already guarded with
-  `hljs.getLanguage(language)` before highlighting, so this degrades the same
-  way an unrecognized language name already did. Closes #45.
+- Syntax highlighting now imports `highlight.js/lib/core` plus only the
+  curated set of languages instead of the full `highlight.js` package,
+  shrinking the VS Code extension's webview bundle from ~5.3MB to ~4.3MB.
+  A fenced code block naming an uncurated language now renders unhighlighted
+  instead of highlighted. Closes #45.
 
 ### Fixed
-- **Editor and preview both jumping scroll position when starting to edit**
-  (reported on a real document with images and a mermaid diagram; every fix
-  below was driven by live debug logging against that file — none of it
-  reproduced in a synthetic test). Root cause was two independent problems
-  compounding each other:
-  - A same-document edit that changes a mounted element's rendered height (a
-    chunk reconcile re-rendering a mermaid diagram, an image finishing
-    decode, CodeMirror re-measuring line heights) can produce a genuine,
-    non-echo `scroll` event with no explicit write behind it — native CSS
-    scroll anchoring, or CodeMirror's own internal viewport/anchor
-    recalculation, silently adjusting `scrollTop` to keep content visually
-    pinned (in the editor's case, sometimes visible in DevTools as a
-    `Viewport failed to stabilize` warning). That's indistinguishable from a
-    real user scroll to the editor/preview scroll-sync listeners, so it
-    propagated to the other pane and could compound further there. Fixed by
-    making sync require positive evidence of user intent instead of trusting
-    every `scroll` event: both `syncScrollFromPreview` and `syncScrollToPreview`
-    now only act within a short window after a genuine wheel/touch/mousedown
-    gesture on that specific pane (deliberately *not* `keydown` on the
-    editor — `.cm-scroller` receives every keystroke typed, not just
-    navigation keys, so it can't tell "user pressed PageDown" apart from
-    "user typed a letter"). `.preview-pane`/`.cm-scroller` also set
-    `overflow-anchor: none`, and `syncScrollToPreview`'s "is the editor at
-    the document's end" check now requires genuine scrollable overflow first
-    (`viewport.to >= doc.length` is also trivially true for a document that
-    simply fits within the visible editor area) — both real, independent
-    fixes, but neither sufficient alone against the anchoring/gesture issue.
-  - Separately, every preview re-render — a reconcile *or* a full cold-start
-    reset (`mountChunkedPreview` unconditionally does `elPreviewContent.
-    replaceChildren()`) — has a real window where the preview is shorter
-    than before (old DOM torn down, replacement mounted asynchronously). If
-    the current scroll position no longer fits that transient shrink, the
-    browser clamps `scrollTop` to what does fit and never un-clamps once the
-    replacement's DOM restores the true height. Fixed by capturing
-    `scrollTop` at the start of every `updatePreview()` call and restoring
-    it in `firePreviewRendered` — the one point every rendering path already
-    calls once its content is back in the DOM.
-  Closes #46.
-- **Every keystroke re-rendering an embedded mermaid diagram, and later a
-  separate image, from scratch** in a short document (found while testing
-  #46 live against a real file). `groupTokensIntoChunks` groups tokens into
-  chunks purely by a char/token budget (2000 chars / 40 tokens by default),
-  so a document small enough to fit several sections under that budget put
-  expensive-to-render content (a mermaid diagram, an `<img>`) in the same
-  chunk as unrelated surrounding prose and sibling sections — any edit
-  anywhere in that shared chunk tore all of it down and rebuilt it, on every
-  keystroke, regardless of where the edit was made. Fixed with two new
-  `MdzipChunkOptions`: `shouldIsolate` (an optional
-  `MdzipMarkdownRenderExtension.shouldIsolateChunk(token)` hook forces a
-  matching token into its own chunk regardless of budget —
-  `mdzipMermaidExtension` implements it for fenced ` ```mermaid ` blocks; a
-  new built-in `tokenEmbedsImage` check does the same for Markdown `![]()`
-  and raw `<img>` tags) and `shouldStartChunk` (forces a fresh chunk
-  boundary at a matching token without isolating it alone — `view.ts` binds
-  it to `tokenIsHeading` so sibling sections never share a chunk).
-- **`mdzipMermaidExtension`'s `transformHtml` always returning a Promise**,
-  even for a chunk with no mermaid block, because the method was declared
-  `async`. Since every extension's `transformHtml` runs on every chunk
-  regardless of content, this forced the whole chunk-render pipeline onto a
-  microtask chain for every chunk in every document once mermaid was
-  registered — mermaid or not. The no-op path now returns synchronously,
-  only going async when there's an actual diagram to render.
-- **A chunk-mount progress race that duplicated already-mounted chunks.**
-  `armChunkSentinel`'s lazy continuation, `mountAllChunksEagerly`'s batch
-  loop, and `mountReconciledMiddle`'s completion all discarded a batch's
-  mount progress whenever a newer edit had landed by the time that batch's
-  work resolved — even though the chunks it mounted were already physically
-  in the DOM. The next edit's reconcile then saw a stale, un-advanced
-  cursor and re-mounted (duplicated) chunks that were already correctly
-  there. Progress is now recorded unconditionally at all three sites
-  (`recordChunkProgress` already guards against acting on a truly stale
-  generation), gating only further work — not the bookkeeping — on
-  staleness.
+- Editor and preview both jumping scroll position when starting to edit, on
+  documents with images or a mermaid diagram. Caused by (1) non-user
+  `scroll` events — from CSS scroll anchoring or CodeMirror's own viewport
+  recalculation — being mistaken for user scroll and propagated between
+  panes, and (2) the preview's `scrollTop` getting clamped during a
+  transient re-render shrink and never un-clamping. Closes #46.
+- Every keystroke re-rendering an embedded mermaid diagram or image from
+  scratch in short documents, because chunk grouping put expensive content
+  in the same chunk as unrelated prose. Mermaid blocks, images, and
+  headings now each force their own chunk boundary.
+- `mdzipMermaidExtension`'s `transformHtml` always returning a Promise, even
+  for a chunk with no mermaid block, forcing every chunk in every document
+  onto a microtask chain once mermaid was registered.
+- A chunk-mount progress race that could duplicate already-mounted chunks
+  when an edit landed while a previous batch was still mounting.
 
 ## [1.4.0] - 2026-09-08
 
