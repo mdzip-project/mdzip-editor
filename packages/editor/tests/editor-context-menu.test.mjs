@@ -59,12 +59,13 @@ async function mountMarkdownEditor({ source = '# Notes\n\nplain body text\n', mo
   };
 }
 
-function openContextMenu(editorHost, { x = 40, y = 40 } = {}) {
-  editorHost.dispatchEvent(new window.MouseEvent('contextmenu', {
+function openContextMenu(editorHost, { x = 40, y = 40, shiftKey = false } = {}) {
+  return editorHost.dispatchEvent(new window.MouseEvent('contextmenu', {
     bubbles: true,
     cancelable: true,
     clientX: x,
-    clientY: y
+    clientY: y,
+    shiftKey
   }));
 }
 
@@ -124,6 +125,19 @@ test('right-click over the editor opens the selection context menu', async () =>
     for (const lang of DEFAULT_CODE_BLOCK_LANGUAGES) {
       assert.ok(actions.includes(`code-block:${lang.id}`), `code submenu offers ${lang.label}`);
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test('shift+right-click bypasses the formatting menu, leaving the host context menu (e.g. spell-check) to show', async () => {
+  const { view, editorHost, menu, cleanup } = await mountMarkdownEditor();
+  try {
+    selectRange(view, 0, 7); // "# Notes"
+    const notPrevented = openContextMenu(editorHost, { shiftKey: true });
+
+    assert.equal(notPrevented, true, 'event was not canceled, so the host shows its own menu');
+    assert.equal(menu.hidden, true, 'our formatting menu did not open');
   } finally {
     cleanup();
   }
@@ -395,6 +409,37 @@ test('read-only documents omit the Spelling Suggestions hint (native spellcheck 
   try {
     openContextMenu(editorHost);
     assert.equal(menu.querySelector('[data-menu-action="editor-spelling-suggestions-hint"]'), null);
+  } finally {
+    cleanup();
+  }
+});
+
+test('shift+right mousedown is cancelled so the browser doesn\'t extend the selection (which hides the misspelled word from the native menu)', async () => {
+  const { editorHost, cleanup } = await mountMarkdownEditor();
+  try {
+    const down = (init) => editorHost.dispatchEvent(new window.MouseEvent('mousedown', {
+      bubbles: true, cancelable: true, ...init
+    }));
+
+    assert.equal(down({ button: 2, shiftKey: true }), false, 'shift+right mousedown is default-prevented');
+    assert.equal(down({ button: 2 }), true, 'plain right mousedown is untouched');
+    assert.equal(down({ button: 0, shiftKey: true }), true, 'shift+left (extend selection) is untouched');
+  } finally {
+    cleanup();
+  }
+});
+
+test('showSpellingSuggestionsHint: false omits the hint for hosts whose native menu can\'t offer suggestions (e.g. VS Code webviews)', async () => {
+  const { view, editorHost, menu, cleanup } = await mountMarkdownEditor({
+    source: 'plain body text\n',
+    options: { showSpellingSuggestionsHint: false }
+  });
+  try {
+    selectRange(view, 0, 5);
+    openContextMenu(editorHost);
+    assert.equal(menu.hidden, false, 'the rest of the menu still opens');
+    assert.equal(menu.querySelector('[data-menu-action="editor-spelling-suggestions-hint"]'), null);
+    assert.ok(menu.querySelector('[data-menu-action="editor-select-all"]'));
   } finally {
     cleanup();
   }

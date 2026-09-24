@@ -309,6 +309,38 @@ test('reconciliation: editing text in an early chunk leaves a later, unaffected 
   }
 });
 
+test('reconciliation: editing a small chunk followed by small mounted chunks does not re-mount (duplicate) the ones after it', async () => {
+  // Regression: the reconciled "middle" was mounted through
+  // renderAndMountChunkBatch with no upper bound, so a batch that finished the
+  // one changed chunk well inside its char/time budget kept going into the
+  // already-mounted suffix chunks after it, mounting each a second time and
+  // orphaning the first copy. Every keystroke added another copy of the tail
+  // (headings start their own chunk, so any short section-per-heading document
+  // hits this).
+  const markdown = '# A\n\nfirst body\n\n## B\n\nbody of B\n\n## C\n\nbody of C\n\n## D\n\nbody of D\n';
+  for (const progressiveTextRendering of [false, true]) {
+    const { view, dispose } = await createOpenView({ progressiveTextRendering }, markdown);
+    try {
+      await waitFor(() => assert.equal(view.elPreviewContent.querySelectorAll('h2').length, 3));
+      const chunksBefore = [...view.elPreviewContent.querySelectorAll('.mdzip-chunk')];
+
+      for (const edit of ['first body!', 'first body!!']) {
+        view.workspace.editText(view.workspace.snapshot().currentText.replace(/first body!*/, edit));
+        await waitFor(() => assert.match(view.elPreviewContent.textContent, new RegExp(`${edit.replace(/!/g, '\\!')}`)));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+
+        const label = `progressiveTextRendering=${progressiveTextRendering}, after "${edit}"`;
+        assert.equal(view.elPreviewContent.querySelectorAll('h2').length, 3, `no duplicated sections (${label})`);
+        const chunksAfter = [...view.elPreviewContent.querySelectorAll('.mdzip-chunk')];
+        assert.equal(chunksAfter.length, chunksBefore.length, `same number of chunk elements (${label})`);
+        assert.deepEqual(chunksAfter.slice(1), chunksBefore.slice(1), `later chunks were left untouched (${label})`);
+      }
+    } finally {
+      dispose();
+    }
+  }
+});
+
 test('reconciliation: an unchanged chunk\'s extension mount/destroy is not re-invoked after an edit elsewhere', async () => {
   const calls = { mount: 0, destroy: 0 };
   const extension = {

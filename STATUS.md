@@ -1,21 +1,130 @@
 Status: ready-to-commit
-Last: Prepped v1.4.4 release — all four packages bumped in lockstep, CHANGELOG dated, full verify green
+Last: Prepped v1.4.5 (all four packages + root bumped in lockstep, CHANGELOG dated 2026-09-23, verify green: 296 node-test + 70 vitest, lint, boundaries) — not committed, pushed or published
 
-The chunk-isolation/mermaid-sync/mount-progress-race work (see below) is
-already committed locally (not yet pushed). Release prep on top of that:
-`package.json` bumped to 1.4.4 at the workspace root and in `editor-react`/
-`editor-vue` (matching `editor`/`editor-ng`, already at 1.4.4), their
-`@mdzip/editor` dependency/peerDependency pins bumped `^1.4.0` → `^1.4.4`,
-and `CHANGELOG.md`'s `[Unreleased]` heading dated to `[1.4.4] - 2026-09-23`
-— all following the same lockstep-version pattern used for the v1.4.0
-release. `npm run verify` (build + lint + test across all four packages)
-is green: 276 `node --test` + 49 vitest for `editor`, 6 for `editor-react`,
-7 for `editor-vue`, 8 for `editor-ng`, boundary checks pass.
+v1.4.4 shipped: pushed, tagged, published to npm (all four packages), and
+released on GitHub — see the CHANGELOG's `[1.4.4]` entry and closed issues
+#43/#45/#46. Three unreleased changes sit on top of it (below): heading
+anchors (#47), `onUnresolvedLinkClick` (mdzip-vscode#13), and the
+Shift+Right-Click bypass (mdzip-studio#22).
 
-Still needed before this actually ships: push the commit(s), then `npm
-publish` `@mdzip/editor`, `@mdzip/editor-ng`, `@mdzip/editor-react`, and
-`@mdzip/editor-vue`, then tag `v1.4.4`. Not done — owner said not to push
-yet.
+## Regression in the published 1.4.4: tail duplicated on every keystroke
+
+Reported from VS Code against `TestFiles/star-wars-demo/index.md`: each
+character typed added another "Skywalker Family Tree" section (heading +
+mermaid) at the bottom of the preview. Reproduced in jsdom (progressive
+rendering + mermaid extension + an IntersectionObserver that fires at once),
+and confirmed it also reproduces on the committed HEAD — i.e. it ships in
+**1.4.4**, not something from the heading-anchor work.
+
+Cause: `mountReconciledMiddle` mounts the changed "middle" via
+`renderAndMountChunkBatch`, whose loop ran to `records.length`. A batch that
+finished the one changed chunk inside its 4000-char / 10ms budget carried on
+into the surviving suffix chunks (already mounted, unchanged) and mounted
+them again — replacing `record.root` and orphaning the first copy in the DOM,
+where nothing ever removes it. Any document of short heading-delimited
+sections hits it (each heading starts a chunk); the existing reconciliation
+tests used 150 equal paragraphs whose chunks exceed the batch budget, so
+they never did. Fix: `renderAndMountChunkBatch` takes an `endCursor`, and
+`mountReconciledMiddle` passes `middleEnd`.
+
+Verified: new `preview-chunking` test (small heading sections, progressive on
+and off, two consecutive edits) fails without the fix and passes with it.
+Full suite: 295 `node --test` + 70 vitest. **Worth a 1.4.5 soon** — Studio
+and the VS Code extension both ship 1.4.4.
+
+## Heading anchors (#47)
+
+`[x](#some-heading)` was a no-op: headings rendered as bare `<hN>`, and the
+click fell through to browser hash navigation with nothing to land on.
+
+- **Ids**: `assignMdzipHeadingIds` (rendering.ts) walks the *whole
+  document's* tokens — blockquote/list-nested headings included — and gives
+  each a GitHub-slugger-style id with `-1`/`-2` dedupe. It has to run before
+  chunking: a chunk rendered alone can't know how many earlier chunks used
+  a slug. A `heading` renderer override emits it as `user-content-<slug>`.
+  The prefix is deliberate: DOMPurify strips an `id` equal to a
+  document/form property, and "Images", "Links", "Title", "Location" are
+  ordinary heading names. (First attempt used DOMPurify's
+  `SANITIZE_NAMED_PROPS`; rejected — it prefixes *every* id, which would
+  break mermaid's internal `url(#id)`/CSS id references.)
+- **Reconciliation**: `chunkSourceKey` now folds in the chunk's heading ids.
+  An unchanged chunk whose ids shifted (an earlier duplicate was added)
+  would otherwise be reused with stale DOM ids.
+- **Click handling** (view.ts): `#fragment` links are intercepted;
+  `scrollPreviewToAnchor` matches `id`/`name` (bare or prefixed,
+  case-insensitive, percent-decoded). If the target sits in an unmounted
+  progressive chunk it finds the record via its heading ids (or a raw
+  `id=`/`name=` scan) and reuses `drainRemainingChunks` — extended with a
+  `stopAfterRecordIndex` — to mount up to it, then re-arms the sentinel.
+  `#`/`#top` scroll to top. `other.md#heading` links stash the fragment and
+  scroll after that document's preview mounts (deferred a frame so it can't
+  race the sentinel arming).
+- Not done: the `## Heading {#custom-id}` syntax from the issue's
+  "consider" list. Cross-document `file.md#heading` for links that leave
+  the archive (mdzip-vscode#13's path) drops the fragment — the host would
+  have to carry it into the new editor.
+
+Verified: new `heading-anchors.test.mjs` (13 tests: slug rules, dedupe,
+entities, nesting, property-name headings, cross-chunk uniqueness, key
+shift, click-scroll, case/percent-decoding, explicit `<a id>`, no-match/top,
+and the unmounted-chunk drain). Confirmed the key-shift and unmounted-chunk
+tests fail with their fix removed. Three existing assertions updated for the
+new `id` on `<hN>`. Full suite: 294 `node --test` + 70 vitest, lint and
+boundary checks pass. Not yet exercised in a real browser/webview.
+
+## onUnresolvedLinkClick hook (mdzip-vscode#13)
+
+Asked "are there other Studio/VS Code issues that actually need an editor
+fix?" while closing out #22/#23 in Studio. Checked every open issue in both
+repos against the actual code rather than titles alone; the one real hit was
+mdzip-vscode#13 ("preview links to workspace files/folders should
+open/reveal like VS Code's built-in preview"). Its own implementation notes
+assumed a host-facing hook already existed for links that don't resolve
+inside the archive — it didn't: the preview's click handler
+(`elPreviewPane`'s `click` listener in `view.ts`) only ever acted on
+archive-internal Markdown links (`resolveMdzipArchiveLinkTarget`); anything
+else silently fell through to the browser's own (usually broken, inside a
+webview) default navigation, with no way for a host to intercept it.
+
+Added `MdzipWorkspaceViewOptions.onUnresolvedLinkClick(href, snapshot)`:
+fires (and suppresses default navigation) for a link that's workspace-
+relative-shaped but didn't resolve to an archive-internal Markdown doc —
+skipped entirely for plain external URLs/`mailto:`/bare `#fragment`s via
+the new exported `isMdzipWorkspaceRelativeLink(href)` predicate (refactored
+out of `resolveMdzipArchiveLinkTarget`, which now uses it too — pure
+extraction, no behavior change there). Unset by default, so existing hosts
+(Studio, the standalone demo) see no change; `mdzip-vscode` is the intended
+first consumer, wiring it to a postMessage that resolves against the
+document's on-disk location and either opens the target file or reveals a
+folder in Explorer, per that issue's spec.
+
+Verified: new tests cover the predicate directly, plus a DOM-level mount
+confirming the hook fires with the raw href and current snapshot for an
+unresolved workspace-relative link (and that default navigation is
+suppressed), does *not* fire for an external URL, and — with no handler
+registered — behaves exactly as before (unprevented, no-op). Full suite:
+281 `node --test` + 70 vitest, boundary checks pass.
+
+## Shift+Right-Click spell-check bypass (mdzip-studio#22)
+
+While implementing the Studio side of #22 (a native Electron context-menu
+handler for spelling suggestions), found that `@mdzip/editor`'s own editor
+contextmenu handler unconditionally called `preventDefault()` — no
+`shiftKey` check existed anywhere, despite the menu's own disabled
+"Spelling Suggestions" item having pointed at "Shift+Right-Click" since the
+feature was first built (a 1.3.13-era commit). That hint was aspirational:
+the bypass it promised was never actually wired up, so the host's native
+context menu — the only place spell-check suggestions can come from — was
+always suppressed. Fixed with a one-line early return in the `contextmenu`
+listener when `event.shiftKey` is set.
+
+Verified: new regression test asserts a shift+right-click event is left
+un-prevented and the formatting menu stays closed; confirmed it fails
+without the fix (reverted locally) and passes with it. Full suite: 277
+`node --test` + 70 vitest across all four packages, boundary checks pass.
+
+Not yet published — `@mdzip/editor` consumers (mdzip-studio, mdzip-vscode,
+mdzip.org) won't see this until a new version ships.
 
 Four pieces of work below this release, all verified (including live
 confirmation in Studio for the chunking/mermaid fixes):

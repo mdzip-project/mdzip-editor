@@ -279,8 +279,110 @@ export interface MdzipRenderResult {
   html: string;
 }
 
+/**
+ * Rendered heading ids carry this prefix (GitHub does the same) so a heading
+ * like "## Images" or "## Title" can never collide with a document/form
+ * property, which DOMPurify would otherwise strip the id for. Links written
+ * against the bare slug (`#images`) still resolve — see the preview click handler.
+ */
+export const MDZIP_HEADING_ID_PREFIX = 'user-content-';
+
+type AnchoredHeadingToken = Tokens.Heading & { mdzipAnchorId?: string };
+
+function decodeBasicEntities(text: string): string {
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    // Any other named entity (&copy; etc.) decodes to a symbol the slug
+    // pass would strip anyway.
+    .replace(/&[a-z][a-z0-9]*;/gi, '');
+}
+
+function inlineTokensPlainText(tokens: readonly Token[] | undefined): string {
+  let text = '';
+  for (const token of tokens ?? []) {
+    const inline = token as { type: string; text?: string; tokens?: Token[] };
+    if (inline.type === 'br') {
+      text += ' ';
+    } else if (inline.type === 'html') {
+      // Tag markers only — their inner text arrives as sibling text tokens.
+    } else if (inline.tokens) {
+      text += inlineTokensPlainText(inline.tokens);
+    } else if (typeof inline.text === 'string') {
+      text += inline.text;
+    }
+  }
+  return decodeBasicEntities(text);
+}
+
+/**
+ * GitHub-style heading slug: lowercased, everything but letters, marks,
+ * numbers, `_`, `-` and spaces removed, spaces turned into hyphens.
+ */
+export function slugifyMdzipHeading(text: string): string {
+  return text.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, '').replace(/ /g, '-');
+}
+
+function forEachHeadingToken(tokens: readonly Token[], visit: (token: AnchoredHeadingToken) => void): void {
+  for (const token of tokens) {
+    if (token.type === 'heading') {
+      visit(token as AnchoredHeadingToken);
+    } else if (token.type === 'blockquote' || token.type === 'list' || token.type === 'list_item') {
+      const container = token as { tokens?: Token[]; items?: Token[] };
+      forEachHeadingToken(container.tokens ?? container.items ?? [], visit);
+    }
+  }
+}
+
+/**
+ * Gives every heading token (including ones nested in blockquotes and lists)
+ * the id its rendered `<hN>` will carry, in document order, disambiguating
+ * repeats GitHub-style (`intro`, `intro-1`, `intro-2`). Has to run over the
+ * whole document's tokens before they are split into chunks — a chunk rendered
+ * on its own can't know how many earlier chunks already used a slug. A heading
+ * whose text slugifies to nothing (e.g. only punctuation) gets no id.
+ */
+export function assignMdzipHeadingIds(tokens: readonly Token[]): void {
+  const used = new Map<string, number>();
+  forEachHeadingToken(tokens, (token) => {
+    const base = slugifyMdzipHeading(inlineTokensPlainText(token.tokens));
+    if (!base) {
+      delete token.mdzipAnchorId;
+      return;
+    }
+    let candidate = base;
+    while (used.has(candidate)) {
+      const next = (used.get(base) ?? 0) + 1;
+      used.set(base, next);
+      candidate = `${base}-${next}`;
+    }
+    used.set(candidate, 0);
+    token.mdzipAnchorId = candidate;
+  });
+}
+
+/** The ids {@link assignMdzipHeadingIds} gave the headings in `tokens`, in order. */
+export function collectMdzipHeadingIds(tokens: readonly Token[]): string[] {
+  const ids: string[] = [];
+  forEachHeadingToken(tokens, (token) => {
+    if (token.mdzipAnchorId) {
+      ids.push(token.mdzipAnchorId);
+    }
+  });
+  return ids;
+}
+
 const marked = new Marked({
   renderer: {
+    heading(token: AnchoredHeadingToken) {
+      const id = token.mdzipAnchorId ? ` id="${MDZIP_HEADING_ID_PREFIX}${escapeHtml(token.mdzipAnchorId)}"` : '';
+      return `<h${token.depth}${id}>${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
+    },
     code(token: { lang?: string; text: string }) {
       const requestedLanguage = token.lang || '';
       const language = requestedLanguage === 'vue' ? 'html' : requestedLanguage;
@@ -319,7 +421,9 @@ const marked = new Marked({
 });
 
 function renderDefaultMarkdownUnsanitized(markdown: string): string {
-  const rendered = marked.parse(markdown, { async: false });
+  const tokens = marked.lexer(markdown);
+  assignMdzipHeadingIds(tokens);
+  const rendered = marked.parser(tokens);
   return typeof rendered === 'string' ? rendered : escapeHtml(markdown);
 }
 
@@ -468,10 +572,14 @@ export class MdzipRenderingService {
         if (context.signal.aborted) {
           throw createAbortError();
         }
-        return marked.lexer(resolved);
+        const tokens = marked.lexer(resolved);
+        assignMdzipHeadingIds(tokens);
+        return tokens;
       });
     }
-    return marked.lexer(value);
+    const tokens = marked.lexer(value);
+    assignMdzipHeadingIds(tokens);
+    return tokens;
   }
 
   /**
@@ -630,7 +738,12 @@ export function groupTokensIntoChunks(
  * reuse whatever is already mounted for that chunk.
  */
 export function chunkSourceKey(chunk: readonly Token[]): string {
-  return chunk.map((token) => token.raw ?? '').join('');
+  const raw = chunk.map((token) => token.raw ?? '').join('');
+  // A heading's id depends on the whole document (an earlier duplicate
+  // shifts `intro` to `intro-1`), not just this chunk's own text — so a chunk
+  // whose source is unchanged but whose ids moved must not be reused as-is.
+  const ids = collectMdzipHeadingIds(chunk);
+  return ids.length > 0 ? `${raw}\u0000${ids.join('\u0001')}` : raw;
 }
 
 function rewriteAssetSources(markdown: string, resolver: MdzipAssetUrlResolver): string {

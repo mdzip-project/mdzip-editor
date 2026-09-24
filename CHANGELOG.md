@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.4.5] - 2026-09-23
+
+### Added
+- Heading anchors: every rendered heading (including ones in blockquotes and lists) gets a GitHub-style slug `id` with `-1`/`-2` dedupe, so `[text](#some-heading)` links work. Ids are prefixed `user-content-`; the preview resolves the bare slug (case-insensitive, percent-decoded) and explicit `<a id>`/`<a name>` anchors. Clicking scrolls the preview to the target, mounting unrendered chunks first; `other.md#heading` links scroll after that document renders. New exports: `slugifyMdzipHeading`, `assignMdzipHeadingIds`, `collectMdzipHeadingIds`, `MDZIP_HEADING_ID_PREFIX`. Closes #47.
+- `onUnresolvedLinkClick(href, snapshot)` view option: fires, and suppresses default navigation, for a preview link that doesn't resolve to a Markdown document in the archive (e.g. a relative link out to the workspace) so the host can act on it. External URLs and bare `#fragment`s are left alone. Also exports `isMdzipWorkspaceRelativeLink`. mdzip-vscode#13.
+- `showSpellingSuggestionsHint` view option (default `true`): `false` hides the editor context menu's "Spelling Suggestions" hint for hosts that can't show native suggestions, e.g. VS Code webviews.
+
+### Fixed
+- Every keystroke appended another copy of the end of the document to the preview (present in 1.4.4). An edit re-mounted its one changed chunk with an unbounded batch that ran on into the already-mounted chunks after it, mounting them a second time.
+- Shift+Right-Click never bypassed the editor's context menu, so native spell-check suggestions couldn't appear. The contextmenu handler now defers to the host on Shift, and the Shift+right mousedown is cancelled so Chromium doesn't extend the selection (which hid the misspelled word). mdzip-studio#22.
+
 ## [1.4.4] - 2026-09-23
 
 ### Added

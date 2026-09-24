@@ -47,6 +47,7 @@ import {
   readBinaryFileFromArchive,
   readTextFileFromArchive,
   relativeArchivePath,
+  isMdzipWorkspaceRelativeLink,
   resolveMdzipArchiveLinkTarget,
   resolveMdzipControlPolicy,
   defaultSafeMarkdownRenderer
@@ -351,7 +352,7 @@ test('default renderer strips executable HTML and unsafe URLs', () => {
   assert.equal(html.includes('<script'), false);
   assert.equal(html.includes('javascript:'), false);
   assert.equal(html.includes('onerror'), false);
-  assert.match(defaultSafeMarkdownRenderer.render('# Safe'), /<h1>Safe<\/h1>/);
+  assert.match(defaultSafeMarkdownRenderer.render('# Safe'), /<h1 id="user-content-safe">Safe<\/h1>/);
 });
 
 test('default renderer preserves portable image alignment attributes', () => {
@@ -1141,6 +1142,20 @@ test('resolves archive-local markdown preview links', () => {
   assert.equal(resolveMdzipArchiveLinkTarget('/docs/guide.md?x=1', 'docs/index.md', entries), 'docs/guide.md');
   assert.equal(resolveMdzipArchiveLinkTarget('image.png', 'docs/index.md', entries), null);
   assert.equal(resolveMdzipArchiveLinkTarget('https://example.com/guide.md', 'docs/index.md', entries), null);
+});
+
+test('isMdzipWorkspaceRelativeLink distinguishes workspace-relative hrefs from external/fragment ones', () => {
+  assert.equal(isMdzipWorkspaceRelativeLink('../README.md'), true);
+  assert.equal(isMdzipWorkspaceRelativeLink('./docs/'), true);
+  assert.equal(isMdzipWorkspaceRelativeLink('image.png'), true);
+  assert.equal(isMdzipWorkspaceRelativeLink('/absolute/within/repo.md'), true);
+
+  assert.equal(isMdzipWorkspaceRelativeLink(''), false);
+  assert.equal(isMdzipWorkspaceRelativeLink('   '), false);
+  assert.equal(isMdzipWorkspaceRelativeLink('#section'), false);
+  assert.equal(isMdzipWorkspaceRelativeLink('https://example.com/guide.md'), false);
+  assert.equal(isMdzipWorkspaceRelativeLink('mailto:a@example.com'), false);
+  assert.equal(isMdzipWorkspaceRelativeLink('//cdn.example.com/x.js'), false);
 });
 
 test('resolves control policy presets for common host scenarios', () => {

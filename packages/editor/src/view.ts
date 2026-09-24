@@ -100,6 +100,7 @@ import {
   isOrphanedMdzipAsset,
   mdzipEntryIconKind,
   isMdzipManifestPath,
+  isMdzipWorkspaceRelativeLink,
   resolveMdzipArchiveLinkTarget,
   renderMdzipPreviewHtml,
   type MdzipNavNode
@@ -110,6 +111,8 @@ import {
   defaultSafeMarkdownRenderer,
   groupTokensIntoChunks,
   chunkSourceKey,
+  collectMdzipHeadingIds,
+  MDZIP_HEADING_ID_PREFIX,
   tokenEmbedsImage,
   tokenIsHeading,
   type MdzipEntryRenderContext,
@@ -649,6 +652,17 @@ export interface MdzipWorkspaceViewOptions {
    * inserts a plain block. Defaults to {@link DEFAULT_CODE_BLOCK_LANGUAGES}.
    */
   codeBlockLanguages?: readonly MdzipCodeBlockLanguage[];
+  /**
+   * Whether the editor context menu shows its disabled "Spelling Suggestions —
+   * Shift+Right-Click" hint. The hint points at the host's native context
+   * menu, which is the only place browser spell-check suggestions exist — so
+   * it's only truthful in a host that has spell-check on and shows a native
+   * menu for Shift+Right-Click (a browser, an Electron app that builds one).
+   * Set `false` where that can't work, e.g. a VS Code webview: VS Code runs
+   * with spell-check disabled and shows its own Cut/Copy/Paste-only menu.
+   * Defaults to `true`.
+   */
+  showSpellingSuggestionsHint?: boolean;
   initialLayout?: MdzipWorkspaceLayout;
   initialColorScheme?: MdzipColorScheme;
   navigationMode?: MdzipNavigationMode;
@@ -678,6 +692,22 @@ export interface MdzipWorkspaceViewOptions {
   onDirtyChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
+  /**
+   * Fires when a rendered-preview link is clicked and its href doesn't
+   * resolve to another Markdown document inside this archive — e.g. a
+   * relative link out to the surrounding workspace/repo (`../README.md`,
+   * `./docs/`), or one to a non-Markdown archive entry. The view has no
+   * concept of an on-disk workspace, so it can't resolve or act on these
+   * itself; registering this hook both hands the host the raw `href` (plus
+   * the current snapshot, for the archive-relative `currentPath` to resolve
+   * against) and suppresses the click's default navigation, which would
+   * otherwise typically no-op or misbehave inside an embedded webview/host.
+   * A plain external URL (`https:`, `mailto:`, etc.) or bare `#fragment`
+   * never reaches this — those are left to whatever the host/browser
+   * already does with them. Unset by default, preserving the pre-existing
+   * behavior of doing nothing for any link that isn't archive-internal.
+   */
+  onUnresolvedLinkClick?: (href: string, snapshot: MdzipWorkspaceSnapshot) => void;
   /**
    * Fires when the preview HTML for the current selection has been mounted
    * into the DOM (image `src`s already resolved to their session URLs).
@@ -1752,6 +1782,10 @@ export class MdzipWorkspaceView {
   // cold-start, progressive, eager, mermaid-triggered or not) already calls
   // once its content is back in the DOM.
   private pendingPreviewScrollRestore: { scrollTop: number; generation: number } | null = null;
+  // A #fragment from a link into another document (`other.md#heading`), held
+  // until that document's preview has mounted so there is a heading to scroll
+  // to. Consumed by firePreviewRendered.
+  private pendingAnchorFragment: string | null = null;
   // Guards syncScrollToPreviewBottom against overlapping drains: set to the
   // chunkedRenderState generation currently being force-drained, null when
   // none is in flight. A second bottom-edge sync that arrives mid-drain
@@ -3233,7 +3267,7 @@ export class MdzipWorkspaceView {
     let cursor = middleStart;
     let mountedRoots: HTMLElement[] = [];
     while (cursor < middleEnd) {
-      const batch = await this.renderAndMountChunkBatch(records, cursor, context, generation, insertBeforeNode);
+      const batch = await this.renderAndMountChunkBatch(records, cursor, context, generation, insertBeforeNode, middleEnd);
       if (generation !== this.previewGeneration || context.signal.aborted) return;
       if (batch.cursor === cursor) break; // Aborted/superseded mid-loop with no progress.
       cursor = batch.cursor;
@@ -3420,7 +3454,12 @@ export class MdzipWorkspaceView {
     startCursor: number,
     context: MdzipMarkdownRenderContext,
     generation: number,
-    insertBeforeNode: Node | null = null
+    insertBeforeNode: Node | null = null,
+    // Exclusive upper bound. Reconciliation mounts just its replacement
+    // "middle"; the records after it are surviving suffix chunks that are
+    // already in the DOM, and running on into them would mount each a second
+    // time (orphaning the first copy's root, which nothing would ever remove).
+    endCursor: number = records.length
   ): Promise<{ cursor: number; mountedRoots: HTMLElement[] }> {
     const BATCH_CHAR_BUDGET = 4000;
     const BATCH_TIME_BUDGET_MS = 10;
@@ -3431,7 +3470,7 @@ export class MdzipWorkspaceView {
     const mountedRoots: HTMLElement[] = [];
     const batchStartCursor = startCursor;
     while (
-      cursor < records.length
+      cursor < Math.min(endCursor, records.length)
       && renderedChars < BATCH_CHAR_BUDGET
       && (mountedRoots.length === 0 || clock.now() - batchStart < BATCH_TIME_BUDGET_MS)
     ) {
@@ -3876,6 +3915,7 @@ export class MdzipWorkspaceView {
       return;
     }
     this.restorePendingPreviewScroll(generation);
+    this.flushPendingAnchorSoon();
     try {
       this.options.onPreviewRendered?.(snapshot);
     } catch (error) {
@@ -4965,7 +5005,28 @@ export class MdzipWorkspaceView {
       submenu.style.top = `${clampedTop - rect.top}px`;
     });
 
+    // Chromium treats a Shift+mousedown as "extend the selection", right
+    // button included, so Shift+right-click would first stretch the selection
+    // from the caret to the click — and the native menu reports no misspelled
+    // word (hence no suggestions) unless the selection is collapsed or just
+    // the word. Cancelling that mousedown leaves the selection alone and lets
+    // the browser resolve the word under the pointer itself. Capture phase so
+    // it runs before CodeMirror's own handlers; focus is restored by hand
+    // since the cancelled mousedown no longer moves it.
+    this.elEditorHost.addEventListener('mousedown', (e) => {
+      if (e.button === 2 && e.shiftKey) {
+        e.preventDefault();
+        this.cmEditor?.focus();
+      }
+    }, true);
+
     this.elEditorHost.addEventListener('contextmenu', (e) => {
+      // Shift+right-click bypasses our own formatting menu so the host's
+      // native context menu (spell-check suggestions, etc.) shows instead —
+      // without this, preventDefault() below suppresses it unconditionally.
+      if (e.shiftKey) {
+        return;
+      }
       if (!this.controlPolicy.contextMenu.editor) {
         return;
       }
@@ -5078,16 +5139,24 @@ export class MdzipWorkspaceView {
       if (!link || !snapshot) {
         return;
       }
-      const targetPath = resolveMdzipArchiveLinkTarget(
-        link.getAttribute('href') ?? '',
-        snapshot.currentPath,
-        snapshot.content.paths
-      );
-      if (!targetPath) {
+      const href = link.getAttribute('href') ?? '';
+      if (href.startsWith('#')) {
+        event.preventDefault();
+        void this.scrollPreviewToAnchor(href.slice(1));
         return;
       }
-      event.preventDefault();
-      void this.openPath(targetPath);
+      const targetPath = resolveMdzipArchiveLinkTarget(href, snapshot.currentPath, snapshot.content.paths);
+      if (targetPath) {
+        event.preventDefault();
+        const hashIndex = href.indexOf('#');
+        const fragment = hashIndex >= 0 ? href.slice(hashIndex + 1) : '';
+        void this.openPathAndScrollToAnchor(targetPath, fragment);
+        return;
+      }
+      if (this.options.onUnresolvedLinkClick && isMdzipWorkspaceRelativeLink(href)) {
+        event.preventDefault();
+        this.options.onUnresolvedLinkClick(href, snapshot);
+      }
     });
 
     this.elRoot.addEventListener('pointerover', (event) => this.handleTooltipPointer(event));
@@ -5122,6 +5191,104 @@ export class MdzipWorkspaceView {
       }
       element.removeAttribute('title');
     });
+  }
+
+  private async openPathAndScrollToAnchor(path: string, fragment: string): Promise<void> {
+    const generationBefore = this.previewGeneration;
+    this.pendingAnchorFragment = fragment || null;
+    await this.openPath(path);
+    // No new render started (already on that document, or the open failed):
+    // nothing will call firePreviewRendered, so apply the anchor now.
+    if (this.pendingAnchorFragment !== null && this.previewGeneration === generationBefore) {
+      const pending = this.pendingAnchorFragment;
+      this.pendingAnchorFragment = null;
+      await this.scrollPreviewToAnchor(pending);
+    }
+  }
+
+  // Deferred a frame: firePreviewRendered runs inside the first chunk batch's
+  // completion callback, before the lazy-continuation sentinel for the rest is
+  // armed. Scrolling then (which may need to drain those chunks) would race it.
+  private flushPendingAnchorSoon(): void {
+    if (this.pendingAnchorFragment === null) {
+      return;
+    }
+    const generation = this.previewGeneration;
+    requestAnimationFrame(() => {
+      if (generation !== this.previewGeneration || this.pendingAnchorFragment === null) {
+        return;
+      }
+      const pending = this.pendingAnchorFragment;
+      this.pendingAnchorFragment = null;
+      void this.scrollPreviewToAnchor(pending);
+    });
+  }
+
+  private findPreviewAnchor(fragment: string): HTMLElement | null {
+    const wanted = new Set([fragment, MDZIP_HEADING_ID_PREFIX + fragment]);
+    const wantedLower = new Set([...wanted].map((value) => value.toLowerCase()));
+    let caseInsensitiveMatch: HTMLElement | null = null;
+    for (const element of Array.from(this.elPreviewContent.querySelectorAll<HTMLElement>('[id],[name]'))) {
+      for (const value of [element.getAttribute('id'), element.getAttribute('name')]) {
+        if (!value) continue;
+        if (wanted.has(value)) return element;
+        if (!caseInsensitiveMatch && wantedLower.has(value.toLowerCase())) caseInsensitiveMatch = element;
+      }
+    }
+    return caseInsensitiveMatch;
+  }
+
+  private recordMayContainAnchor(record: MdzipChunkRecord, fragment: string): boolean {
+    const lower = fragment.toLowerCase();
+    if (collectMdzipHeadingIds(record.tokens).some((id) => id.toLowerCase() === lower)) {
+      return true;
+    }
+    // An explicit <a id="x"> / <a name="x"> anchor written in the source.
+    const escaped = fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:id|name)\\s*=\\s*["']${escaped}["']`, 'i').test(record.key);
+  }
+
+  /**
+   * Scrolls the preview to the heading (or explicit id/name anchor) a
+   * `#fragment` link names. Under progressive rendering the target may sit in
+   * a chunk that hasn't been mounted yet, so this mounts everything up to and
+   * including that chunk first. Returns whether an anchor was found.
+   */
+  private async scrollPreviewToAnchor(rawFragment: string): Promise<boolean> {
+    let fragment = rawFragment;
+    try {
+      fragment = decodeURIComponent(rawFragment);
+    } catch {
+      // Malformed escape — use it as written.
+    }
+    let target = fragment ? this.findPreviewAnchor(fragment) : null;
+
+    const pending = this.chunkedRenderState;
+    if (!target && fragment && pending && pending.cursor < pending.records.length) {
+      const index = pending.records.findIndex(
+        (record, i) => i >= pending.cursor && this.recordMayContainAnchor(record, fragment)
+      );
+      if (index >= 0) {
+        await this.drainRemainingChunks(pending, () => {}, new AbortController().signal, index);
+        const remaining = this.chunkedRenderState;
+        if (remaining && remaining.generation === pending.generation && !remaining.sentinelHandle
+          && remaining.cursor < remaining.records.length) {
+          this.armChunkSentinel(remaining.records, remaining.cursor, remaining.context, remaining.generation, remaining.animateImageHydration);
+        }
+        target = this.findPreviewAnchor(fragment);
+      }
+    }
+
+    const pane = this.elPreviewPane;
+    if (!target) {
+      // `#` and `#top` mean the top of the document, as in a browser.
+      if (!fragment || fragment.toLowerCase() === 'top') {
+        pane.scrollTop = 0;
+      }
+      return false;
+    }
+    pane.scrollTop += target.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+    return true;
   }
 
   private async openPath(path: string): Promise<void> {
@@ -5971,7 +6138,7 @@ export class MdzipWorkspaceView {
     // spelling suggestions live — there's no API to read the browser's
     // dictionary suggestions into a custom menu. Point at the escape hatch
     // instead of silently dropping the feature.
-    if (editable) {
+    if (editable && this.options.showSpellingSuggestionsHint !== false) {
       groups.push([{
         action: 'editor-spelling-suggestions-hint',
         label: 'Spelling Suggestions',
@@ -6530,7 +6697,8 @@ export class MdzipWorkspaceView {
   private async drainRemainingChunks(
     state: NonNullable<MdzipWorkspaceView['chunkedRenderState']>,
     onProgress: (done: number, total: number) => void,
-    signal: AbortSignal
+    signal: AbortSignal,
+    stopAfterRecordIndex?: number
   ): Promise<void> {
     const { records, context, generation, animateImageHydration } = state;
     // Draining is instead of the scroll-driven continuation, not alongside
@@ -6547,7 +6715,11 @@ export class MdzipWorkspaceView {
 
     const allPending: { image: HTMLImageElement; source: string }[] = [];
     try {
-      while (this.chunkedRenderState?.generation === generation && this.chunkedRenderState.cursor < records.length) {
+      while (
+        this.chunkedRenderState?.generation === generation
+        && this.chunkedRenderState.cursor < records.length
+        && (stopAfterRecordIndex === undefined || this.chunkedRenderState.cursor <= stopAfterRecordIndex)
+      ) {
         if (signal.aborted || generation !== this.previewGeneration || context.signal.aborted) return;
         const cursor = this.chunkedRenderState.cursor;
         const { cursor: newCursor, mountedRoots } = await this.renderAndMountChunkBatch(records, cursor, context, generation);

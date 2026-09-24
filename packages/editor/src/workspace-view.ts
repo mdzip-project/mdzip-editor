@@ -98,18 +98,30 @@ export function renderMdzipPreviewHtml(state: MdzipWorkspaceSnapshot): string {
   return renderingService.render({ markdown: rewritten }).html;
 }
 
+// True for a link that could plausibly point somewhere on disk relative to
+// the current document — false for a URL with its own scheme (http:,
+// mailto:, etc.), a protocol-relative href, a bare "#fragment", or an empty
+// href. Shared by resolveMdzipArchiveLinkTarget (archive-internal resolution)
+// and the preview's click handler (deciding whether a link that didn't
+// resolve internally is a candidate for MdzipWorkspaceViewOptions'
+// onUnresolvedLinkClick, vs. a plain external URL best left alone).
+export function isMdzipWorkspaceRelativeLink(href: string): boolean {
+  const cleanHref = href.trim();
+  if (!cleanHref || cleanHref.startsWith('#')) {
+    return false;
+  }
+  return !(/^[a-z][a-z0-9+.-]*:/i.test(cleanHref) || cleanHref.startsWith('//'));
+}
+
 export function resolveMdzipArchiveLinkTarget(
   href: string,
   currentPath: string,
   entries: readonly ArchiveEntry[]
 ): string | null {
+  if (!isMdzipWorkspaceRelativeLink(href)) {
+    return null;
+  }
   const cleanHref = href.trim();
-  if (!cleanHref || cleanHref.startsWith('#')) {
-    return null;
-  }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(cleanHref) || cleanHref.startsWith('//')) {
-    return null;
-  }
 
   const withoutHash = cleanHref.split('#')[0] ?? '';
   const withoutQuery = withoutHash.split('?')[0] ?? '';

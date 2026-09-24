@@ -180,7 +180,7 @@ test('chunked rendering (one token per chunk) byte-matches whole-document render
   const chunked = await renderChunkedConcat(service, CHUNK_FIXTURE, context, { tokenCap: 1 });
 
   assert.equal(chunked, whole);
-  assert.match(chunked, /<h1>Title<\/h1>/);
+  assert.match(chunked, /<h1 id="user-content-title">Title<\/h1>/);
   assert.match(chunked, /href="https:\/\/example.com"/, 'reference-style link resolves even split into its own chunk');
   assert.match(chunked, /class="hljs language-js"/, 'code fence is still syntax-highlighted');
   assert.match(chunked, /<table>/);
@@ -316,7 +316,7 @@ test('tokenizeMarkdown/renderChunk reject a custom (non-default) renderer', asyn
 
 test('legacy render() keeps its synchronous contract', () => {
   const service = new MdzipRenderingService();
-  assert.match(service.render({ markdown: '# Hi' }).html, /<h1>Hi<\/h1>/);
+  assert.match(service.render({ markdown: '# Hi' }).html, /<h1 id="user-content-hi">Hi<\/h1>/);
 
   const asyncService = new MdzipRenderingService({ render: async () => 'late' });
   assert.throws(() => asyncService.render({ markdown: 'x' }), /renderMarkdown/);
