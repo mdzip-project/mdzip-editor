@@ -234,6 +234,13 @@ selection while a host dialog is open; it returns `false` if that document has
 changed. `context.convertToMdz()` runs the built-in conversion and image action
 against the same captured selection.
 
+A host that writes the image file itself (a linked image next to the `.md`) can
+still give the user the same Markdown/HTML, alt text, size and alignment choices
+a `.mdz` paste gets: `await context.promptImageInsert({ bytes, fileName, altText })`
+runs `imageInsertHandler` or the `'ask'` dialog and resolves `null` on cancel
+(write nothing), then `context.formatImageInsert(src, decision)` returns the text
+to pass to `context.insertMarkdown()`. `src` is used as given, so URL-encode it.
+
 ## Image Insert Hook
 
 Set `imageInsertMode` to choose the built-in image markup flow:

@@ -124,7 +124,10 @@ references), `setEntryPoint()`, and `setCoverImage()`.
 
 For plain-markdown sources, the `onConversionRequested(action)` option lets a
 host take over the markdown→MDZ conversion flow (nav button, Insert Image, or
-image paste/drop): return or resolve `true` to suppress the built-in dialog.
+image paste/drop): return or resolve `true` to suppress the built-in dialog. If
+the host writes a linked image file itself, `context.promptImageInsert(image)` and
+`context.formatImageInsert(src, decision)` reuse the editor's Markdown/HTML insert
+dialog (see the package README).
 
 Image insertion can also be customized directly. `imageInsertMode` controls the
 built-in markup flow (`'markdown'`, `'html'`, or `'ask'`), while

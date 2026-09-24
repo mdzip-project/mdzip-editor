@@ -1,11 +1,10 @@
-Status: ready-to-commit
-Last: Prepped v1.4.5 (all four packages + root bumped in lockstep, CHANGELOG dated 2026-09-23, verify green: 296 node-test + 70 vitest, lint, boundaries) — not committed, pushed or published
+Status: awaiting-test
+Last: v1.4.6 prepped — context.promptImageInsert/formatImageInsert so linked .md images get the Markdown/HTML dialog (vscode#14, studio); not committed or published
 
-v1.4.4 shipped: pushed, tagged, published to npm (all four packages), and
-released on GitHub — see the CHANGELOG's `[1.4.4]` entry and closed issues
-#43/#45/#46. Three unreleased changes sit on top of it (below): heading
-anchors (#47), `onUnresolvedLinkClick` (mdzip-vscode#13), and the
-Shift+Right-Click bypass (mdzip-studio#22).
+v1.4.5 shipped 2026-09-23/24 — see the CHANGELOG's `[1.4.5]` entry. It adds
+heading anchors (#47, closed), `onUnresolvedLinkClick` (mdzip-vscode#13), the
+Shift+Right-Click fix (mdzip-studio#22) and the duplicated-tail fix for a
+regression in 1.4.4. Sections below are the write-ups behind each item.
 
 ## Regression in the published 1.4.4: tail duplicated on every keystroke
 

@@ -37,6 +37,8 @@ The context menu's mutating items and drag-and-drop are gated by the `fileAction
 
 Hosts intercept the markdown→MDZ conversion flow by returning/resolving `true` from `onConversionRequested(action)`. This replaces the old capture-phase paste workaround in VS Code-style hosts. A rejecting hook reports to `onFailed` and falls back to the built-in dialog.
 
+A host that writes a linked image file itself (plain `.md`) can reuse the editor's insert flow (`imageInsertHandler`, or the `'ask'` Markdown/HTML + alt text + size + alignment dialog): `await context.promptImageInsert({ bytes, fileName, altText })` resolves the decision (`null` = cancelled, write nothing), then `context.formatImageInsert(src, decision)` returns the text for `context.insertMarkdown()`. `src` is used as given — URL-encode it. Ask before writing the file so cancel leaves nothing behind. Since 1.4.6.
+
 **`packFilesAsWorkspace` / `onPackRequested` hook**
 
 `view.packFilesAsWorkspace(files, options)` packs a host-collected file list (e.g. from a folder picker) into a new archive. The hook is only consulted when `files` contains more than one Markdown file — the zero/one-Markdown fast path always packs Document mode directly, no hook call, no dialog. Document mode opens the packed archive in the view; Project mode does **not** auto-open — it returns `archiveBytes` for the host to save first, since only the host knows where a project archive belongs. Same `true`/`false`/throw contract as `onConversionRequested`.

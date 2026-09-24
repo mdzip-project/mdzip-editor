@@ -368,9 +368,34 @@ export type MdzipConversionAction =
   | { kind: 'image-picker' }
   | { kind: 'image-file'; file: File; source?: MdzipImageInsertSource };
 
+/** An image the host already has in hand and wants the editor's insert dialog for. */
+export interface MdzipConversionImage {
+  bytes: Uint8Array;
+  /** Defaults to a guess from `fileName`. */
+  mimeType?: string;
+  fileName?: string;
+  /** Pre-filled alt text; defaults to "Pasted image". */
+  altText?: string;
+}
+
 export interface MdzipConversionContext {
   insertMarkdown(text: string): Promise<boolean>;
   convertToMdz(): Promise<boolean>;
+  /**
+   * Runs the same insert flow a `.mdz` paste gets — the `imageInsertHandler`,
+   * or the built-in Markdown/HTML + alt text + size + alignment dialog when
+   * `imageInsertMode` is `'ask'` — for an image the host is about to link to
+   * a file it wrote itself. Resolves to `null` if the user cancels (write
+   * nothing). Does not consume the context; pair with {@link formatImageInsert}.
+   */
+  promptImageInsert(image: MdzipConversionImage): Promise<MdzipImageInsertDecision | null>;
+  /**
+   * Formats a decision from {@link promptImageInsert} as text for
+   * {@link insertMarkdown}: `![alt](src)` or an `<img>` (padded onto its own
+   * block for HTML), using the selection captured when the hook fired. `src`
+   * is written as given, so URL-encode it first if it contains spaces.
+   */
+  formatImageInsert(src: string, decision: MdzipImageInsertDecision): string;
 }
 
 /** One file the host already collected (e.g. from a folder picker). */
@@ -5599,6 +5624,28 @@ export class MdzipWorkspaceView {
     };
 
     return {
+      promptImageInsert: async (image) => {
+        if (!captured || consumed || this.workspace !== captured.workspace
+          || this.conversionDocumentGeneration !== captured.documentGeneration) {
+          return null;
+        }
+        return this.resolveImageInsertDecision(
+          image.bytes,
+          image.mimeType || imageMimeTypeFromFileName(image.fileName ?? ''),
+          {
+            fileName: image.fileName,
+            source: action.kind === 'image-file' ? (action.source ?? 'picker') : 'picker',
+            altText: image.altText
+          }
+        );
+      },
+      formatImageInsert: (src, decision) => formatImageInsertMarkdown(
+        src,
+        normalizeImageInsertDecision(decision) ?? { mode: 'markdown', altText: '' },
+        captured?.text ?? '',
+        captured?.selectionStart ?? 0,
+        captured?.selectionEnd ?? captured?.selectionStart ?? 0
+      ),
       insertMarkdown: async (text) => {
         const target = take();
         if (!target || target.selectionStart === undefined || target.selectionEnd === undefined) {
@@ -5904,7 +5951,7 @@ export class MdzipWorkspaceView {
   private async resolveImageInsertDecision(
     bytes: Uint8Array,
     mimeType: string,
-    options: { fileName?: string; source: MdzipImageInsertSource }
+    options: { fileName?: string; source: MdzipImageInsertSource; altText?: string }
   ): Promise<MdzipImageInsertDecision | null> {
     const size = sniffImageSize(bytes, mimeType);
     const request: MdzipImageInsertRequest = {
@@ -5912,7 +5959,7 @@ export class MdzipWorkspaceView {
       mimeType,
       intrinsicWidth: size?.width,
       intrinsicHeight: size?.height,
-      defaultAltText: 'Pasted image',
+      defaultAltText: options.altText ?? 'Pasted image',
       source: options.source
     };
     const handler = this.options.imageInsertHandler;

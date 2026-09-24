@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.6] - 2026-09-24
+
+### Added
+- `MdzipConversionContext.promptImageInsert(image)` and `formatImageInsert(src, decision)`: a host that writes a linked image file for a plain `.md` can reuse the editor's insert flow (`imageInsertHandler`, or the `'ask'` Markdown/HTML, alt text, size and alignment dialog). Exports `MdzipConversionImage`. mdzip-vscode#14.
+
 ## [1.4.5] - 2026-09-23
 
 ### Added
