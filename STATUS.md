@@ -1,5 +1,7 @@
-Status: awaiting-test
-Last: v1.4.6 prepped — context.promptImageInsert/formatImageInsert so linked .md images get the Markdown/HTML dialog (vscode#14, studio); not committed or published
+Status: ready-to-commit
+Last: v1.4.7 release prep done (verify green) — serialize Mermaid renders; awaiting commit, then tag/release/publish; 1.4.6 is live on npm
+
+**Next release:** make the four packages' `description` fields consistent (seen on the npm search page). Now: editor "Framework-independent MDZip workspace engine.", editor-ng "Angular UI components for the MDZip workspace engine.", editor-react / editor-vue "<Framework> wrapper for the MDZip workspace editor." — ng is the odd one out, and "engine" vs "editor" is mixed.
 
 v1.4.5 shipped 2026-09-23/24 — see the CHANGELOG's `[1.4.5]` entry. It adds
 heading anchors (#47, closed), `onUnresolvedLinkClick` (mdzip-vscode#13), the

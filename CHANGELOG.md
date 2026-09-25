@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.7] - 2026-09-24
+
+### Fixed
+- A Mermaid diagram could fail with "Cannot read properties of null (reading 'firstChild')" after an edit that re-rendered the preview twice in quick succession (e.g. adding an image). Overlapping renders shared mermaid's global state, and the first to finish deleted the other's in-progress DOM. Renders now run one at a time.
+
 ## [1.4.6] - 2026-09-24
 
 ### Added

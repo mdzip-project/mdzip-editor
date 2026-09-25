@@ -90,6 +90,22 @@ async function withBodyCleanup<T>(doc: Document, run: () => Promise<T>): Promise
   }
 }
 
+// mermaid.initialize()/render() work on shared global state and attach a temp
+// element to document.body a tick after render() starts, so two renders in
+// flight at once corrupt each other: whichever finishes first runs
+// `withBodyCleanup`'s sweep and deletes the other's element, and the other
+// then fails with "Cannot read properties of null (reading 'firstChild')".
+// Overlap is normal — an edit starts a new preview generation while the
+// previous one's diagram is still rendering (adding an image reloads, then
+// edits, the workspace back to back) — so renders run one at a time.
+let mermaidRenderQueue: Promise<unknown> = Promise.resolve();
+
+function runMermaidSerially<T>(run: () => Promise<T>): Promise<T> {
+  const next = mermaidRenderQueue.then(run, run);
+  mermaidRenderQueue = next.catch(() => undefined);
+  return next;
+}
+
 /**
  * A markdown render extension that renders fenced ` ```mermaid ` code blocks to
  * inline SVG in the preview.
@@ -134,7 +150,7 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
     if (context.signal.aborted) {
       return template.innerHTML;
     }
-    mermaid.initialize({
+    const configure = (): void => mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
       // Render labels as SVG <text> rather than HTML inside <foreignObject>.
@@ -157,7 +173,19 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
       const source = code.textContent ?? '';
       const container = doc.createElement('div');
       try {
-        const { svg } = await withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
+        // Queued behind any other in-flight render; a render whose preview
+        // generation was superseded while waiting is skipped, not run.
+        const rendered = await runMermaidSerially(async () => {
+          if (context.signal.aborted) {
+            return null;
+          }
+          configure();
+          return withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
+        });
+        if (!rendered) {
+          return template.innerHTML;
+        }
+        const { svg } = rendered;
         container.className = 'mdzip-mermaid';
         container.innerHTML = sanitizeMdzipHtml(svg, [MERMAID_SANITIZE]);
       } catch (error) {

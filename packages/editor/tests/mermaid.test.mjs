@@ -158,3 +158,38 @@ test('transformHtml returns synchronously (not a Promise) when a chunk has no me
   assert.equal(typeof result, 'string', 'no-op path returns the html string directly, not a Promise');
   assert.equal(result, '<h1>Title</h1><p>No diagrams here.</p>');
 });
+
+test('overlapping renders do not sweep away each other\'s in-progress diagram DOM', async () => {
+  // Real mermaid attaches its temp element to document.body a tick *after*
+  // render() starts and fails ("Cannot read properties of null (reading
+  // 'firstChild')") if that element vanishes mid-render. Two preview renders
+  // in flight at once (e.g. adding an image reloads, then edits, the
+  // workspace) must not let one's body-cleanup sweep delete the other's.
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const api = {
+    initialize() {},
+    async render(id, text) {
+      await Promise.resolve();
+      const element = globalThis.document.createElement('div');
+      element.id = `d${id}`;
+      globalThis.document.body.appendChild(element);
+      await delay(text.includes('SLOW') ? 40 : 5);
+      if (!element.isConnected) {
+        throw new TypeError("Cannot read properties of null (reading 'firstChild')");
+      }
+      element.remove();
+      return { svg: MERMAID_SVG.replace('viewBox', `id="${id}" viewBox`) };
+    }
+  };
+  const extension = mdzipMermaidExtension({ loadMermaid: async () => api });
+  const service = new MdzipRenderingService(defaultSafeMarkdownRenderer, [extension]);
+
+  const [slow, fast] = await Promise.all([
+    service.renderMarkdown('```mermaid\ngraph TD; SLOW-->B;\n```\n', renderContext()),
+    service.renderMarkdown('```mermaid\ngraph TD; FAST-->B;\n```\n', renderContext())
+  ]);
+
+  assert.match(fast, /class="mdzip-mermaid"/);
+  assert.match(slow, /class="mdzip-mermaid"/, 'the slower render must survive the faster one finishing first');
+  assert.doesNotMatch(slow, /mdzip-mermaid-error/);
+});
