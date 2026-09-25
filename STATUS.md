@@ -1,5 +1,5 @@
 Status: ready-to-commit
-Last: v1.4.7 release prep done (verify green) — serialize Mermaid renders; awaiting commit, then tag/release/publish; 1.4.6 is live on npm
+Last: v1.4.8 release prep done (verify green) — navigation and lazy open no longer rebuild the whole archive (books.mdz read timeouts); awaiting commit, then tag/release/publish; 1.4.7 is live on npm
 
 **Next release:** make the four packages' `description` fields consistent (seen on the npm search page). Now: editor "Framework-independent MDZip workspace engine.", editor-ng "Angular UI components for the MDZip workspace engine.", editor-react / editor-vue "<Framework> wrapper for the MDZip workspace editor." — ng is the odd one out, and "engine" vs "editor" is mixed.
 

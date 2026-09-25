@@ -692,6 +692,16 @@ export interface MdzipWorkspaceViewOptions {
   initialColorScheme?: MdzipColorScheme;
   navigationMode?: MdzipNavigationMode;
   navigationButtonActive?: boolean;
+  /**
+   * Called with the current archive bytes after a change to its contents.
+   * Not called for navigation alone (events whose `changes` are only
+   * `['selection']`, e.g. opening another file): nothing in the archive
+   * changed, and exporting would rebuild a workspace opened without
+   * `archiveBytes` from scratch. Use `onSelectionChanged` to track the
+   * current path. For the same reason it isn't called on open when
+   * `openWorkspace()` gets lazy documents without `archiveBytes` — the host
+   * that passed the workspace in already has those bytes.
+   */
   onChanged?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
   onSaved?: (bytes: Uint8Array, snapshot: MdzipWorkspaceSnapshot) => void;
   onWorkspaceChanged?: (event: MdzipDocumentChangeEvent) => void;
@@ -2218,7 +2228,12 @@ export class MdzipWorkspaceView {
         void this.notifyChanged(event);
       });
       this.render();
-      void this.notifyChanged(this.initialWorkspaceEvent(ws.snapshot()));
+      // A lazy workspace handed over without archiveBytes can only be exported
+      // by rebuilding it, reading every lazy document first — and the host that
+      // passed it in already holds those bytes. Skip reporting them on open.
+      const initialBytesNeedRebuild = !options.archiveBytes?.length
+        && workspace.documents.some((document) => document.isLazy);
+      void this.notifyChanged(this.initialWorkspaceEvent(ws.snapshot()), { reportBytes: !initialBytesNeedRebuild });
     } catch (error) {
       if (generation !== this.openGeneration) {
         return;
@@ -7162,7 +7177,10 @@ export class MdzipWorkspaceView {
     editor.focus();
   }
 
-  private async notifyChanged(event: MdzipDocumentChangeEvent): Promise<void> {
+  private async notifyChanged(
+    event: MdzipDocumentChangeEvent,
+    { reportBytes = true }: { reportBytes?: boolean } = {}
+  ): Promise<void> {
     if (!this.workspace) {
       return;
     }
@@ -7174,7 +7192,13 @@ export class MdzipWorkspaceView {
       const delegatedToManifestHandler = this.options.onManifestChanged
         && event.changes.length === 1
         && event.changes[0] === 'manifest';
-      if (this.options.onChanged && !delegatedToManifestHandler) {
+      // Opening another path changes nothing in the archive, so there are no
+      // new bytes to report. Exporting anyway rebuilt the whole archive on
+      // every navigation when opened without archiveBytes — reading every
+      // lazy document's text first (752 host round-trips on a 153MB archive,
+      // which starved the one read the user actually asked for).
+      const selectionOnly = event.changes.every((change) => change === 'selection');
+      if (this.options.onChanged && reportBytes && !delegatedToManifestHandler && !selectionOnly) {
         const bytes = await this.workspace.exportBytes();
         this.options.onChanged(bytes, snapshot);
       }

@@ -29,7 +29,8 @@ if (typeof globalThis.window === 'undefined') {
   globalThis.URL.createObjectURL = () => 'blob:test';
   globalThis.URL.revokeObjectURL = () => {};
 }
-import { MdzipWorkspaceView } from '../dist/index.js';
+import { MdzArchiveCore } from '@mdzip/core-js';
+import { MdzipWorkspaceView, buildNewArchiveBytesWithTitle } from '../dist/index.js';
 
 const SOURCE = [
   '# Notes',
@@ -108,5 +109,57 @@ test('without a registered handler, an unresolved link click is left exactly as 
     assert.equal(notPrevented, true);
   } finally {
     cleanup();
+  }
+});
+
+test('navigating a lazy workspace opened without archiveBytes does not export or read other documents', async () => {
+  // Regression guard: every workspace event, navigation included, went through
+  // exportBytes()/onChanged. Without archiveBytes (mdzip-vscode sends none over
+  // its 32MB transfer limit) that rebuilt the whole archive, resolving every
+  // lazy document first — on a 752-book archive the one read the user asked
+  // for timed out behind the other 751.
+  const core = await MdzArchiveCore.openWorkspace(await buildNewArchiveBytesWithTitle('# Entry\n', 'Books'));
+  const lazyReads = [];
+  for (const name of ['chapter1.md', 'chapter2.md', 'chapter3.md']) {
+    core.documents.push({
+      path: name,
+      title: name,
+      text: '',
+      isEntryPoint: false,
+      isLazy: true,
+      readText: async () => {
+        lazyReads.push(name);
+        return `# ${name}\n`;
+      }
+    });
+  }
+
+  const changed = [];
+  const selections = [];
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'preview',
+    initialColorScheme: 'light',
+    onChanged: (_bytes, snapshot) => changed.push(snapshot.currentPath),
+    onSelectionChanged: (snapshot) => selections.push(snapshot.currentPath)
+  });
+  try {
+    await view.openWorkspace(core, { mode: 'editable', fileName: 'books.mdz' });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Opening doesn't rebuild the archive either: the host already has its bytes.
+    assert.deepEqual(lazyReads, [], 'opening reads no lazy documents');
+    assert.deepEqual(changed, [], 'opening reports no bytes that would need a rebuild');
+
+    assert.equal(await view.workspace.openPath('chapter2.md'), true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.deepEqual(lazyReads, ['chapter2.md'], 'only the opened document is read');
+    assert.deepEqual(changed, [], 'navigation reports no archive change');
+    assert.equal(selections.at(-1), 'chapter2.md', 'hosts still learn the new path');
+  } finally {
+    view.destroy();
+    container.remove();
   }
 });

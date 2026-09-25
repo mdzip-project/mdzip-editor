@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.8] - 2026-09-24
+
+### Fixed
+- Opening another file in a large lazily-loaded archive (e.g. the 153MB `books.mdz` in VS Code) no longer times out ("Timed out reading … from the extension host"). Every workspace event, navigation included, exported the archive bytes for `onChanged`; for a workspace opened without `archiveBytes` that rebuilt the whole archive and read every lazy document first, so the one read that mattered queued behind hundreds of others.
+
+### Changed
+- `onChanged` (and the wrappers' `changed` event) no longer fires for navigation alone — an event whose `changes` are only `['selection']`. Nothing in the archive changes when another file is opened. Hosts that used it to track the current path should use `onSelectionChanged` or `onSnapshotChanged`, which still fire.
+- `openWorkspace()` of a workspace with lazy documents and no `archiveBytes` no longer fires the initial `onChanged` on open: producing those bytes meant the same full rebuild, and the host that handed over the workspace already has them. Every other open (including `open(bytes)`) still reports its bytes on open.
+
 ## [1.4.7] - 2026-09-24
 
 ### Fixed

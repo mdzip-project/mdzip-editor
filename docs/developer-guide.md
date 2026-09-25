@@ -276,6 +276,10 @@ Use `sourceFormat: 'markdown'` or `sourceFormat: 'mdz'` when the filename is
 missing or ambiguous. Markdown sources are saved, serialized, and emitted by
 `onChanged` as UTF-8 Markdown bytes. MDZ sources remain archive bytes.
 
+`onChanged` fires only when the archive's contents change. Opening another
+file in the workspace does not fire it; track the current path with
+`onSelectionChanged` (or `onSnapshotChanged`) instead.
+
 Standalone Markdown has no manifest or packaged assets. Its navigation pane
 starts closed and the internal workspace used to edit it is not exposed as
 document contents. Opening package navigation or inserting an image prompts the
