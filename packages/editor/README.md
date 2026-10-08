@@ -526,6 +526,65 @@ In live-editing hosts where the preview re-renders frequently, pass
 images open on same-document edits. Use `'off'` to disable the loading pulse
 and slide-open animation entirely.
 
+## Links and anchors
+
+Hosts that embed the preview as a doc browser can route links, set an
+external-link policy and deep-link to headings, all without touching preview
+DOM.
+
+**Link clicks.** `onLinkActivated(event)` fires for every click on a preview
+link, before the view's own handling. `event.kind` is `'anchor'` (a bare
+`#fragment`), `'document'` (another Markdown document in the archive;
+`event.targetPath` is its archive path), `'relative'` (relative, but not to an
+archive document, e.g. `../design/foo.md`) or `'external'` (has a URL scheme).
+The event also carries `href`, `text`, `path` (the href without its fragment),
+`anchor` (the decoded fragment), `sourcePath`, the modifier keys and
+`domEvent`. Call `event.preventDefault()` synchronously to take over: the view
+then does nothing more and the browser doesn't navigate. If you leave it
+unprevented, the built-in behavior runs as before (anchor scroll, document
+open, `onUnresolvedLinkClick`).
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls: 'viewer',
+  onLinkActivated: (event) => {
+    if (event.kind === 'relative') {
+      event.preventDefault();
+      router.openDoc(resolve(event.sourcePath, event.path), event.anchor);
+    }
+  }
+});
+```
+
+`parseMdzipLink(href, currentPath, entries)` gives the same classification
+outside a click.
+
+**External links.** `externalLinks: { target: '_blank' }` makes `http:`,
+`https:`, `mailto:` and `//host` links open in a new tab with
+`rel="noopener noreferrer"`. Pass `rel` to override that default, or
+`predicate(href)` to choose which links count. Only hrefs with a URL scheme
+reach the predicate; relative links and `#fragment`s never change. The policy
+also covers links written as raw HTML. It's unset by default, and
+`setExternalLinks(policy)` changes it at runtime without a re-render
+(`undefined` restores each link's own attributes).
+
+**Deep links to headings.** `await view.scrollToAnchor('some-heading')`
+scrolls the preview to a heading or an explicit `<a id>`/`<a name>`. It accepts
+the fragment with or without `#` and matches the way a clicked `#fragment`
+does. You can call it at any time, including straight after `open()` or from
+`onPreviewRendered`. It waits for the current document to mount and, under
+progressive rendering, mounts the chunks up to the target first. It resolves
+`true` when it scrolled and `false` when nothing matched. `''` and `'top'`
+scroll to the top. `getAvailableAnchors()` lists the reachable anchors in
+document order, including headings in chunks that haven't mounted yet.
+
+```ts
+await view.open(bytes, { fileName: 'guide.md' });
+if (location.hash && !(await view.scrollToAnchor(location.hash))) {
+  console.warn('No such section', location.hash, view.getAvailableAnchors());
+}
+```
+
 ## Content Security Policy (restricted hosts)
 
 Archive images resolve to `URL.createObjectURL()` **`blob:` object URLs** (the

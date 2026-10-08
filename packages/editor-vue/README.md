@@ -104,6 +104,7 @@ prop (`{ navigation?, changeTraversal?, showUnchanged? }`) to opt any out.
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — inline arrays are safe |
 | `entrySlotPriority` | `number` | `0` | Matching priority of the `#entry` slot relative to `entryRenderers` |
 | `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; inline objects are safe |
+| `externalLinks` | `MdzipExternalLinkPolicy` | — | External-link policy, e.g. `{ target: '_blank' }` (adds `rel="noopener noreferrer"`); optional `rel` and `predicate(href)`. Re-applies without a re-render only when `target`, `rel` or `predicate` change; inline objects are safe |
 
 `controls`, density, `imageHydrationAnimation`, and rendering prop changes apply in
 place — they never recreate the workspace view. Line-number visibility changes
@@ -143,6 +144,7 @@ reactive, and the tree unmounts on selection change.
 | `colorSchemeChanged` | `MdzipColorScheme` | Emitted when the color scheme changes |
 | `previewRendered` | `MdzipWorkspaceSnapshot` | Emitted when the preview HTML is mounted |
 | `assetsHydrated` | `MdzipWorkspaceSnapshot` | Emitted once the mounted preview's images have loaded |
+| `linkActivated` | `MdzipLinkActivatedEvent` | Emitted for every preview link click before built-in handling; call `event.preventDefault()` to take over |
 | `failed` | `unknown` | Emitted on unrecoverable errors |
 
 ## Conversion hook
@@ -204,5 +206,15 @@ async function save() {
 
 The handle also exposes `whenRendered()`, which resolves once the current preview (including
 its images) is mounted — useful for revealing or animating read-only preview content.
+
+## Links and anchors
+
+The `linkActivated` event fires for every preview link click, before the view's own handling, with the
+parsed link (`kind`: `'anchor' | 'document' | 'relative' | 'external'`, plus `path`,
+`anchor`, `targetPath`, `sourcePath`, modifier keys). Call `event.preventDefault()` in the
+handler to route the link yourself; unprevented clicks keep the built-in behavior.
+The handle also exposes `scrollToAnchor(anchor)` (waits for the preview to mount, resolves whether it
+scrolled; safe straight after load) and `getAvailableAnchors()`. See the
+[`@mdzip/editor` README](https://www.npmjs.com/package/@mdzip/editor#links-and-anchors).
 
 See the [`@mdzip/editor`](https://www.npmjs.com/package/@mdzip/editor) package for the full API reference, theming guide, and framework-agnostic usage.

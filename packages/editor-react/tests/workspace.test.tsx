@@ -14,6 +14,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setImageHydrationAnimation = vi.fn();
     public readonly setImageInsertOptions = vi.fn();
     public readonly setImageEditOptions = vi.fn();
+    public readonly setExternalLinks = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly destroy = vi.fn();
@@ -181,6 +182,36 @@ test('controls, density, and image animation props update in place', () => {
     contentDensity: 'compact'
   });
   expect(view.setImageHydrationAnimation).toHaveBeenLastCalledWith('off');
+});
+
+test('externalLinks reaches the view at creation and re-applies only when its fields change', () => {
+  const predicate = (href: string) => href.startsWith('https:');
+  const { rerender } = render(<MdzipWorkspace externalLinks={{ target: '_blank', predicate }} />);
+  const view = latestView();
+  expect(view.options['externalLinks']).toEqual({ target: '_blank', predicate });
+  view.setExternalLinks.mockClear();
+
+  rerender(<MdzipWorkspace externalLinks={{ target: '_blank', predicate }} />);
+  expect(view.setExternalLinks).not.toHaveBeenCalled();
+
+  rerender(<MdzipWorkspace externalLinks={{ target: '_top', predicate }} />);
+  expect(view.setExternalLinks).toHaveBeenLastCalledWith({ target: '_top', predicate });
+
+  rerender(<MdzipWorkspace />);
+  expect(view.setExternalLinks).toHaveBeenLastCalledWith(undefined);
+  expect(viewInstances).toHaveLength(1);
+});
+
+test('onLinkActivated forwards to the latest handler without recreating the view', () => {
+  const first = vi.fn();
+  const second = vi.fn();
+  const { rerender } = render(<MdzipWorkspace onLinkActivated={first} />);
+  rerender(<MdzipWorkspace onLinkActivated={second} />);
+  const event = { href: '#a' };
+  (latestView().options['onLinkActivated'] as (e: unknown) => void)(event);
+  expect(first).not.toHaveBeenCalled();
+  expect(second).toHaveBeenCalledWith(event);
+  expect(viewInstances).toHaveLength(1);
 });
 
 test('renderEntry adapter matches, mounts, updates, stays live with parent state, and unmounts', async () => {

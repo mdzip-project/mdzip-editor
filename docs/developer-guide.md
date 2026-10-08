@@ -355,6 +355,49 @@ open immediately. Use `'off'` to disable the loading pulse and slide animation
 entirely. Angular, React, and Vue expose the same setting as
 `imageHydrationAnimation`.
 
+## Links And Anchors
+
+Hosts that embed the preview as a doc browser can route links, set an
+external-link policy, and deep-link to headings without touching preview DOM:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls: 'viewer',
+  externalLinks: { target: '_blank' },
+  onLinkActivated: (event) => {
+    if (event.kind === 'relative') {
+      event.preventDefault();
+      router.openDoc(resolve(event.sourcePath, event.path), event.anchor);
+    }
+  }
+});
+
+await view.open(bytes, { fileName: 'guide.md' });
+if (location.hash) await view.scrollToAnchor(location.hash);
+```
+
+- `onLinkActivated(event)` fires for every preview link click, before the
+  view's own handling. `event.kind` is `'anchor'`, `'document'`, `'relative'`,
+  or `'external'`. Calling `event.preventDefault()` synchronously skips the
+  anchor scroll, document open, and `onUnresolvedLinkClick`, and stops browser
+  navigation. `parseMdzipLink(href, currentPath, entries)` gives the same
+  classification outside a click.
+- `externalLinks: { target, rel, predicate }` applies to `http:`, `https:`,
+  `mailto:`, and `//host` links by default, raw-HTML links and later
+  progressive chunks included. `rel` defaults to `noopener noreferrer` for
+  `_blank`. `setExternalLinks(policy)` changes it without a re-render.
+- `scrollToAnchor(anchor)` waits for the current preview to mount (and mounts
+  progressive chunks up to the target), then resolves whether it scrolled. The
+  target stays pinned while images above it load, until the user scrolls.
+  `getAvailableAnchors()` lists heading ids and explicit `<a id>`/`<a name>`
+  anchors in document order.
+
+Angular exposes `linkActivated` as an output and `externalLinks` as an input,
+Vue as a `linkActivated` event and `externalLinks` prop, and React as
+`onLinkActivated` and `externalLinks` props. `scrollToAnchor` and
+`getAvailableAnchors` are methods on every wrapper. See the `@mdzip/editor`
+README for the full payload.
+
 ## Custom Host Toolbars
 
 Control visibility and command availability are intentionally separate. A host

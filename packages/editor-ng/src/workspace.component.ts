@@ -32,7 +32,9 @@ import type {
   MdzipDocumentChangeEvent,
   MdzipEditorSnapshot,
   MdzipEntryRenderer,
+  MdzipExternalLinkPolicy,
   MdzipFrontMatterOptions,
+  MdzipLinkActivatedEvent,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
   MdzipImageEditHandler,
@@ -145,6 +147,12 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
    * — object literals produced fresh each change-detection cycle are safe.
    */
   @Input() frontMatter: MdzipFrontMatterOptions = {};
+  /**
+   * Rendering policy for external links in the preview, e.g.
+   * `{ target: '_blank' }` (adds `rel="noopener noreferrer"` by default).
+   * Changes re-apply to the mounted preview without a re-render.
+   */
+  @Input() externalLinks?: MdzipExternalLinkPolicy;
   @Output() readonly changed = new EventEmitter<MdzipWorkspaceChange>();
   @Output() readonly saved = new EventEmitter<MdzipWorkspaceSave>();
   @Output() readonly workspaceChanged = new EventEmitter<MdzipDocumentChangeEvent>();
@@ -160,6 +168,11 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Output() readonly previewRendered = new EventEmitter<MdzipWorkspaceSnapshot>();
   /** Emits once the mounted preview's images have finished loading. */
   @Output() readonly assetsHydrated = new EventEmitter<MdzipWorkspaceSnapshot>();
+  /**
+   * Emits for every click on a preview link, before the view's own handling.
+   * Call `event.preventDefault()` in the handler to take over navigation.
+   */
+  @Output() readonly linkActivated = new EventEmitter<MdzipLinkActivatedEvent>();
   @Output() readonly failed = new EventEmitter<unknown>();
 
   @ViewChild('host') private readonly hostRef!: ElementRef<HTMLDivElement>;
@@ -216,6 +229,9 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
         imageEditHandler: (request) => this.imageEditHandler?.(request),
       });
     }
+    if (this.view && changes['externalLinks']) {
+      this.view.setExternalLinks(this.externalLinks);
+    }
     if (this.view && (changes['bytes'] || changes['workspace'] || changes['mode']
       || changes['sourceFormat'] || changes['fileName'] || changes['worker'])) {
       this.syncView();
@@ -265,6 +281,15 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
 
   whenRendered(): Promise<void> {
     return this.view?.whenRendered() ?? Promise.resolve();
+  }
+
+  /** See `MdzipWorkspaceView.scrollToAnchor` — waits for the preview to mount. */
+  scrollToAnchor(anchor: string): Promise<boolean> {
+    return this.view?.scrollToAnchor(anchor) ?? Promise.resolve(false);
+  }
+
+  getAvailableAnchors(): string[] {
+    return this.view?.getAvailableAnchors() ?? [];
   }
 
   markPersisted(): void {
@@ -355,6 +380,8 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onColorSchemeChanged: (colorScheme: MdzipColorScheme) => this.colorSchemeChanged.emit(colorScheme),
       onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => this.previewRendered.emit(snapshot),
       onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => this.assetsHydrated.emit(snapshot),
+      onLinkActivated: (event: MdzipLinkActivatedEvent) => this.linkActivated.emit(event),
+      externalLinks: this.externalLinks,
       onFailed: (e: unknown) => this.failed.emit(e),
       onConversionRequested: this.onConversionRequested
         ? (action, context) => this.onConversionRequested!(action, context)

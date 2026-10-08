@@ -29,7 +29,9 @@ import type {
   MdzipEditorCommand,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
+  MdzipExternalLinkPolicy,
   MdzipFrontMatterOptions,
+  MdzipLinkActivatedEvent,
   MdzipMarkdownRenderExtension,
   MdzipMarkdownRenderer,
   MdzipImageEditHandler,
@@ -104,6 +106,9 @@ export interface MdzipWorkspaceExposed {
   serialize(): Promise<Blob | null>;
   getCurrentSnapshot(): Promise<MdzipEditorSnapshot | null>;
   whenRendered(): Promise<void>;
+  /** See `MdzipWorkspaceView.scrollToAnchor` — waits for the preview to mount. */
+  scrollToAnchor(anchor: string): Promise<boolean>;
+  getAvailableAnchors(): string[];
   markPersisted(): void;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
@@ -204,6 +209,16 @@ export const MdzipWorkspace = defineComponent({
       type: Object as PropType<MdzipFrontMatterOptions>,
       default: () => ({})
     },
+    /**
+     * Rendering policy for external links in the preview, e.g.
+     * `{ target: '_blank' }` (adds `rel="noopener noreferrer"` by default).
+     * Re-applies to the mounted preview when `target`, `rel` or
+     * `predicate` change — inline object literals are safe.
+     */
+    externalLinks: {
+      type: Object as PropType<MdzipExternalLinkPolicy>,
+      default: undefined
+    },
     /** Matching priority of the `#entry` slot relative to `entryRenderers`. */
     entrySlotPriority: { type: Number, default: 0 },
   },
@@ -221,6 +236,11 @@ export const MdzipWorkspace = defineComponent({
     'colorSchemeChanged',
     'previewRendered',
     'assetsHydrated',
+    /**
+     * Every click on a preview link, before the view's own handling. Call
+     * `event.preventDefault()` in the handler to take over navigation.
+     */
+    'linkActivated',
     'failed'
   ],
   setup(props, { emit, expose, slots }) {
@@ -286,6 +306,8 @@ export const MdzipWorkspace = defineComponent({
       serialize: () => view?.serialize() ?? Promise.resolve(null),
       getCurrentSnapshot: () => view?.getCurrentSnapshot() ?? Promise.resolve(null),
       whenRendered: () => view?.whenRendered() ?? Promise.resolve(),
+      scrollToAnchor: (anchor: string) => view?.scrollToAnchor(anchor) ?? Promise.resolve(false),
+      getAvailableAnchors: () => view?.getAvailableAnchors() ?? [],
       markPersisted: () => view?.markPersisted(),
       addAsset: (archivePath: string, fileBytes: Uint8Array) =>
         view?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
@@ -335,6 +357,8 @@ export const MdzipWorkspace = defineComponent({
         onColorSchemeChanged: (colorScheme: MdzipColorScheme) => emit('colorSchemeChanged', colorScheme),
         onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => emit('previewRendered', snapshot),
         onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => emit('assetsHydrated', snapshot),
+        onLinkActivated: (event: MdzipLinkActivatedEvent) => emit('linkActivated', event),
+        externalLinks: props.externalLinks,
         onFailed: (e: unknown) => emit('failed', e),
         onConversionRequested: props.onConversionRequested,
         onPackRequested: props.onPackRequested,
@@ -410,6 +434,15 @@ export const MdzipWorkspace = defineComponent({
         imageInsertMode: mode,
         imageInsertHandler: (request) => props.imageInsertHandler?.(request),
       });
+    });
+
+    watch([
+      () => props.externalLinks?.target,
+      () => props.externalLinks?.rel,
+      () => props.externalLinks?.predicate,
+      () => props.externalLinks === undefined
+    ], () => {
+      view?.setExternalLinks(props.externalLinks);
     });
 
     watch(() => props.imageEditHandler, () => {

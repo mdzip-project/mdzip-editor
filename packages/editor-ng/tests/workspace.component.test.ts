@@ -17,6 +17,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setControls = vi.fn();
     public readonly setDensityOptions = vi.fn();
     public readonly setImageHydrationAnimation = vi.fn();
+    public readonly setExternalLinks = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly destroy = vi.fn();
@@ -235,6 +236,31 @@ test('controls, density, and image animation inputs update in place', () => {
     contentDensity: 'compact'
   });
   expect(view.setImageHydrationAnimation).toHaveBeenLastCalledWith('off');
+});
+
+test('externalLinks input reaches the view at creation and re-applies on change', () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.componentRef.setInput('externalLinks', { target: '_blank' });
+  fixture.detectChanges();
+  const view = latestView();
+  expect(view.options['externalLinks']).toEqual({ target: '_blank' });
+
+  fixture.componentRef.setInput('externalLinks', { target: '_top' });
+  fixture.detectChanges();
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setExternalLinks).toHaveBeenLastCalledWith({ target: '_top' });
+});
+
+test('linkActivated output emits synchronously so handlers can preventDefault', () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.detectChanges();
+  fixture.componentInstance.linkActivated.subscribe((event) => event.preventDefault());
+  let prevented = false;
+  const event = { href: '#a', preventDefault: () => { prevented = true; } };
+  (latestView().options['onLinkActivated'] as (e: unknown) => void)(event);
+  expect(prevented).toBe(true);
 });
 
 test('diff component updates one view and exposes navigation methods', async () => {

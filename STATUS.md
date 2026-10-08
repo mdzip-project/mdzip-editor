@@ -1,9 +1,77 @@
 Status: ready-to-commit
-Last: v1.4.8 release prep done (verify green) — navigation and lazy open no longer rebuild the whole archive (books.mdz read timeouts); awaiting commit, then tag/release/publish; 1.4.7 is live on npm
+Last: 1.5.0 release prepared (#48–#50 link/anchor APIs, anchor-scroll fix, consistent package descriptions); verify green, 23/23 browser check — ready to commit, tag and publish
 
-**Next release:** make the four packages' `description` fields consistent (seen on the npm search page). Now: editor "Framework-independent MDZip workspace engine.", editor-ng "Angular UI components for the MDZip workspace engine.", editor-react / editor-vue "<Framework> wrapper for the MDZip workspace editor." — ng is the odd one out, and "engine" vs "editor" is mixed.
+## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 
-v1.4.5 shipped 2026-09-23/24 — see the CHANGELOG's `[1.4.5]` entry. It adds
+All three came from the same kind of host: an Angular app embedding
+`mdzip-workspace` read-only as a repo doc browser (`@mdzip/editor` 1.4.8).
+Most of #50 already existed privately (heading ids, `scrollPreviewToAnchor`,
+the deferred pending-anchor flush from #47). The work was mostly exposing
+it, plus one shared click event that serves all three issues.
+
+- **#48 `onLinkActivated(event)`** (ng `linkActivated` output, vue
+  `linkActivated` event, react `onLinkActivated` prop). Fires for every
+  preview link click *before* built-in handling. The payload comes from the
+  new exported `parseMdzipLink`: `kind` anchor/document/relative/external,
+  `path`, decoded `anchor`, `targetPath`, `sourcePath`, modifier keys,
+  `domEvent`, `snapshot`. `preventDefault()` (synchronous) skips the
+  anchor scroll, document open and `onUnresolvedLinkClick`, and prevents
+  the DOM default. Unprevented clicks keep the old behavior, so the wrappers
+  always register it. This also covers #50's "link click payload with
+  parsed anchor" item and the `file.md#heading` fragment that
+  `onUnresolvedLinkClick` used to drop.
+- **#49 `externalLinks: { target, rel, predicate }`** plus
+  `setExternalLinks()`. Applied to the mounted DOM next to the code-block
+  chrome at all three mount sites (sync, async and per chunk), so raw-HTML
+  links, custom renderers and later progressive chunks are covered. DOMPurify
+  strips `target`, so rendering can't do it. `rel` defaults to
+  `noopener noreferrer` only for `_blank`. The default predicate is
+  http/https/mailto and `//`. Only hrefs with a scheme reach a custom
+  predicate. Each link's original target/rel is kept in a WeakMap so a
+  live policy change (or `undefined`) restores them without a re-render.
+  Wrappers re-apply on field changes (target/rel/predicate), so inline
+  objects are safe in React and Vue.
+- **#50 `scrollToAnchor(anchor): Promise<boolean>`** and
+  **`getAvailableAnchors()`** on the view and all wrappers.
+  `scrollToAnchor` waits until the current `previewGeneration` has mounted
+  (new `previewMountedGeneration` and waiters, released on mount, on an
+  entry-renderer claim and on destroy). It defers a frame when it had to
+  wait or is called from inside `onPreviewRendered` (same sentinel race as
+  `flushPendingAnchorSoon`), then reuses `scrollPreviewToAnchor`, which
+  drains unmounted chunks. For the "ready signal" I reused the existing
+  `onPreviewRendered` instead of adding a new one, since `scrollToAnchor` no
+  longer needs the host to time its call.
+- **Anchor drift fix (found by the browser check).** Scrolling to a heading
+  while images above it were still loading left it 1,645px off screen once
+  they arrived. Both the click path (since 1.4.5) and `scrollToAnchor`
+  scrolled once. `scrollPreviewToAnchor` now pins the target with a
+  ResizeObserver on `elPreviewContent`, re-scrolling on each size change.
+  The pin is released on any wheel/touch/mousedown/keydown gesture on either
+  pane, on a new preview generation, and on destroy. jsdom has no
+  ResizeObserver, so the pin is a no-op in unit tests; the browser check
+  covers it.
+- Side fix: a link href with malformed percent-encoding threw a URIError
+  from the click handler. `parseMdzipLink` now treats it as a relative link.
+
+Verified: `npm run verify` green (build, lint, 319 `node --test` plus the
+four vitest suites, boundary checks). New `tests/link-host-api.test.mjs`
+(16 tests), plus externalLinks/linkActivated tests in each wrapper's suite.
+Mutation-checked: disabling the `onLinkActivated` dispatch fails 4 tests,
+and dropping the destroy-time waiter release makes the destroy test hang.
+Real browser: `node scripts/verify-link-host-api.mjs` (HEADED=1 to watch)
+bundles a test page from `packages/editor/dist`, serves it with deliberately
+slow images, and checks 23 behaviors in Chromium. All pass. Removing the pin
+release on user scroll fails it. Not yet tried inside Studio or the VS Code
+webview.
+
+Open questions for review:
+- Middle-click and auxclick aren't covered (`click` doesn't fire for them).
+  With `target: '_blank'` the browser already handles middle-click natively.
+- There's no public `openPath(path, { anchor })` for hosts deep-linking
+  into a *different* document of a multi-document `.mdz`. The #50 reporter
+  loads one `.md` per preview, so they don't need it.
+- Ready to close #48–#50 once published.
+ — see the CHANGELOG's `[1.4.5]` entry. It adds
 heading anchors (#47, closed), `onUnresolvedLinkClick` (mdzip-vscode#13), the
 Shift+Right-Click fix (mdzip-studio#22) and the duplicated-tail fix for a
 regression in 1.4.4. Sections below are the write-ups behind each item.

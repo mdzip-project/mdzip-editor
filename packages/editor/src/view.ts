@@ -100,9 +100,13 @@ import {
   isOrphanedMdzipAsset,
   mdzipEntryIconKind,
   isMdzipManifestPath,
+  isMdzipDefaultPolicyExternalLink,
+  isMdzipExternalLink,
   isMdzipWorkspaceRelativeLink,
-  resolveMdzipArchiveLinkTarget,
+  parseMdzipLink,
   renderMdzipPreviewHtml,
+  type MdzipLinkKind,
+  type MdzipParsedLink,
   type MdzipNavNode
 } from './workspace-view.js';
 import { escapeMarkdownImageAlt, findImageReferenceAtOffset, formatImageEditMarkdown } from './image-edit.js';
@@ -136,6 +140,14 @@ const isImageFile = (path: string) => IMAGE_EXTENSIONS.test(path);
 
 function isThenable<T>(value: T | Promise<T> | void): value is Promise<T> {
   return typeof (value as { then?: unknown } | null | undefined)?.then === 'function';
+}
+
+function restoreAttribute(element: Element, name: string, value: string | null): void {
+  if (value === null) {
+    element.removeAttribute(name);
+  } else {
+    element.setAttribute(name, value);
+  }
 }
 
 const NAV_ICON_CLASS = 'nav-lucide-icon';
@@ -603,6 +615,67 @@ export interface MdzipCodeBlockLanguage {
   label: string;
 }
 
+/**
+ * Passed to {@link MdzipWorkspaceViewOptions.onLinkActivated} for every click
+ * on a link in the rendered preview, before the view's own handling.
+ */
+export interface MdzipLinkActivatedEvent {
+  /** The link's `href` attribute exactly as rendered. */
+  href: string;
+  /** The link's visible text, trimmed. */
+  text: string;
+  /** See {@link parseMdzipLink}. */
+  kind: MdzipLinkKind;
+  /** `kind === 'external'`. */
+  isExternal: boolean;
+  /** `kind === 'anchor'` — a bare `#fragment` within the current document. */
+  isAnchor: boolean;
+  /** The href with any `#fragment` removed (empty for a bare `#fragment`). */
+  path: string;
+  /** The percent-decoded `#fragment`, without the `#`; `null` when there is none. */
+  anchor: string | null;
+  /** Archive path of the document the link sits in. */
+  sourcePath: string;
+  /** Archive path of the Markdown document the link opens, for `kind: 'document'`. */
+  targetPath: string | null;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  /** The underlying DOM click. */
+  domEvent: MouseEvent;
+  snapshot: MdzipWorkspaceSnapshot;
+  /**
+   * Suppresses both the view's own handling (anchor scroll, opening an
+   * archive document, `onUnresolvedLinkClick`) and the browser's default
+   * navigation. Must be called synchronously inside the callback.
+   */
+  preventDefault(): void;
+  readonly defaultPrevented: boolean;
+}
+
+export type MdzipLinkTarget = '_blank' | '_self' | '_parent' | '_top';
+
+/**
+ * How external links render in the preview. Applied to the mounted preview
+ * DOM, so it covers links from raw HTML and custom renderers too.
+ */
+export interface MdzipExternalLinkPolicy {
+  /** `target` attribute for external links. Unset leaves `target` alone. */
+  target?: MdzipLinkTarget;
+  /**
+   * `rel` attribute for external links. Defaults to `'noopener noreferrer'`
+   * when `target` is `'_blank'`; otherwise unset leaves `rel` alone.
+   */
+  rel?: string;
+  /**
+   * Which links count as external. Defaults to `http:`, `https:`,
+   * `mailto:` and protocol-relative (`//host`) hrefs; relative links and
+   * `#fragment`s are never passed to it.
+   */
+  predicate?: (href: string) => boolean;
+}
+
 export interface MdzipWorkspaceViewOptions {
   /**
    * Additional host or framework libraries to show in Document Information.
@@ -743,6 +816,24 @@ export interface MdzipWorkspaceViewOptions {
    * behavior of doing nothing for any link that isn't archive-internal.
    */
   onUnresolvedLinkClick?: (href: string, snapshot: MdzipWorkspaceSnapshot) => void;
+  /**
+   * Fires for every click on a link in the rendered preview — anchors,
+   * archive documents, relative and external links alike — before the
+   * view's own handling. Call `event.preventDefault()` to take over the
+   * navigation: the view then does nothing further (no anchor scroll, no
+   * document open, no `onUnresolvedLinkClick`) and the browser's default
+   * navigation is suppressed. Leaving it unprevented keeps the existing
+   * behavior. Lets hosts route links themselves (e.g. a repository doc
+   * browser selecting `../design/foo.md` in its own tree) without
+   * intercepting preview DOM.
+   */
+  onLinkActivated?: (event: MdzipLinkActivatedEvent) => void;
+  /**
+   * Rendering policy for external links (e.g. open in a new tab with safe
+   * `rel` attributes). Unset leaves external links exactly as rendered.
+   * Change at runtime with {@link MdzipWorkspaceView.setExternalLinks}.
+   */
+  externalLinks?: MdzipExternalLinkPolicy;
   /**
    * Fires when the preview HTML for the current selection has been mounted
    * into the DOM (image `src`s already resolved to their session URLs).
@@ -1821,6 +1912,21 @@ export class MdzipWorkspaceView {
   // until that document's preview has mounted so there is a heading to scroll
   // to. Consumed by firePreviewRendered.
   private pendingAnchorFragment: string | null = null;
+  // The previewGeneration whose preview last mounted (or was claimed by an
+  // entry renderer); scrollToAnchor() waits until it catches up.
+  private previewMountedGeneration = -1;
+  private previewMountWaiters: Array<() => void> = [];
+  // True while onPreviewRendered runs — see scrollToAnchor().
+  private firingPreviewRendered = false;
+  private destroyed = false;
+  // After an anchor scroll, content above the target can still change height
+  // (images loading or easing open, a diagram rendering) and push it out of
+  // view. This holds the target at the pane's top edge until the user
+  // scrolls either pane or the preview re-renders.
+  private anchorPin: ResizeObserver | null = null;
+  // Each link's own target/rel from before the external-link policy touched
+  // it, so a policy change can restore them before re-applying.
+  private externalLinkOriginals = new WeakMap<Element, { target: string | null; rel: string | null }>();
   // Guards syncScrollToPreviewBottom against overlapping drains: set to the
   // chunkedRenderState generation currently being force-drained, null when
   // none is in flight. A second bottom-edge sync that arrives mid-drain
@@ -2406,6 +2512,9 @@ export class MdzipWorkspaceView {
     this.teardownEntryRenderer();
     // Release any whenRendered() waiters so their promises do not hang.
     this.flushRenderedWaiters();
+    this.destroyed = true;
+    this.markPreviewMounted();
+    this.releaseAnchorPin();
     try {
       this.workspace?.dispose();
     } catch {
@@ -2574,6 +2683,55 @@ export class MdzipWorkspaceView {
     this.options.imageEditHandler = options.imageEditHandler;
   }
 
+  /**
+   * Replaces the external-link rendering policy and re-applies it to the
+   * links already in the preview, without re-rendering. `undefined` restores
+   * every link's own `target`/`rel`.
+   */
+  public setExternalLinks(policy: MdzipExternalLinkPolicy | undefined): void {
+    this.options.externalLinks = policy;
+    this.applyExternalLinkPolicy(this.elPreviewContent);
+  }
+
+  private applyExternalLinkPolicy(root: HTMLElement): void {
+    const policy = this.options.externalLinks;
+    for (const link of Array.from(root.querySelectorAll('a[href]'))) {
+      const original = this.externalLinkOriginals.get(link);
+      if (original) {
+        this.externalLinkOriginals.delete(link);
+        restoreAttribute(link, 'target', original.target);
+        restoreAttribute(link, 'rel', original.rel);
+      }
+      if (!policy) {
+        continue;
+      }
+      const rel = policy.rel ?? (policy.target === '_blank' ? 'noopener noreferrer' : undefined);
+      if (policy.target === undefined && rel === undefined) {
+        continue;
+      }
+      const href = link.getAttribute('href') ?? '';
+      if (!isMdzipExternalLink(href)) {
+        continue;
+      }
+      let external = false;
+      try {
+        external = policy.predicate ? policy.predicate(href) : isMdzipDefaultPolicyExternalLink(href);
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+      if (!external) {
+        continue;
+      }
+      this.externalLinkOriginals.set(link, { target: link.getAttribute('target'), rel: link.getAttribute('rel') });
+      if (policy.target !== undefined) {
+        link.setAttribute('target', policy.target);
+      }
+      if (rel !== undefined) {
+        link.setAttribute('rel', rel);
+      }
+    }
+  }
+
   private applyDensityClasses(): void {
     this.elRoot.classList.remove(
       'toolbar-density-comfortable',
@@ -2671,6 +2829,7 @@ export class MdzipWorkspaceView {
       // There is no built-in preview to wait for; release any waiters.
       this.previewHydrated = true;
       this.flushRenderedWaiters();
+      this.markPreviewMounted();
       return;
     }
 
@@ -2830,6 +2989,7 @@ export class MdzipWorkspaceView {
     if (codeBlockHandle) {
       this.previewHandles.push(codeBlockHandle);
     }
+    this.applyExternalLinkPolicy(this.elPreviewContent);
     // No archive images to resolve on this path: the preview is ready now.
     this.firePreviewRendered(snapshot, generation);
     this.fireAssetsHydrated(snapshot, generation);
@@ -2859,6 +3019,7 @@ export class MdzipWorkspaceView {
     if (codeBlockHandle) {
       this.previewHandles.push(codeBlockHandle);
     }
+    this.applyExternalLinkPolicy(this.elPreviewContent);
     this.firePreviewRendered(snapshot, generation);
     this.hydrateImages(pending, context, generation, animateImageHydration, () => {
       this.fireAssetsHydrated(snapshot, generation);
@@ -3560,6 +3721,7 @@ export class MdzipWorkspaceView {
       if (codeBlockHandle) {
         record.handles.push(codeBlockHandle);
       }
+      this.applyExternalLinkPolicy(record.root);
     }
     return { cursor, mountedRoots };
   }
@@ -3956,10 +4118,24 @@ export class MdzipWorkspaceView {
     }
     this.restorePendingPreviewScroll(generation);
     this.flushPendingAnchorSoon();
+    this.markPreviewMounted();
+    this.firingPreviewRendered = true;
     try {
       this.options.onPreviewRendered?.(snapshot);
     } catch (error) {
       this.options.onFailed?.(error);
+    } finally {
+      this.firingPreviewRendered = false;
+    }
+  }
+
+  /** Releases {@link scrollToAnchor} calls waiting for the current preview to mount. */
+  private markPreviewMounted(): void {
+    this.previewMountedGeneration = this.previewGeneration;
+    const waiters = this.previewMountWaiters;
+    this.previewMountWaiters = [];
+    for (const resolve of waiters) {
+      resolve();
     }
   }
 
@@ -4310,7 +4486,10 @@ export class MdzipWorkspaceView {
       // scroll, on every keystroke. Wheel/touch/mousedown (which also covers
       // a scrollbar-thumb drag, since that lands on this same element) are
       // unambiguous and cover the vast majority of real scrolling.
-      const markEditorGesture = () => { self.lastEditorGestureTime = performance.now(); };
+      const markEditorGesture = () => {
+        self.lastEditorGestureTime = performance.now();
+        self.releaseAnchorPin();
+      };
       scroller.addEventListener('wheel', markEditorGesture, { passive: true });
       scroller.addEventListener('touchstart', markEditorGesture, { passive: true });
       scroller.addEventListener('mousedown', markEditorGesture);
@@ -5161,7 +5340,10 @@ export class MdzipWorkspaceView {
       }
     });
 
-    const markPreviewGesture = () => { this.lastPreviewGestureTime = performance.now(); };
+    const markPreviewGesture = () => {
+      this.lastPreviewGestureTime = performance.now();
+      this.releaseAnchorPin();
+    };
     this.elPreviewPane.addEventListener('wheel', markPreviewGesture, { passive: true });
     this.elPreviewPane.addEventListener('touchstart', markPreviewGesture, { passive: true });
     this.elPreviewPane.addEventListener('mousedown', markPreviewGesture);
@@ -5180,17 +5362,20 @@ export class MdzipWorkspaceView {
         return;
       }
       const href = link.getAttribute('href') ?? '';
+      const parsed = parseMdzipLink(href, snapshot.currentPath, snapshot.content.paths);
+      if (this.options.onLinkActivated && this.dispatchLinkActivated(event, link, href, parsed, snapshot)) {
+        return;
+      }
       if (href.startsWith('#')) {
         event.preventDefault();
         void this.scrollPreviewToAnchor(href.slice(1));
         return;
       }
-      const targetPath = resolveMdzipArchiveLinkTarget(href, snapshot.currentPath, snapshot.content.paths);
-      if (targetPath) {
+      if (parsed.targetPath) {
         event.preventDefault();
         const hashIndex = href.indexOf('#');
         const fragment = hashIndex >= 0 ? href.slice(hashIndex + 1) : '';
-        void this.openPathAndScrollToAnchor(targetPath, fragment);
+        void this.openPathAndScrollToAnchor(parsed.targetPath, fragment);
         return;
       }
       if (this.options.onUnresolvedLinkClick && isMdzipWorkspaceRelativeLink(href)) {
@@ -5244,6 +5429,137 @@ export class MdzipWorkspaceView {
       this.pendingAnchorFragment = null;
       await this.scrollPreviewToAnchor(pending);
     }
+  }
+
+  /** Returns true when the host prevented the click, ending all further handling. */
+  private dispatchLinkActivated(
+    domEvent: MouseEvent,
+    link: Element,
+    href: string,
+    parsed: MdzipParsedLink,
+    snapshot: MdzipWorkspaceSnapshot
+  ): boolean {
+    let prevented = false;
+    const event: MdzipLinkActivatedEvent = {
+      href,
+      text: (link.textContent ?? '').trim(),
+      kind: parsed.kind,
+      isExternal: parsed.kind === 'external',
+      isAnchor: parsed.kind === 'anchor',
+      path: parsed.path,
+      anchor: parsed.anchor,
+      sourcePath: snapshot.currentPath,
+      targetPath: parsed.targetPath,
+      ctrlKey: domEvent.ctrlKey,
+      metaKey: domEvent.metaKey,
+      shiftKey: domEvent.shiftKey,
+      altKey: domEvent.altKey,
+      domEvent,
+      snapshot,
+      preventDefault: () => {
+        prevented = true;
+      },
+      get defaultPrevented() {
+        return prevented;
+      }
+    };
+    try {
+      this.options.onLinkActivated?.(event);
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+    if (prevented) {
+      domEvent.preventDefault();
+    }
+    return prevented;
+  }
+
+  /**
+   * Scrolls the preview to a heading or an explicit `id`/`name` anchor.
+   * Accepts the fragment with or without its leading `#` and matches it the
+   * way a clicked `#fragment` link does: case-insensitive, percent-decoded,
+   * against both bare and `user-content-`-prefixed heading ids.
+   *
+   * Safe to call at any point — straight after `open()`/`openWorkspace()`,
+   * or from `onPreviewRendered`: it waits for the current document's
+   * preview to mount, and under progressive rendering mounts the chunks up
+   * to the target first. Resolves `true` when it scrolled to a matching
+   * anchor (`''` and `'top'` scroll to the top and resolve `true`), and
+   * `false` when nothing matches, an entry renderer owns the pane, or the
+   * view is destroyed first.
+   */
+  public async scrollToAnchor(anchor: string): Promise<boolean> {
+    const fragment = anchor.startsWith('#') ? anchor.slice(1) : anchor;
+    // onPreviewRendered runs inside the first chunk batch's completion,
+    // before the lazy-continuation sentinel is armed — same race as
+    // flushPendingAnchorSoon, so a call from it (or one that had to wait for
+    // the mount) is deferred a frame.
+    let deferFrame = this.firingPreviewRendered;
+    while (!this.destroyed && this.previewMountedGeneration !== this.previewGeneration) {
+      deferFrame = true;
+      await new Promise<void>((resolve) => this.previewMountWaiters.push(resolve));
+    }
+    if (this.destroyed) {
+      return false;
+    }
+    if (deferFrame) {
+      const generation = this.previewGeneration;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (this.destroyed) {
+        return false;
+      }
+      if (generation !== this.previewGeneration) {
+        return this.scrollToAnchor(anchor);
+      }
+    }
+    if (this.entryState) {
+      return false;
+    }
+    const found = await this.scrollPreviewToAnchor(fragment);
+    return found || !fragment || fragment.toLowerCase() === 'top';
+  }
+
+  /**
+   * The anchors {@link scrollToAnchor} can reach in the current preview, in
+   * document order: every heading id (without the `user-content-` prefix),
+   * including headings in chunks progressive rendering hasn't mounted yet,
+   * plus explicit `id`/`name` anchors on links in the mounted preview.
+   * Empty before the preview first mounts.
+   */
+  public getAvailableAnchors(): string[] {
+    if (this.entryState) {
+      return [];
+    }
+    const anchors: string[] = [];
+    const seen = new Set<string>();
+    const add = (value: string | null) => {
+      if (!value) return;
+      const bare = value.startsWith(MDZIP_HEADING_ID_PREFIX) ? value.slice(MDZIP_HEADING_ID_PREFIX.length) : value;
+      if (bare && !seen.has(bare)) {
+        seen.add(bare);
+        anchors.push(bare);
+      }
+    };
+    const fromDom = (root: Element) => {
+      for (const element of Array.from(root.querySelectorAll('h1[id],h2[id],h3[id],h4[id],h5[id],h6[id],a[id],a[name]'))) {
+        add(element.getAttribute('id'));
+        add(element.getAttribute('name'));
+      }
+    };
+    const state = this.chunkedRenderState;
+    if (state && state.generation === this.previewGeneration) {
+      // Walk records in order so unmounted chunks' headings land in place.
+      state.records.forEach((record) => {
+        if (record.root) {
+          fromDom(record.root);
+        } else {
+          collectMdzipHeadingIds(record.tokens).forEach(add);
+        }
+      });
+    } else {
+      fromDom(this.elPreviewContent);
+    }
+    return anchors;
   }
 
   // Deferred a frame: firePreviewRendered runs inside the first chunk batch's
@@ -5327,8 +5643,37 @@ export class MdzipWorkspaceView {
       }
       return false;
     }
-    pane.scrollTop += target.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+    this.scrollPaneToElement(target);
+    this.pinPreviewAnchor(target);
     return true;
+  }
+
+  private scrollPaneToElement(target: Element): void {
+    const pane = this.elPreviewPane;
+    pane.scrollTop += target.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+  }
+
+  /** See `anchorPin`. */
+  private pinPreviewAnchor(target: HTMLElement): void {
+    this.releaseAnchorPin();
+    if (typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const generation = this.previewGeneration;
+    const observer = new ResizeObserver(() => {
+      if (generation !== this.previewGeneration || !target.isConnected) {
+        this.releaseAnchorPin();
+        return;
+      }
+      this.scrollPaneToElement(target);
+    });
+    observer.observe(this.elPreviewContent);
+    this.anchorPin = observer;
+  }
+
+  private releaseAnchorPin(): void {
+    this.anchorPin?.disconnect();
+    this.anchorPin = null;
   }
 
   private async openPath(path: string): Promise<void> {

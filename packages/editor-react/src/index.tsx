@@ -14,7 +14,9 @@ import type {
   MdzipEditorSnapshot,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
+  MdzipExternalLinkPolicy,
   MdzipFrontMatterOptions,
+  MdzipLinkActivatedEvent,
   MdzipImageEditHandler,
   MdzipImageHydrationAnimation,
   MdzipImageInsertHandler,
@@ -164,6 +166,18 @@ export interface MdzipWorkspaceProps {
   onPreviewRendered?: (snapshot: MdzipWorkspaceSnapshot) => void;
   /** Fires once the mounted preview's images have finished loading. */
   onAssetsHydrated?: (snapshot: MdzipWorkspaceSnapshot) => void;
+  /**
+   * Fires for every click on a preview link, before the view's own handling.
+   * Call `event.preventDefault()` to take over navigation.
+   */
+  onLinkActivated?: (event: MdzipLinkActivatedEvent) => void;
+  /**
+   * Rendering policy for external links in the preview, e.g.
+   * `{ target: '_blank' }` (adds `rel="noopener noreferrer"` by default).
+   * Inline objects are safe: it re-applies when `target`, `rel` or
+   * `predicate` change, without a re-render.
+   */
+  externalLinks?: MdzipExternalLinkPolicy;
   onFailed?: (error: unknown) => void;
   /**
    * Host hook for the markdown→MDZ conversion flow. Return/resolve `true`
@@ -219,6 +233,9 @@ export interface MdzipWorkspaceHandle {
   serialize(): Promise<Blob | null>;
   getCurrentSnapshot(): Promise<MdzipEditorSnapshot | null>;
   whenRendered(): Promise<void>;
+  /** See `MdzipWorkspaceView.scrollToAnchor` — waits for the preview to mount. */
+  scrollToAnchor(anchor: string): Promise<boolean>;
+  getAvailableAnchors(): string[];
   markPersisted(): void;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
@@ -267,6 +284,8 @@ function MdzipWorkspace({
   onColorSchemeChanged,
   onPreviewRendered,
   onAssetsHydrated,
+  onLinkActivated,
+  externalLinks,
   onFailed,
   onConversionRequested,
   onPackRequested,
@@ -302,6 +321,7 @@ function MdzipWorkspace({
     onColorSchemeChanged,
     onPreviewRendered,
     onAssetsHydrated,
+    onLinkActivated,
     onFailed,
     onConversionRequested,
     onPackRequested,
@@ -322,12 +342,16 @@ function MdzipWorkspace({
     onColorSchemeChanged,
     onPreviewRendered,
     onAssetsHydrated,
+    onLinkActivated,
     onFailed,
     onConversionRequested,
     onPackRequested,
     imageInsertHandler,
     imageEditHandler,
   };
+
+  const externalLinksRef = useRef(externalLinks);
+  externalLinksRef.current = externalLinks;
 
   const contentRef = useRef({ bytes, workspace, mode, sourceFormat, fileName });
   contentRef.current = { bytes, workspace, mode, sourceFormat, fileName };
@@ -360,6 +384,8 @@ function MdzipWorkspace({
     serialize: () => viewRef.current?.serialize() ?? Promise.resolve(null),
     getCurrentSnapshot: () => viewRef.current?.getCurrentSnapshot() ?? Promise.resolve(null),
     whenRendered: () => viewRef.current?.whenRendered() ?? Promise.resolve(),
+    scrollToAnchor: (anchor) => viewRef.current?.scrollToAnchor(anchor) ?? Promise.resolve(false),
+    getAvailableAnchors: () => viewRef.current?.getAvailableAnchors() ?? [],
     markPersisted: () => viewRef.current?.markPersisted(),
     addAsset: (archivePath, fileBytes) =>
       viewRef.current?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
@@ -410,6 +436,8 @@ function MdzipWorkspace({
       onColorSchemeChanged: (colorScheme) => callbacksRef.current.onColorSchemeChanged?.(colorScheme),
       onPreviewRendered: (snapshot) => callbacksRef.current.onPreviewRendered?.(snapshot),
       onAssetsHydrated: (snapshot) => callbacksRef.current.onAssetsHydrated?.(snapshot),
+      onLinkActivated: (event) => callbacksRef.current.onLinkActivated?.(event),
+      externalLinks: externalLinksRef.current,
       onFailed: (e) => callbacksRef.current.onFailed?.(e),
       // A hook returning false falls back to the built-in dialog, same as no
       // hook at all, so the always-present delegate is behavior-preserving.
@@ -455,6 +483,14 @@ function MdzipWorkspace({
     navigationMode,
     navigationButtonActive
   ]);
+
+  const externalLinksTarget = externalLinks?.target;
+  const externalLinksRel = externalLinks?.rel;
+  const externalLinksPredicate = externalLinks?.predicate;
+  const hasExternalLinks = externalLinks !== undefined;
+  useEffect(() => {
+    viewRef.current?.setExternalLinks(externalLinksRef.current);
+  }, [externalLinksTarget, externalLinksRel, externalLinksPredicate, hasExternalLinks]);
 
   useEffect(() => {
     viewRef.current?.setControls(controls);

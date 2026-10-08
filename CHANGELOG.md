@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+## [1.5.0] - 2026-10-07
+
+### Added
+- `onLinkActivated(event)` view option (`linkActivated` output/event in Angular and Vue, `onLinkActivated` prop in React): fires for every preview link click before the view's own handling, with the parsed link: `kind` (`'anchor' | 'document' | 'relative' | 'external'`), `href`, `text`, `path`, `anchor`, `sourcePath`, `targetPath`, modifier keys and the DOM event. `event.preventDefault()` hands navigation to the host: no anchor scroll, document open or `onUnresolvedLinkClick`, and no browser navigation. Unprevented clicks behave as before. New exports: `parseMdzipLink`, `isMdzipExternalLink`, `isMdzipDefaultPolicyExternalLink`, `MdzipLinkActivatedEvent`, `MdzipLinkKind`. Closes #48.
+- `externalLinks` view option and wrapper input/prop, plus `setExternalLinks(policy)`: a rendering policy for external links, e.g. `{ target: '_blank' }` (defaults `rel` to `noopener noreferrer`), with optional `rel` and `predicate(href)`. By default it covers `http:`, `https:`, `mailto:` and `//host` links. It applies to the mounted preview, raw-HTML links and later progressive chunks included, and changes re-apply without a re-render. Unset by default, so nothing changes for existing hosts. Exports `MdzipExternalLinkPolicy`. Closes #49.
+- `scrollToAnchor(anchor)` and `getAvailableAnchors()` on the view and every wrapper. `scrollToAnchor` can be called at any time (right after `open()`, or from `onPreviewRendered`): it waits for the current preview to mount, mounts unrendered progressive chunks up to the target, and resolves whether it scrolled. `getAvailableAnchors` lists heading ids (without the `user-content-` prefix) and explicit `<a id>`/`<a name>` anchors in document order, including headings in unmounted chunks. Closes #50.
+
+### Fixed
+- Jumping to a heading (a clicked `#fragment` link since 1.4.5, or `scrollToAnchor`) could leave the target far off screen when images or diagrams above it were still loading: the preview scrolled once, then the content above grew. The target is now held at the top of the preview until the user scrolls either pane or the preview re-renders.
+- Clicking a preview link whose href has malformed percent-encoding (e.g. `bad%E0%A4%A.md`) threw an uncaught `URIError` from the click handler. It is now treated as an unresolved relative link.
+
+### Changed
+- Package `description` fields are consistent across npm: `@mdzip/editor` is the "Framework-independent MDZip workspace editor", and `@mdzip/editor-ng` is now an "Angular wrapper for the MDZip workspace editor", matching React and Vue.
+
 ## [1.4.8] - 2026-09-24
 
 ### Fixed

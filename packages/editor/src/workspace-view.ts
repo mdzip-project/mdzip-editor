@@ -113,6 +113,73 @@ export function isMdzipWorkspaceRelativeLink(href: string): boolean {
   return !(/^[a-z][a-z0-9+.-]*:/i.test(cleanHref) || cleanHref.startsWith('//'));
 }
 
+// True for an href with its own URL scheme (`https:`, `mailto:`, `vscode:`,
+// ...) or a protocol-relative `//host` href — anything that points outside
+// both the archive and the surrounding workspace.
+export function isMdzipExternalLink(href: string): boolean {
+  const cleanHref = href.trim();
+  return /^[a-z][a-z0-9+.-]*:/i.test(cleanHref) || cleanHref.startsWith('//');
+}
+
+// The links `MdzipExternalLinkPolicy` applies to when the host supplies no
+// `predicate`: web and mail links only, so app-specific schemes a host
+// handles itself (`vscode:`, `command:`, ...) keep their plain behavior.
+export function isMdzipDefaultPolicyExternalLink(href: string): boolean {
+  return /^(?:https?:|mailto:|\/\/)/i.test(href.trim());
+}
+
+export type MdzipLinkKind = 'anchor' | 'document' | 'relative' | 'external';
+
+export interface MdzipParsedLink {
+  kind: MdzipLinkKind;
+  /** The href with any `#fragment` removed (empty for a bare `#fragment`). */
+  path: string;
+  /** The percent-decoded `#fragment`, without the `#`; `null` when there is none. */
+  anchor: string | null;
+  /** Archive path of the Markdown document the link opens, for `kind: 'document'`. */
+  targetPath: string | null;
+}
+
+/**
+ * Classifies a preview link the way the preview's click handling does:
+ * `anchor` (a bare `#fragment` within the current document), `document`
+ * (another Markdown document inside this archive), `relative` (relative,
+ * but not to an archive Markdown document — out to the surrounding
+ * workspace or repo, or to a non-Markdown entry), or `external` (has its
+ * own URL scheme or is protocol-relative).
+ */
+export function parseMdzipLink(
+  href: string,
+  currentPath: string,
+  entries: readonly ArchiveEntry[]
+): MdzipParsedLink {
+  const cleanHref = href.trim();
+  const hashIndex = cleanHref.indexOf('#');
+  const path = hashIndex >= 0 ? cleanHref.slice(0, hashIndex) : cleanHref;
+  let anchor: string | null = null;
+  if (hashIndex >= 0) {
+    const rawAnchor = cleanHref.slice(hashIndex + 1);
+    try {
+      anchor = decodeURIComponent(rawAnchor);
+    } catch {
+      anchor = rawAnchor;
+    }
+  }
+  if (cleanHref.startsWith('#')) {
+    return { kind: 'anchor', path: '', anchor, targetPath: null };
+  }
+  if (isMdzipExternalLink(cleanHref)) {
+    return { kind: 'external', path, anchor, targetPath: null };
+  }
+  let targetPath: string | null = null;
+  try {
+    targetPath = resolveMdzipArchiveLinkTarget(cleanHref, currentPath, entries);
+  } catch {
+    // Malformed percent-encoding — not resolvable inside the archive.
+  }
+  return { kind: targetPath ? 'document' : 'relative', path, anchor, targetPath };
+}
+
 export function resolveMdzipArchiveLinkTarget(
   href: string,
   currentPath: string,

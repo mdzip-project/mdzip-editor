@@ -13,6 +13,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setControls = vi.fn();
     public readonly setDensityOptions = vi.fn();
     public readonly setImageHydrationAnimation = vi.fn();
+    public readonly setExternalLinks = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly destroy = vi.fn();
@@ -163,6 +164,33 @@ test('frontMatter prop reaches the view at creation and re-applies on deep-equal
   expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
   const applied = view.setRenderingOptions.mock.calls[0][0] as { frontMatter: unknown };
   expect(applied.frontMatter).toEqual({ display: 'raw', collapsible: false, label: 'Metadata' });
+});
+
+test('externalLinks reaches the view at creation and re-applies only when its fields change', async () => {
+  const wrapper = mount(MdzipWorkspace, { props: { externalLinks: { target: '_blank' } } });
+  const view = latestView();
+  expect(view.options['externalLinks']).toEqual({ target: '_blank' });
+
+  await wrapper.setProps({ externalLinks: { target: '_blank' } });
+  expect(view.setExternalLinks).not.toHaveBeenCalled();
+
+  await wrapper.setProps({ externalLinks: { target: '_blank', rel: 'noopener' } });
+  expect(view.setExternalLinks).toHaveBeenLastCalledWith({ target: '_blank', rel: 'noopener' });
+
+  await wrapper.setProps({ externalLinks: undefined });
+  expect(view.setExternalLinks).toHaveBeenLastCalledWith(undefined);
+  expect(viewInstances).toHaveLength(1);
+});
+
+test('linkActivated emits the event synchronously so handlers can preventDefault', () => {
+  let prevented = false;
+  const wrapper = mount(MdzipWorkspace, {
+    props: { onLinkActivated: (event: { preventDefault(): void }) => event.preventDefault() }
+  });
+  const event = { href: '#a', preventDefault: () => { prevented = true; } };
+  (latestView().options['onLinkActivated'] as (e: unknown) => void)(event);
+  expect(prevented).toBe(true);
+  expect(wrapper.emitted('linkActivated')?.[0]).toEqual([event]);
 });
 
 test('controls, density, and image animation props update in place', async () => {

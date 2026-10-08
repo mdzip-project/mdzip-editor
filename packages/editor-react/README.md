@@ -100,6 +100,7 @@ showUnchanged? }`) to opt any of them out.
 | `renderEntry` | `(context) => ReactNode \| undefined` | — | Catch-all entry renderer: return a node to claim the selected entry, `undefined` to delegate |
 | `renderEntryPriority` | `number` | `0` | Matching priority of `renderEntry` relative to `entryRenderers` |
 | `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; inline objects are safe |
+| `externalLinks` | `MdzipExternalLinkPolicy` | — | External-link policy, e.g. `{ target: '_blank' }` (adds `rel="noopener noreferrer"`); optional `rel` and `predicate(href)`. Re-applies without a re-render only when `target`, `rel` or `predicate` change; inline objects are safe |
 
 `controls`, density, `imageHydrationAnimation`, and rendering prop changes apply in
 place — they never recreate the workspace view. Line-number visibility changes
@@ -140,6 +141,7 @@ re-mount), and unmounts on selection change.
 | `onColorSchemeChanged` | `(colorScheme: MdzipColorScheme) => void` | Called when the color scheme changes |
 | `onPreviewRendered` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called when the preview HTML is mounted |
 | `onAssetsHydrated` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called once the mounted preview's images have loaded |
+| `onLinkActivated` | `(event: MdzipLinkActivatedEvent) => void` | Called for every preview link click before built-in handling; call `event.preventDefault()` to take over |
 | `onFailed` | `(error: unknown) => void` | Called on unrecoverable errors |
 | `onConversionRequested` | `(action: MdzipConversionAction) => boolean \| Promise<boolean>` | Host hook for the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog |
 | `onPackRequested` | `(request: MdzipPackFilesRequest, context: MdzipPackFilesContext) => boolean \| Promise<boolean>` | Host hook for the folder→.mdz packing decision surfaced by the `packFilesAsWorkspace(files, options)` ref method — fires only when the file list contains more than one Markdown file. Same return contract as `onConversionRequested` |
@@ -166,6 +168,16 @@ The same operations are exposed imperatively: `removeFile`, `renameFile`, `setEn
 and `setCoverImage` on the handle. The handle also exposes `whenRendered()`, which resolves
 once the current preview (including its images) is mounted — useful for revealing or
 animating read-only preview content.
+
+## Links and anchors
+
+`onLinkActivated` fires for every preview link click, before the view's own handling, with the
+parsed link (`kind`: `'anchor' | 'document' | 'relative' | 'external'`, plus `path`,
+`anchor`, `targetPath`, `sourcePath`, modifier keys). Call `event.preventDefault()` in the
+handler to route the link yourself; unprevented clicks keep the built-in behavior.
+The handle also exposes `scrollToAnchor(anchor)` (waits for the preview to mount, resolves whether it
+scrolled; safe straight after load) and `getAvailableAnchors()`. See the
+[`@mdzip/editor` README](https://www.npmjs.com/package/@mdzip/editor#links-and-anchors).
 
 ## Imperative API
 
