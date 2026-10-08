@@ -43,6 +43,10 @@ A host that writes a linked image file itself (plain `.md`) can reuse the editor
 
 `view.packFilesAsWorkspace(files, options)` packs a host-collected file list (e.g. from a folder picker) into a new archive. The hook is only consulted when `files` contains more than one Markdown file — the zero/one-Markdown fast path always packs Document mode directly, no hook call, no dialog. Document mode opens the packed archive in the view; Project mode does **not** auto-open — it returns `archiveBytes` for the host to save first, since only the host knows where a project archive belongs. Same `true`/`false`/throw contract as `onConversionRequested`.
 
+**Links and anchors (since 1.5.0)**
+
+`onLinkActivated(event)` fires for every preview link click before built-in handling. `event.preventDefault()` must be called synchronously — calling it after an `await` is too late, and the built-in anchor scroll / document open / `onUnresolvedLinkClick` will already have run. To open new tabs for external links, use the `externalLinks` policy (or `setExternalLinks()`), not a custom renderer or DOMPurify hook: sanitization strips `target`, so the policy is applied to the mounted DOM instead. `scrollToAnchor()` is safe to call right after `open()` — it waits for the preview to mount rather than failing — so hosts don't need their own `onPreviewRendered` + retry loop.
+
 **Preview code-block chrome (since 1.3.16)**
 
 Rendered code blocks get a language header, a copy button, and (past 15 lines) a collapse toggle, gated by the `codeBlockTools` control-policy flag (default `true` everywhere, including `preview`). This is wired into `mountPreviewHtml`/`mountProgressivePreview` directly, not a `markdownExtensions` entry — don't confuse it with `formatting.codeBlock`, which is the unrelated editor-toolbar insert-code-block control.
