@@ -1,5 +1,5 @@
-Status: ready-to-commit
-Last: 1.5.0 release prepared (#48–#50 link/anchor APIs, anchor-scroll fix, consistent package descriptions); verify green, 23/23 browser check — ready to commit, tag and publish
+Status: idle
+Last: Closed #48–#50 (shipped in 1.5.0); filed #53 for openPath deep-linking
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 
@@ -69,8 +69,8 @@ Open questions for review:
   With `target: '_blank'` the browser already handles middle-click natively.
 - There's no public `openPath(path, { anchor })` for hosts deep-linking
   into a *different* document of a multi-document `.mdz`. The #50 reporter
-  loads one `.md` per preview, so they don't need it.
-- Ready to close #48–#50 once published.
+  loads one `.md` per preview, so they don't need it. Filed as #53.
+- #48–#50 closed 2026-10-08 against 1.5.0.
  — see the CHANGELOG's `[1.4.5]` entry. It adds
 heading anchors (#47, closed), `onUnresolvedLinkClick` (mdzip-vscode#13), the
 Shift+Right-Click fix (mdzip-studio#22) and the duplicated-tail fix for a
