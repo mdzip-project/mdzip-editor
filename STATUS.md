@@ -1,5 +1,5 @@
 Status: idle
-Last: Closed #48–#50 (shipped in 1.5.0); filed #53 for openPath deep-linking
+Last: Filed #57 (preview: consecutive hr collapse) and #58 (preview: footnote support)
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 
