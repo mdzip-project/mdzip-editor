@@ -1,5 +1,5 @@
-Status: idle
-Last: Filed #57 (preview: consecutive hr collapse) and #58 (preview: footnote support)
+Status: awaiting-test
+Last: Branch test/hostile-content: spec T-016 hostile-content test for the default renderer (15 cases pass; 334 total) — not committed
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 

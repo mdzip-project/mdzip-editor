@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Tests
+- MDZip spec conformance test `T-016` (hostile content) for the default sanitizing renderer: `tests/hostile-content.test.mjs` renders the spec's `hostile-content.mdz` and checks that no script, event handler, inline SVG, `<base>`, `<meta>`, `<link>`, `<iframe>`, `<object>`, `<embed>`, `style` URL or `javascript:` link survives, that the archive's own image still renders, and that an `http:` image is left as a plain `<img>` for the host's policy. Fixtures copied from `mdzip-spec` into `tests/fixtures/spec/`.
+
 ## [1.5.0] - 2026-10-07
 
 ### Added
