@@ -1,4 +1,5 @@
 import { MdzArchiveCore, type MdzManifest } from '@mdzip/core-js';
+import { sha256Hex } from './sha256.js';
 import { isMdzipManifestPath } from './workspace-view.js';
 
 export interface CanonicalMarkdownReadResult {
@@ -51,9 +52,7 @@ export async function createArchiveInventoryFromArchive(
 
   for (const entry of archiveEntries) {
     const entryBytes = await archive.readBytes(entry.path);
-    const hashBuffer = await globalThis.crypto.subtle.digest('SHA-256', entryBytes as BufferSource);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    const hash = await sha256Hex(entryBytes);
 
     let kind: ArchiveInventoryEntryKind = 'file';
     if (isMdzipManifestPath(entry.path)) {

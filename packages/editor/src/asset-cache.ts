@@ -1,4 +1,5 @@
 import { nfc, samePath, type MdzWorkspaceAsset } from '@mdzip/core-js';
+import { sha256Hex } from './sha256.js';
 import type { MdzipWorkspaceService } from './workspace.js';
 
 export interface MdzipAssetCacheEntry {
@@ -357,7 +358,7 @@ export class MdzipAssetSession {
 }
 
 export async function mdzipArchiveSourceId(bytes: Uint8Array): Promise<string> {
-  return `sha256:${await sha256(bytes)}`;
+  return `sha256:${await sha256Hex(bytes)}`;
 }
 
 async function contentAddress(bytes: Uint8Array, mimeType: string): Promise<string> {
@@ -365,13 +366,7 @@ async function contentAddress(bytes: Uint8Array, mimeType: string): Promise<stri
   const input = new Uint8Array(mime.length + bytes.length);
   input.set(mime);
   input.set(bytes, mime.length);
-  return `sha256:${await sha256(input)}`;
-}
-
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const input = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  const digest = await crypto.subtle.digest('SHA-256', input);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `sha256:${await sha256Hex(input)}`;
 }
 
 /**
