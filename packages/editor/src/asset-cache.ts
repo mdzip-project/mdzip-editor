@@ -1,4 +1,4 @@
-import type { MdzWorkspaceAsset } from '@mdzip/core-js';
+import { nfc, samePath, type MdzWorkspaceAsset } from '@mdzip/core-js';
 import type { MdzipWorkspaceService } from './workspace.js';
 
 export interface MdzipAssetCacheEntry {
@@ -170,14 +170,14 @@ export class MdzipAssetSession {
 
   public resolveKnown(path: string, currentPath: string): string | undefined {
     const assetPath = resolveAssetPath(path, currentPath, this.assets);
-    return assetPath ? this.urls.get(assetPath.toLowerCase()) : undefined;
+    return assetPath ? this.urls.get(assetPath) : undefined;
   }
 
   /** Synchronous counterpart to {@link resolveImage}, for an asset this session has already resolved once this document open. */
   public resolveKnownImage(path: string, currentPath: string): MdzipResolvedImage | undefined {
     const assetPath = resolveAssetPath(path, currentPath, this.assets);
     if (!assetPath) return undefined;
-    const key = assetPath.toLowerCase();
+    const key = assetPath;
     const url = this.urls.get(key);
     if (!url) return undefined;
     const size = this.sizes.get(key);
@@ -188,7 +188,7 @@ export class MdzipAssetSession {
     if (this.destroyed) return undefined;
     const assetPath = resolveAssetPath(path, currentPath, this.assets);
     if (!assetPath) return undefined;
-    const key = assetPath.toLowerCase();
+    const key = assetPath;
     const existing = this.urls.get(key);
     if (existing) return existing;
     const active = this.pending.get(key);
@@ -207,7 +207,7 @@ export class MdzipAssetSession {
     const url = await this.resolve(path, currentPath);
     if (!url) return undefined;
     const assetPath = resolveAssetPath(path, currentPath, this.assets);
-    const size = assetPath ? this.sizes.get(assetPath.toLowerCase()) : undefined;
+    const size = assetPath ? this.sizes.get(assetPath) : undefined;
     return size ? { url, width: size.width, height: size.height } : { url };
   }
 
@@ -225,7 +225,7 @@ export class MdzipAssetSession {
     if (this.destroyed) return undefined;
     const assetPath = resolveAssetPath(path, currentPath, this.assets);
     if (!assetPath) return undefined;
-    const asset = this.assets.find((item) => item.path.toLowerCase() === assetPath.toLowerCase());
+    const asset = this.assets.find((item) => item.path === assetPath);
     if (!asset) return undefined;
     const bytes = await this.workspace.readPathBytes(asset.path).catch((error) => {
       this.options.onFailed?.(error);
@@ -307,7 +307,7 @@ export class MdzipAssetSession {
   }
 
   private async resolveAsset(assetPath: string): Promise<string | undefined> {
-    const asset = this.assets.find((item) => item.path.toLowerCase() === assetPath.toLowerCase());
+    const asset = this.assets.find((item) => item.path === assetPath);
     if (!asset) return undefined;
     let loadedBytes: Uint8Array | undefined;
     try {
@@ -341,9 +341,9 @@ export class MdzipAssetSession {
     const url = urlApi?.createObjectURL
       ? urlApi.createObjectURL(new Blob([bytes as BlobPart], { type: mimeType }))
       : `data:${mimeType};base64,${bytesToBase64(bytes)}`;
-    this.urls.set(path.toLowerCase(), url);
+    this.urls.set(path, url);
     const size = sniffImageSize(bytes, mimeType);
-    if (size) this.sizes.set(path.toLowerCase(), size);
+    if (size) this.sizes.set(path, size);
     return url;
   }
 
@@ -352,7 +352,7 @@ export class MdzipAssetSession {
     this.sourceIdPromise ??= typeof this.options.sourceId === 'string'
       ? Promise.resolve(this.options.sourceId)
       : this.options.sourceId();
-    return `${await this.sourceIdPromise}:${path.toLowerCase()}`;
+    return `${await this.sourceIdPromise}:${nfc(path)}`;
   }
 }
 
@@ -470,13 +470,13 @@ function resolveAssetPath(
   } catch {
     return undefined;
   }
-  const direct = assets.find(
-    (asset) => asset.path.toLowerCase() === decoded.replace(/^[/\\]+/, '').toLowerCase()
-  );
+  // Paths match case-sensitively after NFC normalization (spec 1.2.0 §5.4.1). The resolved
+  // value is always the asset's stored path, so it doubles as the cache key.
+  const direct = assets.find((asset) => samePath(asset.path, decoded.replace(/^[/\\]+/, '')));
   if (direct) return direct.path;
   const base = currentPath.includes('/') ? currentPath.slice(0, currentPath.lastIndexOf('/') + 1) : '';
   const normalized = normalizePath(decoded.startsWith('/') ? decoded.slice(1) : `${base}${decoded}`);
-  return assets.find((asset) => asset.path.toLowerCase() === normalized.toLowerCase())?.path;
+  return assets.find((asset) => samePath(asset.path, normalized))?.path;
 }
 
 function normalizePath(path: string): string {

@@ -2,6 +2,7 @@ import {
   MDZ_IMAGE_MIME_TYPES,
   MdzArchiveCore,
   MdzPackagerCore,
+  samePath,
   type MdzManifest,
   type MdzValidationResult,
   type MdzWorkspace
@@ -41,7 +42,7 @@ export async function openedArchiveFromWorkspace(workspace: MdzWorkspace): Promi
     ?? workspace.documents[0]?.path
     ?? 'index.md';
   const markdownText = workspace.documents.find(
-    (document) => document.path.toLowerCase() === entryPoint.toLowerCase()
+    (document) => samePath(document.path, entryPoint)
   )?.text ?? '';
   const paths = [
     ...workspace.documents.map((document): ArchiveEntry => ({
@@ -212,7 +213,7 @@ export async function buildPackedArchiveBytes(
   options: PackFilesOptions
 ): Promise<Uint8Array> {
   const inputs = files.map((f) => ({ path: f.path, data: f.bytes }));
-  const hasEntry = inputs.some((f) => f.path.toLowerCase() === options.entryPoint.toLowerCase());
+  const hasEntry = inputs.some((f) => samePath(f.path, options.entryPoint));
   if (!hasEntry) {
     inputs.push({ path: options.entryPoint, data: new TextEncoder().encode('') });
   }

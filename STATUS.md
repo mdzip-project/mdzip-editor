@@ -1,5 +1,5 @@
-Status: idle
-Last: Filed #57 (preview: consecutive hr collapse) and #58 (preview: footnote support)
+Status: ready-to-commit
+Last: Branch feat/core-js-2: v2.0.1 on @mdzip/core-js 2.0.1 (spec 1.2.0, case-sensitive paths); npm run verify passes (325 tests)
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 

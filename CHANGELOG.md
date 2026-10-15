@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-10-14
+
+Versions now follow `@mdzip/core-js` (2.0.1), skipping 1.6–2.0.0, so the editor, its wrappers and core-js share one version line.
+
+### Changed
+- Requires `@mdzip/core-js` **2.0.1** (MDZip spec 1.2.0). Archives the editor saves always contain a `manifest.json` with `spec.version`, `title`, `entryPoint` and `mode`; unknown manifest fields and untouched entries are kept byte-for-byte. See the core-js 2.0.0 changelog for the full list.
+- Archive paths now match case-sensitively after Unicode NFC normalization (spec §5.4.1): image and link resolution in the preview, Markdown link navigation, the file tree (folders that differ only in case are separate), the file menu, orphan and cover markers, and `removeFile`, `renameFile`, `removeAsset` and `setEntryPoint` lookups. `![](Images/Logo.png)` no longer shows `images/logo.png`.
+- New names still may not differ from an existing file only in case (pasted images, new files, renames, drops), because such siblings collide on case-insensitive file systems. Renaming a file to a different case of its own name is allowed.
+
+### Fixed
+- A case-only rename (`Logo.png` to `logo.png`) saved both files: the pending write replaced the pending removal because both were keyed by the lowercased path.
+- Adding a second root Markdown file to an archive whose manifest has no `entryPoint` no longer fails to save (`ERR_ENTRYPOINT_UNRESOLVED`); the current entry point is recorded (fixed in core-js 2.0.1).
+
 ## [1.5.0] - 2026-10-07
 
 ### Added

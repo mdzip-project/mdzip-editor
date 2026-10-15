@@ -1,3 +1,4 @@
+import { nfc, samePath } from '@mdzip/core-js';
 import type { ArchiveEntry } from './archive-utils.js';
 import { MdzipRenderingService } from './rendering.js';
 import type { MdzipPathType, MdzipWorkspaceMode, MdzipWorkspaceSnapshot } from './workspace.js';
@@ -60,8 +61,7 @@ export function isOrphanedMdzipAsset(entry: ArchiveEntry, state: MdzipWorkspaceS
   if (!entry.isImage) {
     return false;
   }
-  const orphaned = new Set(state.content.orphanedAssetPaths.map((path) => path.toLowerCase()));
-  return orphaned.has(entry.path.toLowerCase());
+  return state.content.orphanedAssetPaths.some((path) => samePath(path, entry.path));
 }
 
 export function mdzipEntryIconLabel(entry: ArchiveEntry): string {
@@ -205,7 +205,8 @@ export function resolveMdzipArchiveLinkTarget(
     return null;
   }
 
-  const target = entries.find((entry) => entry.path.toLowerCase() === candidate.toLowerCase());
+  // Case-sensitive after NFC (spec 1.2.0 §5.4.1).
+  const target = entries.find((entry) => samePath(entry.path, candidate));
   return target?.isMarkdown ? target.path : null;
 }
 
@@ -287,14 +288,14 @@ function sortNavNodes(a: MdzipNavNode, b: MdzipNavNode, pinnedPaths?: ReadonlyMa
 function pinnedNavPaths(entryPoint?: string): ReadonlyMap<string, number> {
   const pinned = new Map<string, number>();
   if (entryPoint) {
-    pinned.set(entryPoint.toLowerCase(), 0);
+    pinned.set(nfc(entryPoint), 0);
   }
   pinned.set('manifest.json', 1);
   return pinned;
 }
 
 function pinnedRank(node: MdzipNavNode, pinnedPaths?: ReadonlyMap<string, number>): number | undefined {
-  const direct = pinnedPaths?.get(node.entry?.path.toLowerCase() ?? '');
+  const direct = pinnedPaths?.get(node.entry ? nfc(node.entry.path) : '');
   if (direct !== undefined) {
     return direct;
   }

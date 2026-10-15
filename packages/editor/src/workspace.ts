@@ -1,6 +1,8 @@
 import {
   MdzArchiveCore,
   MdzPackagerCore,
+  nfc,
+  samePath,
   type MdzManifest,
   type MdzOpenWorkspaceOptions,
   type MdzValidationResult,
@@ -442,7 +444,7 @@ export class MdzipWorkspaceService {
   ): Promise<boolean> {
     this.assertEditable('remove asset');
     const target = this.findPath(archivePath);
-    if (!target || !this.workspaceValue.assets.some((asset) => asset.path.toLowerCase() === target.path.toLowerCase())) {
+    if (!target || !this.workspaceValue.assets.some((asset) => samePath(asset.path, target.path))) {
       return false;
     }
     this.commitPendingTextToWorkspace();
@@ -450,12 +452,12 @@ export class MdzipWorkspaceService {
       const orphaned = this.liveOrphanedPaths
         ?? this.workspaceValue.orphanedAssets?.orphanedAssetPaths
         ?? this.contentValue.orphanedAssetPaths;
-      if (!new Set(orphaned.map((path) => path.toLowerCase())).has(target.path.toLowerCase())) {
+      if (!orphaned.some((path) => samePath(path, target.path))) {
         return false;
       }
     }
 
-    this.workspaceValue.assets = this.workspaceValue.assets.filter((asset) => asset.path.toLowerCase() !== target.path.toLowerCase());
+    this.workspaceValue.assets = this.workspaceValue.assets.filter((asset) => !samePath(asset.path, target.path));
     this.recordPendingRemoval(target.path);
     await this.reloadPreservingCurrentText(await this.serializeWorkspaceBytes(), target.path);
     this.dirtyValue = true;
@@ -474,15 +476,14 @@ export class MdzipWorkspaceService {
     if (!target) {
       return false;
     }
-    const lower = target.path.toLowerCase();
-    if (lower === 'manifest.json') {
+    if (target.path.toLowerCase() === 'manifest.json') {
       return false;
     }
-    const document = this.workspaceValue.documents.find((doc) => doc.path.toLowerCase() === lower);
+    const document = this.workspaceValue.documents.find((doc) => samePath(doc.path, target.path));
     if (!document) {
       return this.removeAsset(target.path);
     }
-    if (lower === this.entryPointPath().toLowerCase()) {
+    if (samePath(target.path, this.entryPointPath())) {
       return false;
     }
     this.commitPendingTextToWorkspace();
@@ -505,9 +506,9 @@ export class MdzipWorkspaceService {
       return false;
     }
     const document = this.workspaceValue.documents.find(
-      (doc) => doc.path.toLowerCase() === archivePath.toLowerCase()
+      (doc) => samePath(doc.path, archivePath)
     );
-    if (!document || document.path.toLowerCase() === this.entryPointPath().toLowerCase()) {
+    if (!document || samePath(document.path, this.entryPointPath())) {
       return false;
     }
     this.commitPendingTextToWorkspace();
@@ -559,7 +560,12 @@ export class MdzipWorkspaceService {
     if (normalized === target.path) {
       return false;
     }
-    if (normalized.toLowerCase() !== target.path.toLowerCase() && this.findPath(normalized)) {
+    // Lookups are case-sensitive (spec 1.2.0 §5.4.1), but a new name may not differ from another
+    // file's only in case: such siblings collide on case-insensitive file systems. Changing only
+    // the case of the file being renamed is allowed.
+    const lowerTarget = normalized.toLowerCase();
+    if (this.contentValue.paths.some((entry) =>
+      entry.path.toLowerCase() === lowerTarget && !samePath(entry.path, target.path))) {
       return false;
     }
     this.commitPendingTextToWorkspace();
@@ -571,17 +577,17 @@ export class MdzipWorkspaceService {
     this.recordPendingWrite(normalized, bytes);
 
     const document = this.workspaceValue.documents.find(
-      (doc) => doc.path.toLowerCase() === target.path.toLowerCase()
+      (doc) => samePath(doc.path, target.path)
     );
     const asset = this.workspaceValue.assets.find(
-      (item) => item.path.toLowerCase() === target.path.toLowerCase()
+      (item) => samePath(item.path, target.path)
     );
     if (document) {
       document.path = normalized;
     } else if (asset) {
       asset.path = normalized;
     }
-    if (this.entryPointPath().toLowerCase() === target.path.toLowerCase()) {
+    if (samePath(this.entryPointPath(), target.path)) {
       this.workspaceValue.entryPoint = normalized;
       this.workspaceValue.manifest = MdzPackagerCore.updateManifest(
         this.workspaceValue.manifest,
@@ -589,7 +595,7 @@ export class MdzipWorkspaceService {
       );
     }
 
-    if (this.currentPathValue.toLowerCase() === target.path.toLowerCase()) {
+    if (samePath(this.currentPathValue, target.path)) {
       this.currentPathValue = normalized;
     }
     await this.rewriteReferencesForRename(target.path, normalized);
@@ -841,7 +847,7 @@ export class MdzipWorkspaceService {
     this.liveOrphanedPaths = null;
     this.clearPendingChanges();
 
-    if (removedPath && currentPath.toLowerCase() === removedPath.toLowerCase()) {
+    if (removedPath && samePath(currentPath, removedPath)) {
       this.currentTextValue = this.contentValue.markdownText;
       this.currentPathValue = this.contentValue.entryPoint;
       this.currentPathTypeValue = 'markdown';
@@ -858,7 +864,7 @@ export class MdzipWorkspaceService {
 
   private findPath(archivePath: string): ArchiveEntry | undefined {
     return this.contentValue.paths.find(
-      (entry) => entry.path.toLowerCase() === archivePath.toLowerCase()
+      (entry) => samePath(entry.path, archivePath)
     );
   }
 
@@ -871,10 +877,10 @@ export class MdzipWorkspaceService {
   // moved document's own relative refs are re-based to its new directory.
   // Only refs that resolve to a known archive path are touched.
   private async rewriteReferencesForRename(oldPath: string, newPath: string): Promise<void> {
-    const oldLower = oldPath.toLowerCase();
-    const knownPaths = new Set(this.contentValue.paths.map((entry) => entry.path.toLowerCase()));
+    const oldKey = nfc(oldPath);
+    const knownPaths = new Set(this.contentValue.paths.map((entry) => nfc(entry.path)));
     for (const doc of this.workspaceValue.documents) {
-      const wasRenamedDoc = doc.path.toLowerCase() === newPath.toLowerCase();
+      const wasRenamedDoc = samePath(doc.path, newPath);
       // Refs were authored relative to the document's pre-rename location.
       const authoredDir = archiveDirName(wasRenamedDoc ? oldPath : doc.path);
       const currentDir = archiveDirName(doc.path);
@@ -890,11 +896,11 @@ export class MdzipWorkspaceService {
       }
       const rewritten = rewriteArchiveRefs(text, (ref) => {
         const resolved = resolveArchiveRef(ref, authoredDir);
-        const targetLower = resolved.toLowerCase();
-        if (targetLower !== oldLower && !knownPaths.has(targetLower)) {
+        const targetKey = nfc(resolved);
+        if (targetKey !== oldKey && !knownPaths.has(targetKey)) {
           return null;
         }
-        const finalTarget = targetLower === oldLower ? newPath : resolved;
+        const finalTarget = targetKey === oldKey ? newPath : resolved;
         const next = relativeArchivePath(currentDir, finalTarget);
         return next === ref ? null : next;
       });
@@ -903,7 +909,7 @@ export class MdzipWorkspaceService {
         delete doc.readText;
         delete doc.isLazy;
         this.recordPendingWrite(doc.path, rewritten);
-        if (doc.path.toLowerCase() === this.currentPathValue.toLowerCase()) {
+        if (samePath(doc.path, this.currentPathValue)) {
           this.currentTextValue = rewritten;
         }
       }
@@ -914,7 +920,7 @@ export class MdzipWorkspaceService {
     if (!isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)) {
       return;
     }
-    const document = this.workspaceValue.documents.find((doc) => doc.path.toLowerCase() === this.currentPathValue.toLowerCase());
+    const document = this.workspaceValue.documents.find((doc) => samePath(doc.path, this.currentPathValue));
     if (document) {
       if (document.text !== this.currentTextValue) {
         document.text = this.currentTextValue;
@@ -925,7 +931,7 @@ export class MdzipWorkspaceService {
       }
       return;
     }
-    const asset = this.workspaceValue.assets.find((item) => item.path.toLowerCase() === this.currentPathValue.toLowerCase());
+    const asset = this.workspaceValue.assets.find((item) => samePath(item.path, this.currentPathValue));
     if (asset) {
       const bytes = new TextEncoder().encode(this.currentTextValue);
       const newByteSize = bytes.byteLength;
@@ -940,16 +946,17 @@ export class MdzipWorkspaceService {
     }
   }
 
+  // Keyed by NFC path, not lowercased: a case-only rename removes one entry and writes another.
   private recordPendingWrite(archivePath: string, content: string | Uint8Array): void {
-    const lower = archivePath.toLowerCase();
-    this.pendingRemovals.delete(lower);
-    this.pendingWrites.set(lower, { path: archivePath, content });
+    const key = nfc(archivePath);
+    this.pendingRemovals.delete(key);
+    this.pendingWrites.set(key, { path: archivePath, content });
   }
 
   private recordPendingRemoval(archivePath: string): void {
-    const lower = archivePath.toLowerCase();
-    this.pendingWrites.delete(lower);
-    this.pendingRemovals.set(lower, archivePath);
+    const key = nfc(archivePath);
+    this.pendingWrites.delete(key);
+    this.pendingRemovals.set(key, archivePath);
   }
 
   private clearPendingChanges(): void {
@@ -975,18 +982,17 @@ export class MdzipWorkspaceService {
   }
 
   private upsertWorkspaceAsset(asset: MdzWorkspaceAsset): void {
-    const lower = asset.path.toLowerCase();
     this.workspaceValue.assets = [
-      ...this.workspaceValue.assets.filter((existing) => existing.path.toLowerCase() !== lower),
+      ...this.workspaceValue.assets.filter((existing) => !samePath(existing.path, asset.path)),
       asset
     ].sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: 'base' }));
   }
 
   private async readWorkspacePathBytes(archivePath: string): Promise<Uint8Array | undefined> {
-    if (archivePath.toLowerCase() === 'manifest.json' && this.workspaceValue.manifest) {
+    if (archivePath === 'manifest.json' && this.workspaceValue.manifest) {
       return new TextEncoder().encode(JSON.stringify(this.workspaceValue.manifest, null, 2));
     }
-    const document = this.workspaceValue.documents.find((doc) => doc.path.toLowerCase() === archivePath.toLowerCase());
+    const document = this.workspaceValue.documents.find((doc) => samePath(doc.path, archivePath));
     if (document) {
       if (document.readText && !document.text) {
         document.text = await document.readText();
@@ -997,7 +1003,7 @@ export class MdzipWorkspaceService {
       }
       return new TextEncoder().encode(document.text);
     }
-    const asset = this.workspaceValue.assets.find((item) => item.path.toLowerCase() === archivePath.toLowerCase());
+    const asset = this.workspaceValue.assets.find((item) => samePath(item.path, archivePath));
     if (asset?.bytes) {
       const bytes = asset.bytes instanceof Uint8Array
         ? asset.bytes

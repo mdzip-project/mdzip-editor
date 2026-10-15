@@ -65,7 +65,7 @@ import {
   TextSelect,
   ZoomIn
 } from 'lucide';
-import type { MdzWorkspace, MdzWorkspaceAsset } from '@mdzip/core-js';
+import { samePath, type MdzWorkspace, type MdzWorkspaceAsset } from '@mdzip/core-js';
 import { browserClipboardHasImage, readBrowserClipboardImage } from './browser.js';
 import {
   buildPackedArchiveBytes,
@@ -1597,7 +1597,7 @@ function renderNavNode(
     .map((child, index) =>
       renderNavNode(child, state, options, childTrail, index === node.children.length - 1, depth + 1))
     .join('');
-  const pending = options.pendingFolders.has(node.path.toLowerCase());
+  const pending = options.pendingFolders.has(node.path);
   return `<details class="nav-directory${pending ? ' pending-folder' : ''}" open data-nav-dir="${escapeHtml(node.path)}">
     <summary${pending ? ` title="${escapeHtml(node.path)} — not saved until it contains a file"` : ''}>
       ${guides}<span class="nav-caret" aria-hidden="true"></span>
@@ -1621,7 +1621,8 @@ function mergePendingFolders(nodes: MdzipNavNode[], pendingPaths: ReadonlySet<st
     let prefix = '';
     for (const segment of path.split('/').filter(Boolean)) {
       prefix = prefix ? `${prefix}/${segment}` : segment;
-      let dir = children.find((n) => !n.entry && n.path.toLowerCase() === prefix.toLowerCase());
+      // Folders that differ only in case are different folders (spec 1.2.0 §5.4.1).
+      let dir = children.find((n) => !n.entry && n.path === prefix);
       if (!dir) {
         dir = { name: segment, path: prefix, children: [] };
         children.push(dir);
@@ -4678,7 +4679,7 @@ export class MdzipWorkspaceView {
       allowOrphanActions,
       allowFileActions,
       allowDrag: snapshot.mode !== 'read-only' && snapshot.sourceFormat === 'mdz',
-      pendingFolders: new Set([...this.pendingNewFolders].map((path) => path.toLowerCase()))
+      pendingFolders: new Set(this.pendingNewFolders)
     };
     this.elNavTree.innerHTML = navTree
       .map((n, i) => renderNavNode(n, snapshot, navRenderOptions, [], i === navTree.length - 1, 0))
@@ -4824,9 +4825,9 @@ export class MdzipWorkspaceView {
       this.pendingNewFolders.clear();
       return;
     }
-    const lowerPaths = snapshot.content.paths.map((entry) => entry.path.toLowerCase());
+    const paths = snapshot.content.paths.map((entry) => entry.path);
     for (const folder of [...this.pendingNewFolders]) {
-      if (lowerPaths.some((path) => path.startsWith(`${folder.toLowerCase()}/`))) {
+      if (paths.some((path) => path.startsWith(`${folder}/`))) {
         this.pendingNewFolders.delete(folder);
       }
     }
@@ -7639,9 +7640,7 @@ export class MdzipWorkspaceView {
   }
 
   private fileMenuTarget(path: string, snapshot: MdzipWorkspaceSnapshot): MdzipNavMenuTarget | null {
-    const entry = snapshot.content.paths.find(
-      (item) => item.path.toLowerCase() === path.toLowerCase()
-    );
+    const entry = snapshot.content.paths.find((item) => samePath(item.path, path));
     if (!entry) {
       return null;
     }
@@ -7649,9 +7648,9 @@ export class MdzipWorkspaceView {
       kind: 'file',
       path: entry.path,
       orphaned: snapshot.content.orphanedAssetPaths
-        .some((orphan) => orphan.toLowerCase() === entry.path.toLowerCase()),
+        .some((orphan) => samePath(orphan, entry.path)),
       isMarkdown: entry.isMarkdown,
-      isEntryPoint: entry.path.toLowerCase() === snapshot.content.entryPoint.toLowerCase(),
+      isEntryPoint: samePath(entry.path, snapshot.content.entryPoint),
       isImage: entry.isImage,
       isManifest: isMdzipManifestPath(entry.path)
     };
@@ -7705,7 +7704,7 @@ export class MdzipWorkspaceView {
       }
       if (target.isImage) {
         const cover = snapshot.content.manifest?.cover;
-        stateGroup.push(cover && cover.toLowerCase() === target.path.toLowerCase()
+        stateGroup.push(cover && samePath(cover.replace(/^\.\//, ''), target.path)
           ? { action: 'remove-cover', label: 'Remove Cover Image' }
           : { action: 'set-cover', label: 'Set as Cover Image' });
       }
@@ -7971,9 +7970,7 @@ export class MdzipWorkspaceView {
     if (!editor || !snapshot || snapshot.sourceFormat !== 'mdz') {
       return;
     }
-    const entry = snapshot.content.paths.find(
-      (item) => item.path.toLowerCase() === archivePath.toLowerCase()
-    );
+    const entry = snapshot.content.paths.find((item) => samePath(item.path, archivePath));
     if (!entry || isMdzipManifestPath(entry.path)) {
       return;
     }
@@ -8132,7 +8129,7 @@ export class MdzipWorkspaceView {
   private async moveFileToDirectory(path: string, targetDir: string): Promise<void> {
     const baseName = path.slice(path.lastIndexOf('/') + 1);
     const newPath = targetDir ? `${targetDir}/${baseName}` : baseName;
-    if (newPath.toLowerCase() === path.toLowerCase()) {
+    if (newPath === path) {
       return;
     }
     try {

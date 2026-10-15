@@ -1,6 +1,6 @@
 {
   "name": "@mdzip/editor",
-  "version": "1.5.0",
+  "version": "2.0.1",
   "description": "Framework-independent MDZip workspace editor.",
   "license": "Apache-2.0",
   "repository": {
@@ -55,7 +55,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.37.2",
     "@lezer/highlight": "^1.2.1",
-    "@mdzip/core-js": "^1.5.0",
+    "@mdzip/core-js": "^2.0.1",
     "dompurify": "^3.2.0",
     "highlight.js": "^11.10.0",
     "js-yaml": "^4.3.2",
