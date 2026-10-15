@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- `openPath(path, { anchor })` on the view and every wrapper opens another file of the workspace and lands on a heading or anchor in it, with the same mount wait and pinning as `scrollToAnchor`. It resolves `false` for a path that isn't in the archive (the current file stays open) or an anchor that isn't found. `getCurrentPath()` returns the file shown. Closes #53.
+- `initialPath` option on `open()` / `openWorkspace()`: show a file other than the entry point, e.g. the one the user was on before the host reloaded the archive. `setFileName(name)` renames the workspace (title bar, save name) in place without reopening. The wrappers now rename in place on a `fileName`-only change (Save As) instead of reopening, and take a new `preserveSelectionOnReopen` input/prop that keeps the current file when `bytes` or `workspace` change. Closes #51.
+- GFM footnotes in the preview: `[^1]` / `[^name]` render as superscript links to a footnotes section at the end, with back-links. Definitions keep inline formatting and links; undefined references stay literal text. Footnote targets in not-yet-mounted progressive chunks are reachable. Adds the `marked-footnote` dependency. Closes #58.
+- **Copy HTML** and **Copy Markdown** in the preview's right-click menu (Markdown documents). Copy HTML copies the whole document's rendered markup as plain text, rendered fresh so images keep their archive-relative `src`; large documents use the existing progress dialog. Copy Markdown copies the document source exactly. Closes #56.
+- `@mdzip/editor/mermaid`: opt-in `defaultLayouts: { er: 'elk' }` with a host-supplied `loadLayouts` (e.g. `@mermaid-js/layout-elk@^0.2` on Mermaid 11) for right-angle ER diagrams like GitHub's. A layout the diagram declares itself wins; other diagram types are unaffected; the engine loads lazily and is registered once. Closes #52.
+
+### Fixed
+- GFM task lists render checkboxes again (checked or not, disabled, nested too), with GitHub's `task-list-item` / `contains-task-list` classes. `<input>` in raw HTML is still stripped by the sanitizer. Closes #54.
+- Opening an archive no longer fails outside a secure context (plain HTTP on a LAN host), where `crypto.subtle` is undefined; hashing falls back to a pure-JS SHA-256 with identical results, so the asset cache and diff view work unchanged. Closes #55.
+- Consecutive horizontal rules no longer collapse into one thick band: `hr` has its own preview style (vertical margin, one themed line) in light and dark. Closes #57.
+
+
 ## [2.0.1] - 2026-10-14
 
 Versions now follow `@mdzip/core-js` (2.0.1), skipping 1.6–2.0.0, so the editor, its wrappers and core-js share one version line.
