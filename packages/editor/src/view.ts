@@ -6648,6 +6648,13 @@ export class MdzipWorkspaceView {
       label: 'Copy All with Images',
       icon: MENU_COPY_ICON_HTML
     });
+    // Source copies (#56): the rendered markup and the Markdown itself, for
+    // when the editor pane isn't there to copy from.
+    if (this.workspace?.snapshot().currentPathType === 'markdown') {
+      items.push(null);
+      items.push({ action: 'preview-copy-html', label: 'Copy HTML', icon: MENU_COPY_ICON_HTML });
+      items.push({ action: 'preview-copy-markdown', label: 'Copy Markdown', icon: MENU_COPY_ICON_HTML });
+    }
     return items;
   }
 
@@ -6665,6 +6672,15 @@ export class MdzipWorkspaceView {
       case 'preview-copy-all-images':
         void this.copyAllWithImagesPreviewContent();
         break;
+      case 'preview-copy-html':
+        void this.copyHtmlPreviewContent();
+        break;
+      case 'preview-copy-markdown': {
+        const markdown = this.workspace?.snapshot().currentText ?? '';
+        void this.writeClipboardText(markdown, 'Markdown copied to clipboard')
+          .then((outcome) => this.finishCopyNotification(false, outcome));
+        break;
+      }
       case 'preview-copy':
         // Partial Copy never shows the render dialog (there's nothing to
         // drain), so its confirmation is always the brief toast.
@@ -6745,7 +6761,15 @@ export class MdzipWorkspaceView {
   }
 
   /** Writes `text` to the clipboard. Returns null if there was nothing to copy (a true no-op, not a failure); otherwise a success message or the failure text (also reported via `onFailed`, but that's a host callback with no guaranteed visible surface — the caller needs the text itself to show the user). */
-  private async copyPreviewSelection(text: string): Promise<{ message: string } | { error: string } | null> {
+  private copyPreviewSelection(text: string): Promise<{ message: string } | { error: string } | null> {
+    return this.writeClipboardText(text, 'Plain text copied to clipboard');
+  }
+
+  /** `writeText` with the same timeout and outcome reporting as {@link copyPreviewSelection}; `message` is the success confirmation. */
+  private async writeClipboardText(
+    text: string,
+    message: string
+  ): Promise<{ message: string } | { error: string } | null> {
     if (!text) {
       return null;
     }
@@ -6755,11 +6779,72 @@ export class MdzipWorkspaceView {
         this.clipboardFallbackWriteTimeoutMs,
         'Clipboard write timed out.'
       );
-      return { message: 'Plain text copied to clipboard' };
+      return { message };
     } catch (error) {
       this.options.onFailed?.(error);
       return { error: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  /**
+   * Copies the whole document's rendered HTML markup as plain text (#56), so
+   * any paste target, Notepad included, gets the raw `<h1>…</h1><p>…</p>`.
+   * Rendered fresh like Copy All with Images, not read from the live preview
+   * (which holds hydrated `blob:` image URLs, lazy-mount sentinels and
+   * code-block chrome): images keep their archive-relative `src`, and
+   * extension `mount()` output (e.g. mermaid diagrams) copies as its
+   * pre-render markup. Large documents get the same cancelable progress
+   * dialog and "ready to copy" step. A host's custom (non-chunking) renderer
+   * renders the document in one pass instead.
+   */
+  private async copyHtmlPreviewContent(): Promise<void> {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot || snapshot.currentPathType !== 'markdown') {
+      return;
+    }
+    const message = 'HTML copied to clipboard as text';
+    const abort = new AbortController();
+    let dialogShown = false;
+    const showDialogTimer = setTimeout(() => {
+      dialogShown = true;
+      this.copyRenderDialogState = { done: 0, total: 0, label: 'Rendering the document', abort };
+      this.render();
+    }, 200);
+
+    let html: string;
+    try {
+      const context = this.createMarkdownContext(snapshot, abort.signal);
+      if (this.renderingService.supportsChunking) {
+        const cacheGeneration = this.previewMemoMatchesSnapshot(snapshot) ? this.previewGeneration : null;
+        html = await this.renderFullDocumentHtml(snapshot, context, abort.signal, cacheGeneration, (done, total) => {
+          if (!dialogShown) return;
+          this.copyRenderDialogState = { done, total, label: 'Rendering the document', abort };
+          this.updateCopyRenderDialogProgress();
+        });
+      } else {
+        html = await this.renderingService.renderMarkdown(snapshot.currentText, context);
+      }
+    } catch (error) {
+      clearTimeout(showDialogTimer);
+      if ((error as { name?: string } | null)?.name === 'AbortError') {
+        if (dialogShown) {
+          this.copyRenderDialogState = null;
+          this.render();
+        }
+      } else {
+        this.finishCopyNotification(dialogShown, { error: error instanceof Error ? error.message : String(error) });
+        this.options.onFailed?.(error);
+      }
+      return;
+    }
+
+    clearTimeout(showDialogTimer);
+    if (dialogShown) {
+      this.armCopyReady(() => this.writeClipboardText(html, message));
+      return;
+    }
+    const outcome = await this.writeClipboardText(html, message);
+    this.finishCopyNotification(false, outcome);
   }
 
   /** Syncs just the copy-render dialog's progress bar/text from `copyRenderDialogState` — see `copyAllPreviewContent` for why this bypasses `render()`. No-op while the dialog isn't showing. */
