@@ -60,7 +60,8 @@
     "highlight.js": "^11.10.0",
     "js-yaml": "^4.3.2",
     "lucide": "^1.17.0",
-    "marked": "^15.0.12"
+    "marked": "^15.0.12",
+    "marked-footnote": "^1.4.0"
   },
   "peerDependencies": {
     "mermaid": "^11.0.0"

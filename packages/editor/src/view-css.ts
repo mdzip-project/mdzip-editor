@@ -1313,6 +1313,30 @@ export const WORKSPACE_CSS = `
   pointer-events: none;
 }
 
+.mdzip-root .preview-content .footnotes {
+  margin-top: 2em;
+  padding-top: 0.75em;
+  border-top: 1px solid var(--mdzip-border-color);
+  font-size: 0.9em;
+  color: var(--mdzip-muted-foreground-color);
+}
+
+.mdzip-root .preview-content .footnotes .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mdzip-root .preview-content sup > a[href^="#footnote-"] {
+  text-decoration: none;
+}
+
 .mdzip-root .preview-content blockquote {
   border-left: 4px solid var(--mdzip-link-color);
   margin: 1em 0;

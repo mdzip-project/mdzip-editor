@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify';
 import hljs from './highlight-core.js';
 import { Marked, type Token, type Tokens, type TokensList } from 'marked';
+import markedFootnote from 'marked-footnote';
 
 export type { Token, TokensList };
 import type { MdzManifest } from '@mdzip/core-js';
@@ -420,8 +421,37 @@ const marked = new Marked({
   }
 });
 
-function renderDefaultMarkdownUnsanitized(markdown: string): string {
+// GFM footnotes (#58): `[^1]` references and `[^1]: ...` definitions, rendered
+// as superscript links to a footnotes section at the end, with back-links.
+marked.use(markedFootnote());
+
+/**
+ * `marked.lexer()` plus the extensions' `walkTokens` hooks, which marked only
+ * runs inside `parse()`. The footnote extension needs its hook to move the
+ * footnotes section to the end and reset its per-document state.
+ */
+function lexMarkdown(markdown: string): TokensList {
   const tokens = marked.lexer(markdown);
+  const walkTokens = marked.defaults.walkTokens;
+  if (walkTokens) {
+    marked.walkTokens(tokens, walkTokens);
+  }
+  // The extension adds its section token to every document, first; the hook
+  // moves a non-empty one to the end and leaves an empty `space` token behind.
+  // Drop both leftovers so token positions (and chunking) are as before.
+  for (let i = tokens.length - 1; i >= 0; i -= 1) {
+    const token = tokens[i] as Token & { items?: unknown[] };
+    const emptySection = token.type === 'footnotes' && !token.items?.length;
+    const placeholder = i === 0 && token.type === 'space' && token.raw === '';
+    if (emptySection || placeholder) {
+      tokens.splice(i, 1);
+    }
+  }
+  return tokens;
+}
+
+function renderDefaultMarkdownUnsanitized(markdown: string): string {
+  const tokens = lexMarkdown(markdown);
   assignMdzipHeadingIds(tokens);
   const rendered = marked.parser(tokens);
   return typeof rendered === 'string' ? rendered : escapeHtml(markdown);
@@ -572,12 +602,12 @@ export class MdzipRenderingService {
         if (context.signal.aborted) {
           throw createAbortError();
         }
-        const tokens = marked.lexer(resolved);
+        const tokens = lexMarkdown(resolved);
         assignMdzipHeadingIds(tokens);
         return tokens;
       });
     }
-    const tokens = marked.lexer(value);
+    const tokens = lexMarkdown(value);
     assignMdzipHeadingIds(tokens);
     return tokens;
   }
