@@ -12,6 +12,14 @@ export type MdzipMermaidTheme = 'auto' | 'default' | 'dark' | 'neutral' | 'fores
 export interface MdzipMermaidApi {
   initialize(config: Record<string, unknown>): void;
   render(id: string, text: string): Promise<{ svg: string }>;
+  /** Mermaid 11+: registers extra layout engines such as ELK. */
+  registerLayoutLoaders?(loaders: unknown): void;
+}
+
+/** Diagram types {@link MdzipMermaidOptions.defaultLayouts} can set a layout for. */
+export interface MdzipMermaidDefaultLayouts {
+  /** Layout for `erDiagram` blocks that don't declare one, e.g. `'elk'`. */
+  er?: string;
 }
 
 export interface MdzipMermaidOptions {
@@ -26,6 +34,26 @@ export interface MdzipMermaidOptions {
    * is dynamically imported the first time a `mermaid` block is rendered.
    */
   loadMermaid?: () => Promise<MdzipMermaidApi>;
+  /**
+   * A layout to use per diagram type when the diagram doesn't choose one
+   * itself (#52), e.g. `{ er: 'elk' }` for right-angle ER relationship lines
+   * like GitHub's. A layout declared in the diagram (frontmatter
+   * `config: layout:` or an `%%{init}%%` directive) always wins; other diagram
+   * types are unaffected. Off by default.
+   *
+   * Mermaid 11 doesn't include ELK: pass {@link loadLayouts} too. Mermaid 12
+   * bundles it.
+   */
+  defaultLayouts?: MdzipMermaidDefaultLayouts;
+  /**
+   * Loads extra layout engines to register with mermaid, called lazily the
+   * first time a diagram needs a {@link defaultLayouts} layout and registered
+   * once. For ELK on mermaid 11, install `@mermaid-js/layout-elk@^0.2` and pass
+   * `() => import('@mermaid-js/layout-elk').then((m) => m.default)`. It's a
+   * callback, not a built-in import, so hosts that don't use ELK don't need
+   * the package to build.
+   */
+  loadLayouts?: () => Promise<unknown>;
 }
 
 let defaultMermaidPromise: Promise<MdzipMermaidApi> | null = null;
@@ -37,6 +65,31 @@ function loadDefaultMermaid(): Promise<MdzipMermaidApi> {
     (module) => ((module as { default?: MdzipMermaidApi }).default ?? module) as MdzipMermaidApi
   );
   return defaultMermaidPromise;
+}
+
+// Leading YAML frontmatter (`---` ... `---`), which can carry `config: layout:`.
+const FRONTMATTER = /^\s*---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
+
+/** The diagram's type keyword (`erDiagram`, `flowchart`, ...), after frontmatter, comments and directives. */
+export function mermaidDiagramType(source: string): string {
+  const body = source.replace(FRONTMATTER, '');
+  for (const line of body.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('%%')) {
+      continue;
+    }
+    return trimmed.split(/\s+/, 1)[0] ?? '';
+  }
+  return '';
+}
+
+/** True when the diagram chooses a layout itself (frontmatter or an init directive). */
+export function mermaidDeclaresLayout(source: string): boolean {
+  const frontmatter = FRONTMATTER.exec(source)?.[1] ?? '';
+  if (/^\s*layout\s*:/m.test(frontmatter)) {
+    return true;
+  }
+  return /%%\{[\s\S]*?["']?layout["']?\s*:[\s\S]*?\}%%/.test(source);
 }
 
 function resolveTheme(theme: MdzipMermaidTheme, colorScheme: 'light' | 'dark'): string {
@@ -127,6 +180,31 @@ function runMermaidSerially<T>(run: () => Promise<T>): Promise<T> {
 export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipMarkdownRenderExtension {
   const load = options.loadMermaid ?? loadDefaultMermaid;
   let counter = 0;
+  // Layout engines are registered once per mermaid instance.
+  const layoutsRegistered = new WeakSet<object>();
+
+  function defaultLayoutFor(source: string): string | undefined {
+    const layout = mermaidDiagramType(source) === 'erDiagram' ? options.defaultLayouts?.er : undefined;
+    return layout && !mermaidDeclaresLayout(source) ? layout : undefined;
+  }
+
+  let layoutLoadFailed = false;
+
+  /** Registers `loadLayouts` once; false if it failed, so the diagram keeps mermaid's own layout. */
+  async function ensureLayoutsRegistered(mermaid: MdzipMermaidApi): Promise<boolean> {
+    if (!options.loadLayouts || layoutsRegistered.has(mermaid)) {
+      return !layoutLoadFailed;
+    }
+    layoutsRegistered.add(mermaid);
+    try {
+      mermaid.registerLayoutLoaders?.(await options.loadLayouts());
+      return true;
+    } catch (error) {
+      layoutLoadFailed = true;
+      console.warn("MDZip mermaid: couldn't load the layout engine; using mermaid's default layout.", error);
+      return false;
+    }
+  }
 
   // Split so a chunk with no mermaid blocks returns synchronously instead of
   // through a Promise. Every markdown render extension's transformHtml runs
@@ -150,7 +228,9 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
     if (context.signal.aborted) {
       return template.innerHTML;
     }
-    const configure = (): void => mermaid.initialize({
+    const configure = (layout?: string): void => mermaid.initialize({
+      // Per render: a diagram-type default (defaultLayouts), never a diagram's own choice.
+      ...(layout ? { layout } : {}),
       startOnLoad: false,
       securityLevel: 'strict',
       // Render labels as SVG <text> rather than HTML inside <foreignObject>.
@@ -175,11 +255,15 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
       try {
         // Queued behind any other in-flight render; a render whose preview
         // generation was superseded while waiting is skipped, not run.
+        let layout = defaultLayoutFor(source);
+        if (layout && !(await ensureLayoutsRegistered(mermaid))) {
+          layout = undefined;
+        }
         const rendered = await runMermaidSerially(async () => {
           if (context.signal.aborted) {
             return null;
           }
-          configure();
+          configure(layout);
           return withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
         });
         if (!rendered) {

@@ -395,6 +395,25 @@ CSP-restricted host, mermaid bundles into the consumer's webview script (no new
 `img-src` needs); if you lazy-load its chunk, serve it under the existing
 `script-src` nonce.
 
+**Right-angle ER diagrams (ELK).** By default an `erDiagram` uses mermaid's
+Dagre layout, with curved relationship lines. To use ELK for ER diagrams, as
+GitHub does, set a default layout for that diagram type and supply the layout
+engine:
+
+```ts
+mdzipMermaidExtension({
+  defaultLayouts: { er: 'elk' },
+  // Mermaid 11: npm install @mermaid-js/layout-elk@^0.2
+  loadLayouts: () => import('@mermaid-js/layout-elk').then((m) => m.default)
+});
+```
+
+A layout the diagram declares itself (frontmatter `config: layout: dagre`, or an
+`%%{init}%%` directive) always wins, and other diagram types are unaffected.
+The layout engine loads lazily, the first time an ER diagram needs it, and is
+registered once. On Mermaid 12, which bundles ELK, `loadLayouts` isn't needed.
+If it fails to load, diagrams keep mermaid's default layout.
+
 ### Front matter
 
 A leading `---`-delimited YAML block is recognized automatically — no
