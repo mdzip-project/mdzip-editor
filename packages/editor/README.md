@@ -585,6 +585,29 @@ if (location.hash && !(await view.scrollToAnchor(location.hash))) {
 }
 ```
 
+**Opening another file.** `await view.openPath('docs/install.md', { anchor: 'windows' })`
+opens another file of the workspace, as clicking it in the file tree does, and
+then scrolls to the anchor the way `scrollToAnchor` does. It resolves `false`
+for a path that isn't in the archive (the current file stays open) or an anchor
+that isn't found (the file still opens). Paths must match exactly: archive
+paths are case-sensitive. `getCurrentPath()` returns the file currently shown.
+
+**Reopening without losing the user's place.** `open()` and `openWorkspace()`
+accept `initialPath` to show a file other than the entry point, for example
+the one the user was on before the host reloaded the archive:
+
+```ts
+const path = view.getCurrentPath() ?? undefined;
+await view.open(newBytes, { fileName, initialPath: path });
+```
+
+`setFileName(name)` changes the name in the title bar and the save name in
+place, without reopening, for example after Save As. It returns `false` when
+the new name implies a different format (`.md` vs `.mdz`), which needs a
+reopen. The framework wrappers do this for you: a `fileName`-only change
+renames in place, and `preserveSelectionOnReopen` keeps the current file when
+`bytes` or `workspace` change.
+
 ## Content Security Policy (restricted hosts)
 
 Archive images resolve to `URL.createObjectURL()` **`blob:` object URLs** (the

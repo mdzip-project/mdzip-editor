@@ -197,7 +197,10 @@ parsed link (`kind`: `'anchor' | 'document' | 'relative' | 'external'`, plus `pa
 `anchor`, `targetPath`, `sourcePath`, modifier keys). Call `event.preventDefault()` in the
 handler to route the link yourself; unprevented clicks keep the built-in behavior.
 The component also exposes `scrollToAnchor(anchor)` (waits for the preview to mount, resolves whether it
-scrolled; safe straight after load) and `getAvailableAnchors()`. See the
+scrolled; safe straight after load), `getAvailableAnchors()`, `openPath(path, { anchor })` (opens another
+file, optionally at an anchor) and `getCurrentPath()`. Changing only `fileName` (e.g. after Save As)
+renames in place without reopening; set `preserveSelectionOnReopen` to stay on the current file when
+the archive content changes. See the
 [`@mdzip/editor` README](https://www.npmjs.com/package/@mdzip/editor#links-and-anchors).
 
 ## Imperative API

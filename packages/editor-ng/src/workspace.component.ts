@@ -25,6 +25,7 @@ import type {
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipEditorCommand,
+  MdzipOpenPathOptions,
   MdzipPackFilesContext,
   MdzipPackFilesInput,
   MdzipPackFilesRequest,
@@ -83,6 +84,12 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() bytes: Uint8Array | null = null;
   @Input() workspace: MdzWorkspace | null = null;
   @Input() fileName = 'document.mdz';
+  /**
+   * When `bytes` or `workspace` change and the workspace reopens, show the file
+   * the user was on (if it's still there) instead of the entry point (#51).
+   * A `fileName`-only change never reopens; the name is updated in place.
+   */
+  @Input() preserveSelectionOnReopen = false;
   @Input() mode: MdzipWorkspaceMode = 'read-only';
   @Input() sourceFormat?: MdzipSourceFormat;
   /**
@@ -234,7 +241,12 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     }
     if (this.view && (changes['bytes'] || changes['workspace'] || changes['mode']
       || changes['sourceFormat'] || changes['fileName'] || changes['worker'])) {
-      this.syncView();
+      const renameOnly = changes['fileName'] && !changes['fileName'].firstChange
+        && !changes['bytes'] && !changes['workspace'] && !changes['mode']
+        && !changes['sourceFormat'] && !changes['worker'];
+      if (!(renameOnly && this.view.setFileName(this.fileName))) {
+        this.syncView(this.preserveSelectionOnReopen);
+      }
     }
     if (this.view && (changes['markdownRenderer'] || changes['markdownExtensions']
       || changes['entryRenderers'] || changes['frontMatter'])) {
@@ -292,6 +304,16 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     return this.view?.getAvailableAnchors() ?? [];
   }
 
+  /** See `MdzipWorkspaceView.openPath` — opens another file, optionally at an anchor. */
+  openPath(path: string, options?: MdzipOpenPathOptions): Promise<boolean> {
+    return this.view?.openPath(path, options) ?? Promise.resolve(false);
+  }
+
+  /** The archive path of the file currently shown, or null before a workspace opens. */
+  getCurrentPath(): string | null {
+    return this.view?.getCurrentPath() ?? null;
+  }
+
   markPersisted(): void {
     this.view?.markPersisted();
   }
@@ -335,20 +357,23 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     return this.view?.listAssets() ?? [];
   }
 
-  private syncView(): void {
+  private syncView(preserveSelection = false): void {
+    const initialPath = preserveSelection ? this.view?.getCurrentPath() ?? undefined : undefined;
     if (this.view && this.workspace) {
       void this.view.openWorkspace(this.workspace, {
         mode: this.mode,
         sourceFormat: this.sourceFormat,
         fileName: this.fileName,
-        worker: this.worker
+        worker: this.worker,
+        initialPath
       });
     } else if (this.view && this.bytes) {
       void this.view.open(this.bytes, {
         mode: this.mode,
         sourceFormat: this.sourceFormat,
         fileName: this.fileName,
-        worker: this.worker
+        worker: this.worker,
+        initialPath
       });
     }
   }

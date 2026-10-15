@@ -676,6 +676,12 @@ export interface MdzipExternalLinkPolicy {
   predicate?: (href: string) => boolean;
 }
 
+/** Options for {@link MdzipWorkspaceView.openPath}. */
+export interface MdzipOpenPathOptions {
+  /** A heading id or explicit anchor in the opened file, with or without `#`. */
+  anchor?: string;
+}
+
 export interface MdzipWorkspaceViewOptions {
   /**
    * Additional host or framework libraries to show in Document Information.
@@ -5422,7 +5428,7 @@ export class MdzipWorkspaceView {
   private async openPathAndScrollToAnchor(path: string, fragment: string): Promise<void> {
     const generationBefore = this.previewGeneration;
     this.pendingAnchorFragment = fragment || null;
-    await this.openPath(path);
+    await this.openPathOnly(path);
     // No new render started (already on that document, or the open failed):
     // nothing will call firePreviewRendered, so apply the anchor now.
     if (this.pendingAnchorFragment !== null && this.previewGeneration === generationBefore) {
@@ -5677,9 +5683,56 @@ export class MdzipWorkspaceView {
     this.anchorPin = null;
   }
 
-  private async openPath(path: string): Promise<void> {
+  /**
+   * Opens another file of the current workspace, as clicking it in the file
+   * tree does, optionally landing on a heading or anchor in it (#53). Paths
+   * match the archive exactly (case-sensitive after NFC normalization).
+   *
+   * Resolves `true` once the file is shown and, when `anchor` is given, the
+   * preview has scrolled to it — with the same pinning as {@link scrollToAnchor}
+   * while images above it load. Resolves `false` for a path that isn't in the
+   * workspace (the current file stays open) or an anchor that isn't found
+   * (the file stays open at its top).
+   */
+  public async openPath(path: string, options: MdzipOpenPathOptions = {}): Promise<boolean> {
+    if (!(await this.openPathOnly(path))) {
+      return false;
+    }
+    return options.anchor === undefined ? true : this.scrollToAnchor(options.anchor);
+  }
+
+  /**
+   * Changes the file name shown in the title bar and used to save, without
+   * reopening the workspace or changing the selected file, e.g. after Save As
+   * (#51). Returns false, changing nothing, when no workspace is open or the
+   * new name implies a different format (`.md` vs `.mdz`): that needs a reopen.
+   */
+  public setFileName(fileName: string): boolean {
+    const snapshot = this.workspace?.snapshot();
+    if (!this.workspace || !snapshot) {
+      return false;
+    }
+    const lower = fileName.toLowerCase();
+    const impliedFormat = /\.(?:md|markdown|mdown|mkd)$/.test(lower)
+      ? 'markdown'
+      : lower.endsWith('.mdz') ? 'mdz' : snapshot.sourceFormat;
+    if (impliedFormat !== snapshot.sourceFormat) {
+      return false;
+    }
+    if (this.workspace.setFileName(fileName)) {
+      this.render();
+    }
+    return true;
+  }
+
+  /** The archive path of the file currently shown, or null before a workspace opens. */
+  public getCurrentPath(): string | null {
+    return this.workspace?.snapshot().currentPath ?? null;
+  }
+
+  private async openPathOnly(path: string): Promise<boolean> {
     if (!this.workspace) {
-      return;
+      return false;
     }
     try {
       const opened = await this.workspace.openPath(path);
@@ -5687,8 +5740,10 @@ export class MdzipWorkspaceView {
         this.layout = this.validLayoutForSnapshot(this.layout, this.workspace.snapshot());
         this.render();
       }
+      return opened;
     } catch (error) {
       this.options.onFailed?.(error);
+      return false;
     }
   }
 

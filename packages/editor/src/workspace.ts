@@ -44,6 +44,12 @@ export interface MdzipWorkspaceOpenOptions {
   sourceFormat?: MdzipSourceFormat;
   fileName?: string;
   /**
+   * The file to show first instead of the entry point, e.g. the file the user
+   * was on before the host reopened the workspace (#51). Matched exactly
+   * (case-sensitive after NFC); ignored when it isn't in the workspace.
+   */
+  initialPath?: string;
+  /**
    * Original archive bytes backing a workspace opened via `openWorkspace`.
    * When provided, mutations (paste image, add/remove asset, save) patch these
    * bytes at the entry level instead of rebuilding the whole archive from the
@@ -70,7 +76,7 @@ export interface MdzipWorkspaceOpenOptions {
   worker?: Worker;
 }
 
-type ResolvedMdzipWorkspaceOpenOptions = Required<Omit<MdzipWorkspaceOpenOptions, 'archiveBytes' | 'assetSourceId' | 'worker'>>;
+type ResolvedMdzipWorkspaceOpenOptions = Required<Omit<MdzipWorkspaceOpenOptions, 'archiveBytes' | 'assetSourceId' | 'worker' | 'initialPath'>>;
 
 export interface MdzipWorkspaceSnapshot {
   mode: MdzipWorkspaceMode;
@@ -225,13 +231,15 @@ export class MdzipWorkspaceService {
       }
 
       const coreWorkspace = await openCoreWorkspace(bytes, workerClient);
-      return new MdzipWorkspaceService(
+      const workspace = new MdzipWorkspaceService(
         bytes,
         coreWorkspace,
         await openedArchiveFromWorkspace(coreWorkspace),
         resolvedOptions,
         workerClient
       );
+      await workspace.openInitialPath(options.initialPath);
+      return workspace;
     } catch (error) {
       workerClient?.dispose();
       throw error;
@@ -247,13 +255,33 @@ export class MdzipWorkspaceService {
       sourceFormat: options.sourceFormat ?? 'mdz',
       fileName: options.fileName ?? 'document.mdz'
     };
-    return new MdzipWorkspaceService(
+    const service = new MdzipWorkspaceService(
       options.archiveBytes ?? new Uint8Array(),
       workspace,
       await openedArchiveFromWorkspace(workspace),
       resolvedOptions,
       options.worker ? new MdzArchiveWorkerClient(options.worker) : undefined
     );
+    await service.openInitialPath(options.initialPath);
+    return service;
+  }
+
+  private async openInitialPath(initialPath: string | undefined): Promise<void> {
+    if (initialPath && this.findPath(initialPath)) {
+      await this.openPath(initialPath);
+    }
+  }
+
+  /**
+   * Renames the workspace's file name (title bar, save name) without reopening
+   * it, e.g. after Save As (#51). Returns false when the name is unchanged.
+   */
+  public setFileName(fileName: string): boolean {
+    if (!fileName || fileName === this.fileName) {
+      return false;
+    }
+    this.fileName = fileName;
+    return true;
   }
 
   public subscribe(listener: MdzipDocumentChangeListener): () => void {
