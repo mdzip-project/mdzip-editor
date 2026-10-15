@@ -54,9 +54,12 @@ import {
 
 const flushMicrotasks = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// Retries for at least `attempts` turns and at least 3s: a fixed number of
+// zero-delay turns alone was flaky under full-suite load.
 async function waitFor(assertion, attempts = 30) {
   let lastError;
-  for (let i = 0; i < attempts; i += 1) {
+  const deadline = Date.now() + 3000;
+  for (let i = 0; i < attempts || Date.now() < deadline; i += 1) {
     try {
       assertion();
       return;

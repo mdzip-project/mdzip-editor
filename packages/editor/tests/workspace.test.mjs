@@ -916,23 +916,34 @@ test('built-in image insert dialog opens for every paste in ask mode', async () 
     const dialog = container.querySelector('[data-ref="image-insert-dialog"]');
     const confirm = container.querySelector('[data-ref="image-insert-confirm-btn"]');
 
-    await pasteImage();
-    assert.equal(dialog.hidden, false);
-    confirm.click();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    assert.equal(dialog.hidden, true);
+    // The insert finishes asynchronously; poll instead of a fixed delay, which
+    // was flaky under full-suite load.
+    const pastedImageCount = async () => {
+      const snapshot = await view.getCurrentSnapshot();
+      const markdown = await readTextFileFromArchive(
+        new Uint8Array(await snapshot.bytes.arrayBuffer()),
+        'index.md'
+      );
+      // Two pastes in the same millisecond get a `-1` suffix on the second name.
+      return (markdown.match(/!\[Pasted image\]\(images\/pasted-\d+(?:-\d+)?\.png\)/g) ?? []).length;
+    };
+    const waitFor = async (condition, label) => {
+      const deadline = Date.now() + 3000;
+      while (!(await condition())) {
+        assert.ok(Date.now() < deadline, `timed out waiting for ${label}`);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    };
 
     await pasteImage();
     assert.equal(dialog.hidden, false);
     confirm.click();
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await waitFor(async () => dialog.hidden && (await pastedImageCount()) === 1, 'the first image');
 
-    const snapshot = await view.getCurrentSnapshot();
-    const markdown = await readTextFileFromArchive(
-      new Uint8Array(await snapshot.bytes.arrayBuffer()),
-      'index.md'
-    );
-    assert.equal((markdown.match(/!\[Pasted image\]\(images\/pasted-\d+\.png\)/g) ?? []).length, 2);
+    await pasteImage();
+    assert.equal(dialog.hidden, false);
+    confirm.click();
+    await waitFor(async () => dialog.hidden && (await pastedImageCount()) === 2, 'the second image');
   } finally {
     view.destroy();
     container.remove();
