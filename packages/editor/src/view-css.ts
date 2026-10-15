@@ -1313,6 +1313,15 @@ export const WORKSPACE_CSS = `
   pointer-events: none;
 }
 
+/* An explicit rule so consecutive rules stay separate (#57); host resets often
+   leave hr with no margin, and three in a row read as one thick band. */
+.mdzip-root .preview-content hr {
+  height: 0;
+  margin: 1.5em 0;
+  border: 0;
+  border-top: 1px solid var(--mdzip-border-color);
+}
+
 .mdzip-root .preview-content blockquote {
   border-left: 4px solid var(--mdzip-link-color);
   margin: 1em 0;
