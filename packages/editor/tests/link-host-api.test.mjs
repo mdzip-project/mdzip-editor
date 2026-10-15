@@ -495,3 +495,64 @@ test('getAvailableAnchors lists headings in order, including unmounted chunks, p
     cleanupPlain();
   }
 });
+
+// --- openPath / initialPath / setFileName (#53, #51) ---------------------------
+
+test('openPath opens another document and lands on its heading', async () => {
+  const { view, previewContent, previewPane, setOffset, cleanup } = await mountBook();
+  try {
+    setOffset('user-content-part-two', 640);
+    assert.equal(await view.openPath('chapter1.md', { anchor: '#part-two' }), true);
+    assert.equal(view.getCurrentPath(), 'chapter1.md');
+    assert.ok(previewContent.querySelector('#user-content-part-two'));
+    assert.equal(previewPane.scrollTop, 640);
+  } finally {
+    cleanup();
+  }
+});
+
+test('openPath resolves false for an unknown path (staying put) or an unknown anchor', async () => {
+  const { view, cleanup } = await mountBook();
+  try {
+    assert.equal(await view.openPath('missing.md'), false);
+    assert.equal(await view.openPath('Chapter1.md'), false, 'paths are case-sensitive');
+    assert.equal(view.getCurrentPath(), 'index.md');
+    assert.equal(await view.openPath('chapter1.md', { anchor: 'nowhere' }), false);
+    assert.equal(view.getCurrentPath(), 'chapter1.md', 'the file still opened');
+    assert.equal(await view.openPath('index.md'), true);
+  } finally {
+    cleanup();
+  }
+});
+
+test('initialPath opens the workspace on that file; an unknown one falls back to the entry point', async () => {
+  const core = await MdzArchiveCore.openWorkspace(await buildNewArchiveBytesWithTitle('# Entry\n', 'Book'));
+  core.documents.push({ path: 'chapter1.md', title: 'chapter1.md', text: '# Chapter\n', isEntryPoint: false });
+  const { view, previewContent, cleanup } = createView();
+  try {
+    await view.openWorkspace(core, { mode: 'editable', fileName: 'book.mdz', initialPath: 'chapter1.md' });
+    await view.whenRendered();
+    assert.equal(view.getCurrentPath(), 'chapter1.md');
+    assert.match(previewContent.textContent, /Chapter/);
+
+    await view.openWorkspace(core, { mode: 'editable', fileName: 'book.mdz', initialPath: 'gone.md' });
+    assert.equal(view.getCurrentPath(), 'index.md');
+  } finally {
+    cleanup();
+  }
+});
+
+test('setFileName renames in place, keeping the selected file; a format change is refused', async () => {
+  const { view, container, cleanup } = await mountBook();
+  try {
+    await view.openPath('chapter1.md');
+    assert.equal(view.setFileName('renamed.mdz'), true);
+    assert.equal(view.getCurrentPath(), 'chapter1.md');
+    assert.equal((await view.getCurrentSnapshot()).state.fileName, 'renamed.mdz');
+    assert.match(container.textContent, /renamed\.mdz/);
+    assert.equal(view.setFileName('renamed.md'), false, '.md implies a different source format');
+    assert.equal((await view.getCurrentSnapshot()).state.fileName, 'renamed.mdz');
+  } finally {
+    cleanup();
+  }
+});

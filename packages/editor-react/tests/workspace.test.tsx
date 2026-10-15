@@ -17,6 +17,9 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setExternalLinks = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
+    public readonly setFileName = vi.fn((fileName: string) => !fileName.endsWith('.md'));
+    public readonly getCurrentPath = vi.fn(() => 'chapter.md');
+    public readonly openPath = vi.fn(async () => true);
     public readonly destroy = vi.fn();
     public constructor(container: HTMLElement, options: Record<string, unknown>) {
       this.container = container;
@@ -273,4 +276,36 @@ test('diff wrapper opens in place and exposes the imperative API', async () => {
 
   await ref.current?.openPath('index.md');
   expect(view.openPath).toHaveBeenCalledWith('index.md');
+});
+
+test('a fileName-only change renames in place; content changes reopen, keeping the file when asked (#51)', () => {
+  const first = new Uint8Array([1]);
+  const second = new Uint8Array([2]);
+  const { rerender } = render(<MdzipWorkspace bytes={first} fileName="a.mdz" />);
+  const view = viewInstances[0];
+  expect(view.open).toHaveBeenCalledTimes(1);
+
+  rerender(<MdzipWorkspace bytes={first} fileName="b.mdz" />);
+  expect(view.setFileName).toHaveBeenLastCalledWith('b.mdz');
+  expect(view.open).toHaveBeenCalledTimes(1);
+
+  // A name the view can't take in place (format change) reopens.
+  rerender(<MdzipWorkspace bytes={first} fileName="b.md" />);
+  expect(view.open).toHaveBeenCalledTimes(2);
+
+  rerender(<MdzipWorkspace bytes={second} fileName="b.md" />);
+  expect(view.open).toHaveBeenLastCalledWith(second, expect.objectContaining({ initialPath: undefined }));
+
+  rerender(<MdzipWorkspace bytes={first} fileName="b.md" preserveSelectionOnReopen />);
+  expect(view.open).toHaveBeenLastCalledWith(first, expect.objectContaining({ initialPath: 'chapter.md' }));
+});
+
+test('the handle exposes openPath and getCurrentPath (#53)', async () => {
+  const ref = { current: null as import('../src/index').MdzipWorkspaceHandle | null };
+  render(<MdzipWorkspace ref={ref} bytes={new Uint8Array([1])} />);
+  await act(async () => {
+    expect(await ref.current!.openPath('chapter.md', { anchor: 'intro' })).toBe(true);
+  });
+  expect(viewInstances[0].openPath).toHaveBeenCalledWith('chapter.md', { anchor: 'intro' });
+  expect(ref.current!.getCurrentPath()).toBe('chapter.md');
 });

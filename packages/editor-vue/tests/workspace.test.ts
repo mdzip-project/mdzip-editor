@@ -16,6 +16,9 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setExternalLinks = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
+    public readonly setFileName = vi.fn((fileName: string) => !fileName.endsWith('.md'));
+    public readonly getCurrentPath = vi.fn(() => 'chapter.md');
+    public readonly openPath = vi.fn(async () => true);
     public readonly destroy = vi.fn();
     public constructor(container: HTMLElement, options: Record<string, unknown>) {
       this.container = container;
@@ -236,4 +239,36 @@ test('diff wrapper updates one view and exposes navigation methods', async () =>
   expect(view.setShowUnchanged).toHaveBeenLastCalledWith(false);
   await wrapper.vm.openPath('index.md');
   expect(view.openPath).toHaveBeenCalledWith('index.md');
+});
+
+test('a fileName-only change renames in place; content changes reopen, keeping the file when asked (#51)', async () => {
+  const first = new Uint8Array([1]);
+  const second = new Uint8Array([2]);
+  const wrapper = mount(MdzipWorkspace, { props: { bytes: first, fileName: 'a.mdz' } });
+  const view = viewInstances[0];
+  expect(view.open).toHaveBeenCalledTimes(1);
+
+  await wrapper.setProps({ fileName: 'b.mdz' });
+  expect(view.setFileName).toHaveBeenLastCalledWith('b.mdz');
+  expect(view.open).toHaveBeenCalledTimes(1);
+
+  await wrapper.setProps({ fileName: 'b.md' });
+  expect(view.open).toHaveBeenCalledTimes(2);
+
+  await wrapper.setProps({ bytes: second });
+  expect(view.open).toHaveBeenLastCalledWith(second, expect.objectContaining({ initialPath: undefined }));
+
+  await wrapper.setProps({ bytes: first, preserveSelectionOnReopen: true });
+  expect(view.open).toHaveBeenLastCalledWith(first, expect.objectContaining({ initialPath: 'chapter.md' }));
+});
+
+test('exposes openPath and getCurrentPath (#53)', async () => {
+  const wrapper = mount(MdzipWorkspace, { props: { bytes: new Uint8Array([1]) } });
+  const exposed = wrapper.vm as unknown as {
+    openPath(path: string, options?: { anchor?: string }): Promise<boolean>;
+    getCurrentPath(): string | null;
+  };
+  expect(await exposed.openPath('chapter.md', { anchor: 'intro' })).toBe(true);
+  expect(viewInstances[0].openPath).toHaveBeenCalledWith('chapter.md', { anchor: 'intro' });
+  expect(exposed.getCurrentPath()).toBe('chapter.md');
 });

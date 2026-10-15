@@ -20,6 +20,9 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setExternalLinks = vi.fn();
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
+    public readonly setFileName = vi.fn((fileName: string) => !fileName.endsWith('.md'));
+    public readonly getCurrentPath = vi.fn(() => 'chapter.md');
+    public readonly openPath = vi.fn(async () => true);
     public readonly destroy = vi.fn();
     public constructor(container: HTMLElement, options: Record<string, unknown>) {
       this.container = container;
@@ -281,4 +284,44 @@ test('diff component updates one view and exposes navigation methods', async () 
 
   await fixture.componentInstance.openPath('index.md');
   expect(view.openPath).toHaveBeenCalledWith('index.md');
+});
+
+test('a fileName-only change renames in place; content changes reopen, keeping the file when asked (#51)', () => {
+  const first = new Uint8Array([1]);
+  const second = new Uint8Array([2]);
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.componentRef.setInput('bytes', first);
+  fixture.componentRef.setInput('fileName', 'a.mdz');
+  fixture.detectChanges();
+  const view = latestView();
+  expect(view.open).toHaveBeenCalledTimes(1);
+
+  fixture.componentRef.setInput('fileName', 'b.mdz');
+  fixture.detectChanges();
+  expect(view.setFileName).toHaveBeenLastCalledWith('b.mdz');
+  expect(view.open).toHaveBeenCalledTimes(1);
+
+  fixture.componentRef.setInput('fileName', 'b.md');
+  fixture.detectChanges();
+  expect(view.open).toHaveBeenCalledTimes(2);
+
+  fixture.componentRef.setInput('bytes', second);
+  fixture.detectChanges();
+  expect(view.open).toHaveBeenLastCalledWith(second, expect.objectContaining({ initialPath: undefined }));
+
+  fixture.componentRef.setInput('preserveSelectionOnReopen', true);
+  fixture.componentRef.setInput('bytes', first);
+  fixture.detectChanges();
+  expect(view.open).toHaveBeenLastCalledWith(first, expect.objectContaining({ initialPath: 'chapter.md' }));
+});
+
+test('exposes openPath and getCurrentPath (#53)', async () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.componentRef.setInput('bytes', new Uint8Array([1]));
+  fixture.detectChanges();
+  expect(await fixture.componentInstance.openPath('chapter.md', { anchor: 'intro' })).toBe(true);
+  expect(latestView().openPath).toHaveBeenCalledWith('chapter.md', { anchor: 'intro' });
+  expect(fixture.componentInstance.getCurrentPath()).toBe('chapter.md');
 });

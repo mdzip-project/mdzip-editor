@@ -27,6 +27,7 @@ import type {
   MdzipConversionContext,
   MdzipEditorSnapshot,
   MdzipEditorCommand,
+  MdzipOpenPathOptions,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
   MdzipExternalLinkPolicy,
@@ -109,6 +110,10 @@ export interface MdzipWorkspaceExposed {
   /** See `MdzipWorkspaceView.scrollToAnchor` — waits for the preview to mount. */
   scrollToAnchor(anchor: string): Promise<boolean>;
   getAvailableAnchors(): string[];
+  /** See `MdzipWorkspaceView.openPath` — opens another file, optionally at an anchor. */
+  openPath(path: string, options?: MdzipOpenPathOptions): Promise<boolean>;
+  /** The archive path of the file currently shown, or null before a workspace opens. */
+  getCurrentPath(): string | null;
   markPersisted(): void;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
@@ -131,6 +136,12 @@ export const MdzipWorkspace = defineComponent({
     bytes:    { type: Object as PropType<Uint8Array | null>, default: null },
     workspace: { type: Object as PropType<MdzWorkspace | null>, default: null },
     fileName: { type: String, default: 'document.mdz' },
+    /**
+     * When `bytes` or `workspace` change and the workspace reopens, show the file
+     * the user was on (if it's still there) instead of the entry point (#51).
+     * A `fileName`-only change never reopens; the name is updated in place.
+     */
+    preserveSelectionOnReopen: { type: Boolean, default: false },
     mode:     { type: String as PropType<MdzipWorkspaceMode>, default: 'read-only' },
     sourceFormat: String as PropType<MdzipSourceFormat>,
     controls: {
@@ -308,6 +319,9 @@ export const MdzipWorkspace = defineComponent({
       whenRendered: () => view?.whenRendered() ?? Promise.resolve(),
       scrollToAnchor: (anchor: string) => view?.scrollToAnchor(anchor) ?? Promise.resolve(false),
       getAvailableAnchors: () => view?.getAvailableAnchors() ?? [],
+      openPath: (path: string, options?: MdzipOpenPathOptions) =>
+        view?.openPath(path, options) ?? Promise.resolve(false),
+      getCurrentPath: () => view?.getCurrentPath() ?? null,
       markPersisted: () => view?.markPersisted(),
       addAsset: (archivePath: string, fileBytes: Uint8Array) =>
         view?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
@@ -390,18 +404,26 @@ export const MdzipWorkspace = defineComponent({
 
     watch(
       [() => props.bytes, () => props.workspace, () => props.mode, () => props.sourceFormat, () => props.fileName],
-      ([bytes, workspace, mode, sourceFormat, fileName]) => {
-        if (view && workspace) {
+      ([bytes, workspace, mode, sourceFormat, fileName], [oldBytes, oldWorkspace, oldMode, oldSourceFormat]) => {
+        if (!view) return;
+        // A fileName-only change (e.g. Save As) renames in place instead of reopening (#51).
+        const renameOnly = bytes === oldBytes && workspace === oldWorkspace
+          && mode === oldMode && sourceFormat === oldSourceFormat;
+        if (renameOnly && view.setFileName(fileName as string)) return;
+        const initialPath = props.preserveSelectionOnReopen ? view.getCurrentPath() ?? undefined : undefined;
+        if (workspace) {
           void view.openWorkspace(workspace as MdzWorkspace, {
             mode: mode as MdzipWorkspaceMode,
             sourceFormat: sourceFormat as MdzipSourceFormat | undefined,
             fileName: fileName as string,
+            initialPath,
           });
-        } else if (view && bytes) {
+        } else if (bytes) {
           void view.open(bytes as Uint8Array, {
             mode: mode as MdzipWorkspaceMode,
             sourceFormat: sourceFormat as MdzipSourceFormat | undefined,
             fileName: fileName as string,
+            initialPath,
           });
         }
       }

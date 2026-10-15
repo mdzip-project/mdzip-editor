@@ -391,11 +391,18 @@ if (location.hash) await view.scrollToAnchor(location.hash);
   target stays pinned while images above it load, until the user scrolls.
   `getAvailableAnchors()` lists heading ids and explicit `<a id>`/`<a name>`
   anchors in document order.
+- `openPath(path, { anchor })` opens another file of the workspace and then
+  scrolls like `scrollToAnchor`; it resolves `false` for an unknown path or
+  anchor. `getCurrentPath()` returns the file shown. `open()`/`openWorkspace()`
+  take `initialPath`, and `setFileName(name)` renames in place, so a host can
+  reload or rename without sending the user back to the entry point.
 
 Angular exposes `linkActivated` as an output and `externalLinks` as an input,
 Vue as a `linkActivated` event and `externalLinks` prop, and React as
-`onLinkActivated` and `externalLinks` props. `scrollToAnchor` and
-`getAvailableAnchors` are methods on every wrapper. See the `@mdzip/editor`
+`onLinkActivated` and `externalLinks` props. `scrollToAnchor`,
+`getAvailableAnchors`, `openPath` and `getCurrentPath` are methods on every
+wrapper. Each wrapper renames in place on a `fileName`-only change and takes a
+`preserveSelectionOnReopen` input/prop. See the `@mdzip/editor`
 README for the full payload.
 
 ## Custom Host Toolbars

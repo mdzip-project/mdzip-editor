@@ -11,6 +11,7 @@ import type {
   MdzipConversionContext,
   MdzipDocumentChangeEvent,
   MdzipEditorCommand,
+  MdzipOpenPathOptions,
   MdzipEditorSnapshot,
   MdzipEntryRenderContext,
   MdzipEntryRenderer,
@@ -131,6 +132,12 @@ export interface MdzipWorkspaceProps {
   bytes?: Uint8Array | null;
   workspace?: MdzWorkspace | null;
   fileName?: string;
+  /**
+   * When `bytes` or `workspace` change and the workspace reopens, show the file
+   * the user was on (if it's still there) instead of the entry point (#51).
+   * A `fileName`-only change never reopens; the name is updated in place.
+   */
+  preserveSelectionOnReopen?: boolean;
   mode?: MdzipWorkspaceMode;
   sourceFormat?: MdzipSourceFormat;
   controls?: MdzipControlPreset | MdzipControlPolicy;
@@ -236,6 +243,10 @@ export interface MdzipWorkspaceHandle {
   /** See `MdzipWorkspaceView.scrollToAnchor` — waits for the preview to mount. */
   scrollToAnchor(anchor: string): Promise<boolean>;
   getAvailableAnchors(): string[];
+  /** See `MdzipWorkspaceView.openPath` — opens another file, optionally at an anchor. */
+  openPath(path: string, options?: MdzipOpenPathOptions): Promise<boolean>;
+  /** The archive path of the file currently shown, or null before a workspace opens. */
+  getCurrentPath(): string | null;
   markPersisted(): void;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
@@ -257,6 +268,7 @@ function MdzipWorkspace({
   bytes,
   workspace,
   fileName = 'document.mdz',
+  preserveSelectionOnReopen = false,
   mode = 'read-only',
   sourceFormat,
   controls = 'viewer',
@@ -386,6 +398,8 @@ function MdzipWorkspace({
     whenRendered: () => viewRef.current?.whenRendered() ?? Promise.resolve(),
     scrollToAnchor: (anchor) => viewRef.current?.scrollToAnchor(anchor) ?? Promise.resolve(false),
     getAvailableAnchors: () => viewRef.current?.getAvailableAnchors() ?? [],
+    openPath: (path, options) => viewRef.current?.openPath(path, options) ?? Promise.resolve(false),
+    getCurrentPath: () => viewRef.current?.getCurrentPath() ?? null,
     markPersisted: () => viewRef.current?.markPersisted(),
     addAsset: (archivePath, fileBytes) =>
       viewRef.current?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
@@ -519,12 +533,35 @@ function MdzipWorkspace({
     });
   }, [imageEditHandler]);
 
+  // Read at reopen time; toggling it alone never reopens.
+  const preserveSelectionRef = useRef(preserveSelectionOnReopen);
+  preserveSelectionRef.current = preserveSelectionOnReopen;
+  // What the view last opened, to tell a fileName-only change (renamed in
+  // place, #51) from a content change (reopen).
+  const openedRef = useRef<{
+    bytes?: Uint8Array | null;
+    workspace?: MdzWorkspace | null;
+    mode: MdzipWorkspaceMode;
+    sourceFormat?: MdzipSourceFormat;
+  } | null>(null);
   useEffect(() => {
-    if (viewRef.current && workspace) {
-      void viewRef.current.openWorkspace(workspace, { mode, sourceFormat, fileName });
-    } else if (viewRef.current && bytes) {
-      void viewRef.current.open(bytes, { mode, sourceFormat, fileName });
+    const view = viewRef.current;
+    if (!view) return;
+    const opened = openedRef.current;
+    const sameContent = opened !== null && opened.bytes === bytes && opened.workspace === workspace
+      && opened.mode === mode && opened.sourceFormat === sourceFormat;
+    if (sameContent && view.setFileName(fileName)) {
+      return;
     }
+    const initialPath = preserveSelectionRef.current && opened ? view.getCurrentPath() ?? undefined : undefined;
+    if (workspace) {
+      void view.openWorkspace(workspace, { mode, sourceFormat, fileName, initialPath });
+    } else if (bytes) {
+      void view.open(bytes, { mode, sourceFormat, fileName, initialPath });
+    } else {
+      return;
+    }
+    openedRef.current = { bytes, workspace, mode, sourceFormat };
   }, [bytes, workspace, mode, sourceFormat, fileName]);
 
   // Rendering config updates apply in place — never a view rebuild. Arrays
