@@ -5606,6 +5606,10 @@ export class MdzipWorkspaceView {
     if (collectMdzipHeadingIds(record.tokens).some((id) => id.toLowerCase() === lower)) {
       return true;
     }
+    // The footnotes section (#58) renders footnote-<label> targets.
+    if (lower.startsWith('footnote-') && record.tokens.some((token) => token.type === 'footnotes')) {
+      return true;
+    }
     // An explicit <a id="x"> / <a name="x"> anchor written in the source.
     const escaped = fragment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(?:id|name)\\s*=\\s*["']${escaped}["']`, 'i').test(record.key);

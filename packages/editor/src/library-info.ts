@@ -25,6 +25,12 @@ export const MDZIP_RUNTIME_LIBRARIES = [
     "description": "Markdown parser and renderer."
   },
   {
+    "name": "marked-footnote",
+    "version": "1.4.0",
+    "repositoryUrl": "https://github.com/bent10/marked-extensions",
+    "description": "GFM footnotes for Marked."
+  },
+  {
     "name": "DOMPurify",
     "version": "3.4.8",
     "repositoryUrl": "https://github.com/cure53/DOMPurify",
