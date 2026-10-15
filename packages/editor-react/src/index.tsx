@@ -533,6 +533,9 @@ function MdzipWorkspace({
     });
   }, [imageEditHandler]);
 
+  // Read at reopen time; toggling it alone never reopens.
+  const preserveSelectionRef = useRef(preserveSelectionOnReopen);
+  preserveSelectionRef.current = preserveSelectionOnReopen;
   // What the view last opened, to tell a fileName-only change (renamed in
   // place, #51) from a content change (reopen).
   const openedRef = useRef<{
@@ -550,7 +553,7 @@ function MdzipWorkspace({
     if (sameContent && view.setFileName(fileName)) {
       return;
     }
-    const initialPath = preserveSelectionOnReopen && opened ? view.getCurrentPath() ?? undefined : undefined;
+    const initialPath = preserveSelectionRef.current && opened ? view.getCurrentPath() ?? undefined : undefined;
     if (workspace) {
       void view.openWorkspace(workspace, { mode, sourceFormat, fileName, initialPath });
     } else if (bytes) {
