@@ -110,6 +110,17 @@ function latestSentinelObserver() {
   return FakeIntersectionObserver.instances.at(-1);
 }
 
+// Scrolls (via the fake observer) until every chunk is mounted. The first batch
+// is time-budgeted, so how much of a small document it mounts depends on load.
+async function mountAllChunks(view) {
+  for (let guard = 0; guard < 200; guard += 1) {
+    const sentinel = view.elPreviewContent.querySelector('.mdzip-chunk-sentinel');
+    if (!sentinel) return;
+    latestSentinelObserver()?.trigger(sentinel);
+    await flushMicrotasks();
+  }
+}
+
 test('chunked rendering mounts an initial batch, defers the rest behind a sentinel, and eventually mounts everything', async () => {
   const { view, dispose } = await createOpenView({}, manyParagraphMarkdown(150));
 
@@ -324,6 +335,8 @@ test('reconciliation: editing a small chunk followed by small mounted chunks doe
   for (const progressiveTextRendering of [false, true]) {
     const { view, dispose } = await createOpenView({ progressiveTextRendering }, markdown);
     try {
+      await waitFor(() => assert.ok(view.elPreviewContent.querySelector('h1')));
+      await mountAllChunks(view);
       await waitFor(() => assert.equal(view.elPreviewContent.querySelectorAll('h2').length, 3));
       const chunksBefore = [...view.elPreviewContent.querySelectorAll('.mdzip-chunk')];
 
