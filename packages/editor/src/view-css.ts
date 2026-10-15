@@ -1321,6 +1321,15 @@ export const WORKSPACE_CSS = `
   background: var(--mdzip-code-background-color);
 }
 
+.mdzip-root .preview-content .task-list-item {
+  list-style-type: none;
+}
+
+.mdzip-root .preview-content .task-list-item-checkbox {
+  margin: 0 0.35em 0.2em -1.4em;
+  vertical-align: middle;
+}
+
 .mdzip-root .preview-content .mdzip-table-scroll {
   width: 100%;
   margin: 1em 0;

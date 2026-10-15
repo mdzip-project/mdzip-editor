@@ -101,7 +101,24 @@ export function sanitizeMdzipHtml(
   html: string,
   contributions: readonly MdzipSanitizeContribution[] = []
 ): string {
-  return resolvePurifier().sanitize(html, buildSanitizeOptions(contributions));
+  return restoreTaskCheckboxes(resolvePurifier().sanitize(html, buildSanitizeOptions(contributions)));
+}
+
+// GFM task list markers. `<input>` stays forbidden in the sanitizer policy, so
+// raw-HTML inputs are always stripped; the renderer emits these placeholders
+// instead, and only they become (disabled, read-only) checkboxes after the pass.
+const TASK_CHECKBOX_PLACEHOLDER = /<span class="mdzip-task-checkbox( mdzip-task-checked)?"><\/span>/g;
+
+function taskCheckboxPlaceholder(checked: boolean): string {
+  return `<span class="mdzip-task-checkbox${checked ? ' mdzip-task-checked' : ''}"></span>`;
+}
+
+function restoreTaskCheckboxes(html: string): string {
+  if (!html.includes('mdzip-task-checkbox')) {
+    return html;
+  }
+  return html.replace(TASK_CHECKBOX_PLACEHOLDER, (_match, checked: string | undefined) =>
+    `<input type="checkbox" class="task-list-item-checkbox" disabled=""${checked ? ' checked=""' : ''}>`);
 }
 
 /**
@@ -402,6 +419,42 @@ const marked = new Marked({
       // client-side highlighters can still find and claim the block.
       const className = requestedLanguage ? ` class="language-${escapeHtml(requestedLanguage)}"` : '';
       return `<pre><code${className}>${escapeHtml(token.text)}</code></pre>`;
+    },
+    list(token: Tokens.List) {
+      const type = token.ordered ? 'ol' : 'ul';
+      const start = token.ordered && token.start !== 1 && token.start !== '' ? ` start="${token.start}"` : '';
+      const className = token.items.some((item) => item.task) ? ' class="contains-task-list"' : '';
+      const body = token.items.map((item) => this.listitem(item)).join('');
+      return `<${type}${start}${className}>\n${body}</${type}>\n`;
+    },
+    // Same as marked's listitem, plus GitHub's `task-list-item` class (#54).
+    listitem(item: Tokens.ListItem) {
+      let itemBody = '';
+      if (item.task) {
+        const checkbox = this.checkbox({ checked: !!item.checked });
+        if (item.loose) {
+          const first = item.tokens[0];
+          if (first?.type === 'paragraph') {
+            const paragraph = first as Tokens.Paragraph;
+            paragraph.text = `${checkbox} ${paragraph.text}`;
+            const inner = paragraph.tokens?.[0];
+            if (inner && inner.type === 'text') {
+              const text = inner as Tokens.Text;
+              text.text = `${checkbox} ${escapeHtml(text.text)}`;
+              text.escaped = true;
+            }
+          } else {
+            item.tokens.unshift({ type: 'text', raw: `${checkbox} `, text: `${checkbox} `, escaped: true } as Tokens.Text);
+          }
+        } else {
+          itemBody += `${checkbox} `;
+        }
+      }
+      itemBody += this.parser.parse(item.tokens, !!item.loose);
+      return `<li${item.task ? ' class="task-list-item"' : ''}>${itemBody}</li>\n`;
+    },
+    checkbox({ checked }: Tokens.Checkbox) {
+      return taskCheckboxPlaceholder(checked);
     },
     table(token: Tokens.Table) {
       const renderCell = (cell: Tokens.TableCell): string => {
