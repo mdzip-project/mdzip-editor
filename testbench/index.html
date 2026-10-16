@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Editor test bench</title>
+  <style>
+    html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; background: #fff; color: #111; }
+    body { display: flex; flex-direction: column; }
+    header { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ccc; background: #f4f4f4; }
+    header input[type=text] { width: 230px; }
+    #secure.ok { color: #555; }
+    #secure.warn { color: #b00; font-weight: 600; }
+    #app { flex: 1; min-height: 0; }
+    #log { margin: 0; padding: 6px 12px; height: 72px; overflow: auto; border-top: 1px solid #ccc; background: #fafafa; font: 12px ui-monospace, monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Editor test bench</strong>
+    <span id="secure"></span>
+    <input type="file" id="file" accept=".mdz,.md,.markdown">
+    <span>
+      <input type="text" id="path" value="docs/chapter.md#deep-section" aria-label="Path and anchor">
+      <button id="open-path">openPath</button>
+    </span>
+    <button id="reload-keep">Reload, keep file</button>
+    <button id="reload-reset">Reload, back to entry point</button>
+    <button id="rename">Rename in place</button>
+    <button id="current">getCurrentPath</button>
+  </header>
+  <div id="app"></div>
+  <pre id="log"></pre>
+  <script type="module" src="dist/main.js"></script>
+</body>
+</html>

@@ -2,6 +2,14 @@
 
 This document provides guidance for AI agents (Claude, etc.) working on this project.
 
+## Test bench
+
+`npm run testbench` serves a page running this repo's editor on a sample
+document (`testbench/`, port 8790). Point the owner at it for anything to
+check by hand, and when a change adds a user-visible preview or toolbar
+feature, add a section for it to `testbench/sample/index.md` and a row to
+`testbench/README.md` in the same change. See `testbench/README.md`.
+
 ## Package Selection
 
 ### Prefer ESM-Native Packages

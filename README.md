@@ -31,6 +31,10 @@ npm run build
 npm test
 ```
 
+To try changes by hand, `npm run testbench` builds the editor and serves a
+test page with a sample document at `http://localhost:8790/`. See
+[testbench/README.md](testbench/README.md).
+
 ## Using The Library
 
 See [docs/developer-guide.md](docs/developer-guide.md) for standalone and hosted

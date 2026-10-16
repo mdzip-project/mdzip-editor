@@ -11,7 +11,9 @@
     "test": "npm run test -w @mdzip/editor && npm run test -w @mdzip/editor-react && npm run test -w @mdzip/editor-vue && npm run test -w @mdzip/editor-ng && npm run check:boundaries",
     "lint": "eslint .",
     "verify": "npm run build && npm run lint && npm run test",
-    "check:boundaries": "node scripts/check-boundaries.mjs"
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "testbench:build": "npm run build -w @mdzip/editor && node testbench/build.mjs",
+    "testbench": "npm run testbench:build && node testbench/serve.mjs"
   },
   "devDependencies": {
     "@angular-devkit/build-angular": "^20.3.27",

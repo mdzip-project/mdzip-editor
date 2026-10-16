@@ -1,5 +1,5 @@
 Status: ready-to-commit
-Last:   Release v2.1.0 committed and tagged locally (Mermaid 12, theme/width menus, in-place re-theme, Copy as HTML, overnight fixes #51-#58, T-016 tests); push, GitHub release and npm publish pending (Kyle)
+Last:   Release v2.1.0 tagged locally (push, GitHub release and npm publish pending, Kyle); added the test bench to the repo (npm run testbench, testbench/)
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 
