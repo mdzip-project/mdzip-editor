@@ -284,7 +284,7 @@ test('right-click over an existing preview selection offers Copy ahead of Copy A
 
     assert.deepEqual(
       [...menu.querySelectorAll('[data-menu-action]')].map((el) => el.dataset.menuAction),
-      ['preview-copy', 'preview-copy-selection-html', 'preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html']
+      ['preview-copy', 'preview-copy-selection-formatted', 'preview-copy-selection-html', 'preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html']
     );
   } finally {
     cleanup();
@@ -572,8 +572,8 @@ test('Copy All with Images writes a rich text/html + text/plain ClipboardItem wh
     assert.equal(view.elCopyToast.hidden, false, 'a confirmation toast is shown');
     assert.equal(
       view.elCopyToast.textContent,
-      'HTML copied to clipboard',
-      'this fixture has no images, so the toast omits the count — but it is still an HTML (rich) write, not plain text'
+      'Formatted text copied to clipboard',
+      'this fixture has no images, so the toast omits the count — but it is still a formatted (rich) write, not plain text'
     );
   } finally {
     window.ClipboardItem = originalClipboardItem;
@@ -582,7 +582,7 @@ test('Copy All with Images writes a rich text/html + text/plain ClipboardItem wh
   }
 });
 
-test('writeRichClipboard\'s confirmation message names the type (HTML) and image count', async () => {
+test('writeRichClipboard\'s confirmation message names the type (formatted text) and image count', async () => {
   const { view, cleanup } = await mountView();
   const originalClipboardItem = window.ClipboardItem;
   window.ClipboardItem = class FakeClipboardItem {
@@ -602,13 +602,13 @@ test('writeRichClipboard\'s confirmation message names the type (HTML) and image
     // the persistent dialog) is finishCopyNotification's job, exercised by
     // the other Copy All with Images tests.
     const outcome2 = await view.writeRichClipboard('<p>hi</p><img src="a"><img src="b">', 'hi', 2);
-    assert.deepEqual(outcome2, { message: 'HTML with 2 images copied to clipboard' });
+    assert.deepEqual(outcome2, { message: 'Formatted text with 2 images copied to clipboard' });
 
     const outcome1 = await view.writeRichClipboard('<p>hi</p><img src="a">', 'hi', 1);
-    assert.deepEqual(outcome1, { message: 'HTML with 1 image copied to clipboard' }, 'singular, not "1 images"');
+    assert.deepEqual(outcome1, { message: 'Formatted text with 1 image copied to clipboard' }, 'singular, not "1 images"');
 
     const outcome0 = await view.writeRichClipboard('<p>hi</p>', 'hi', 0);
-    assert.deepEqual(outcome0, { message: 'HTML copied to clipboard' }, 'still HTML even with no images, not "plain text"');
+    assert.deepEqual(outcome0, { message: 'Formatted text copied to clipboard' }, 'still formatted even with no images, not "plain text"');
   } finally {
     window.ClipboardItem = originalClipboardItem;
     restore();

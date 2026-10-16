@@ -1525,6 +1525,9 @@ function previewPlainText(root: Element): string {
   return parts.join('');
 }
 
+const PLAIN_TEXT_TOOLTIP = 'Text only, for Notepad or a code editor';
+const FORMATTED_TEXT_TOOLTIP = 'Headings, styles and images, for Word, Google Docs or email';
+
 const PREVIEW_CHROME_UNWRAP_SELECTOR = [
   '.mdzip-chunk',
   '.mdzip-code-block',
@@ -2055,6 +2058,8 @@ export class MdzipWorkspaceView {
   // True while onPreviewRendered runs — see scrollToAnchor().
   private firingPreviewRendered = false;
   private destroyed = false;
+  /** Counts preview Ctrl+C copies, so a late image upgrade never overwrites a newer copy. */
+  private previewCopyId = 0;
   // After an anchor scroll, content above the target can still change height
   // (images loading or easing open, a diagram rendering) and push it out of
   // view. This holds the target at the pane's top edge until the user
@@ -5594,6 +5599,30 @@ export class MdzipWorkspaceView {
       this.render();
     });
 
+    // Ctrl+C on a preview selection copies Formatted Text, like the menu item:
+    // clean markup and plain text now (the copy event is synchronous), then,
+    // when the selection has images, the same copy again with them embedded,
+    // since the preview's own blob: URLs only resolve inside this view.
+    doc.addEventListener('copy', (e) => {
+      const selection = doc.defaultView?.getSelection();
+      if (this.destroyed || !e.clipboardData || !selection || selection.isCollapsed || selection.rangeCount === 0
+        || !this.elPreviewContent.contains(selection.anchorNode)
+        || this.workspace?.snapshot().currentPathType !== 'markdown') {
+        return;
+      }
+      const { text, html } = this.previewSelectionContent(selection.getRangeAt(0));
+      if (!html) {
+        return;
+      }
+      e.preventDefault();
+      e.clipboardData.setData('text/plain', text);
+      e.clipboardData.setData('text/html', html);
+      const copyId = (this.previewCopyId += 1);
+      if (this.assetSession && /<img\b/i.test(html)) {
+        void this.upgradePreviewCopyImages(copyId, html, text);
+      }
+    });
+
     this.elPreviewPane.addEventListener('contextmenu', (e) => {
       if (!this.controlPolicy.contextMenu.preview) {
         return;
@@ -5604,8 +5633,9 @@ export class MdzipWorkspaceView {
       const domSelection = this.elPreviewPane.ownerDocument.defaultView?.getSelection();
       const selected = domSelection && !domSelection.isCollapsed
         && this.elPreviewContent.contains(domSelection.anchorNode);
-      const text = selected ? domSelection.toString() : '';
-      const html = selected && domSelection.rangeCount > 0 ? this.previewSelectionHtml(domSelection.getRangeAt(0)) : '';
+      const { text, html } = selected && domSelection.rangeCount > 0
+        ? this.previewSelectionContent(domSelection.getRangeAt(0))
+        : { text: '', html: '' };
       this.contextMenuState = { kind: 'preview', text, html, x: e.clientX, y: e.clientY };
       if (this.previewMenuItems().length === 0) {
         this.contextMenuState = null;
@@ -7037,26 +7067,26 @@ export class MdzipWorkspaceView {
     }
     const items: Array<MdzipNavMenuItem | null> = [];
     const markdown = this.workspace?.snapshot().currentPathType === 'markdown';
-    // A selection of only an image has no text to Copy, but still has markup.
-    if (state.text) {
-      items.push({
-        action: 'preview-copy',
-        label: 'Copy',
-        icon: MENU_COPY_ICON_HTML,
-        shortcut: this.editorShortcut('C'),
-        tooltip: 'The selected text, without formatting'
-      });
+    // Copy: the selection, in the same formats as Copy All below (no
+    // Markdown: see there). A selection of only an image has no text, but
+    // still has markup.
+    const copy: Array<MdzipNavMenuItem | null> = [];
+    if (state.text.trim()) {
+      copy.push({ action: 'preview-copy', label: 'Plain Text', tooltip: PLAIN_TEXT_TOOLTIP });
     }
     if (markdown && state.html) {
-      items.push({
-        action: 'preview-copy-selection-html',
-        label: 'Copy as HTML',
-        icon: MENU_COPY_ICON_HTML,
-        tooltip: "The selection's HTML markup, as text"
-      });
+      copy.push(
+        {
+          action: 'preview-copy-selection-formatted',
+          label: 'Formatted Text',
+          shortcut: this.editorShortcut('C'),
+          tooltip: FORMATTED_TEXT_TOOLTIP
+        },
+        { action: 'preview-copy-selection-html', label: 'HTML', tooltip: "The selection's HTML markup, as text" }
+      );
     }
-    if (state.text || (markdown && state.html)) {
-      items.push(null);
+    if (copy.length > 0) {
+      items.push({ action: 'preview-copy-menu', label: 'Copy', icon: MENU_COPY_ICON_HTML, submenu: copy }, null);
     }
     // Copy All: the whole document, in the format each item names. Markdown
     // and HTML are source copies (#56); the preview can't map a selection
@@ -7066,13 +7096,9 @@ export class MdzipWorkspaceView {
         action: 'preview-copy-all',
         label: 'Plain Text',
         shortcut: this.editorShortcut('A'),
-        tooltip: 'Text only, for Notepad or a code editor'
+        tooltip: PLAIN_TEXT_TOOLTIP
       },
-      {
-        action: 'preview-copy-all-images',
-        label: 'Formatted Text',
-        tooltip: 'Headings, styles and images, for Word, Google Docs or email'
-      }
+      { action: 'preview-copy-all-images', label: 'Formatted Text', tooltip: FORMATTED_TEXT_TOOLTIP }
     ];
     if (markdown) {
       copyAll.push(
@@ -7107,6 +7133,10 @@ export class MdzipWorkspaceView {
           .then((outcome) => this.finishCopyNotification(false, outcome));
         break;
       }
+      case 'preview-copy-selection-formatted':
+        void this.copyPreviewSelectionFormatted(state.html, state.text)
+          .then((outcome) => this.finishCopyNotification(false, outcome));
+        break;
       case 'preview-copy-selection-html':
         void this.writeClipboardText(state.html, 'HTML copied to clipboard as text')
           .then((outcome) => this.finishCopyNotification(false, outcome));
@@ -7196,13 +7226,14 @@ export class MdzipWorkspaceView {
   }
 
   /**
-   * The rendered HTML of a preview selection, as Copy as HTML copies it: the
-   * selected markup inside its enclosing elements (so part of a list item is
-   * still `<ul><li>…`), without the editor's own chrome (code-block headers,
-   * image slots and edit buttons, chunk wrappers) and with archive images'
-   * `src` back to their archive paths instead of blob: URLs.
+   * A preview selection as the Copy items copy it. `html`: the selected
+   * markup inside its enclosing elements (so part of a list item is still
+   * `<ul><li>…`), without the editor's own chrome (code-block headers, image
+   * slots and edit buttons, chunk wrappers) and with archive images' `src`
+   * back to their archive paths instead of blob: URLs. `text`: its plain
+   * text, cleaned the same way as Copy All's (see previewPlainText).
    */
-  private previewSelectionHtml(range: Range): string {
+  private previewSelectionContent(range: Range): { text: string; html: string } {
     const doc = this.elPreviewContent.ownerDocument;
     let content: Node = range.cloneContents();
     let ancestor: Node | null = range.commonAncestorContainer;
@@ -7218,6 +7249,7 @@ export class MdzipWorkspaceView {
     }
     const container = doc.createElement('div');
     container.appendChild(content);
+    const text = previewPlainText(container);
     for (const element of Array.from(container.querySelectorAll(PREVIEW_CHROME_REMOVE_SELECTOR))) {
       element.remove();
     }
@@ -7239,7 +7271,58 @@ export class MdzipWorkspaceView {
         image.removeAttribute('class');
       }
     }
-    return container.innerHTML.trim();
+    return { text, html: container.innerHTML.trim() };
+  }
+
+  /**
+   * Re-copies a Ctrl+C selection with its images embedded. Best effort: the
+   * synchronous copy already on the clipboard stays if this fails, and it's
+   * skipped if another copy happened meanwhile.
+   */
+  private async upgradePreviewCopyImages(copyId: number, html: string, text: string): Promise<void> {
+    const snapshot = this.workspace?.snapshot();
+    const clipboard = this.editorClipboard();
+    const ClipboardItemCtor = (this.elPreviewContent.ownerDocument.defaultView as
+      (Window & { ClipboardItem?: typeof ClipboardItem }) | null)?.ClipboardItem;
+    if (!this.assetSession || !snapshot || !clipboard || !ClipboardItemCtor || !('write' in clipboard)) {
+      return;
+    }
+    try {
+      const embedded = await this.assetSession.rewriteHtmlEmbeddingImages(html, snapshot.currentPath, new AbortController().signal);
+      if (copyId !== this.previewCopyId || this.destroyed) {
+        return;
+      }
+      await clipboard.write([new ClipboardItemCtor({
+        'text/html': new Blob([embedded], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' })
+      })]);
+    } catch {
+      // The plain copy is already on the clipboard.
+    }
+  }
+
+  /**
+   * Copies a preview selection as formatted text (Copy > Formatted Text, and
+   * Ctrl+C's image upgrade): its HTML with archive images embedded as data:
+   * URLs, so they survive pasting into Word or email, plus its plain text.
+   */
+  private async copyPreviewSelectionFormatted(html: string, text: string): Promise<{ message: string } | { error: string } | null> {
+    const snapshot = this.workspace?.snapshot();
+    let imageCount = 0;
+    let embedded = html;
+    if (this.assetSession && snapshot && /<img\b/i.test(html)) {
+      try {
+        embedded = await this.assetSession.rewriteHtmlEmbeddingImages(
+          html,
+          snapshot.currentPath,
+          new AbortController().signal,
+          (_done, total) => { imageCount = total; }
+        );
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+    }
+    return this.writeRichClipboard(embedded, text, imageCount);
   }
 
   /** `writeText` with the same timeout and outcome reporting as {@link copyPreviewSelection}; `message` is the success confirmation. */
@@ -7624,8 +7707,8 @@ export class MdzipWorkspaceView {
         await this.withTimeout(clipboard.write([item]), this.clipboardWriteTimeoutMs, 'Clipboard write timed out.');
         return {
           message: imageCount > 0
-            ? `HTML with ${imageCount} image${imageCount === 1 ? '' : 's'} copied to clipboard`
-            : 'HTML copied to clipboard'
+            ? `Formatted text with ${imageCount} image${imageCount === 1 ? '' : 's'} copied to clipboard`
+            : 'Formatted text copied to clipboard'
         };
       } catch (error) {
         this.options.onFailed?.(error);

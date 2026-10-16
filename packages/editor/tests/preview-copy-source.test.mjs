@@ -305,3 +305,70 @@ test('Copy All as Plain Text leaves out diagram stylesheets and editor chrome', 
     cleanup();
   }
 });
+
+test('with a selection, Copy is a submenu in the same formats as Copy All, with the same tips', async () => {
+  const bytes = new TextEncoder().encode('# Notes\n\n- first item\n- second **bold** item\n');
+  const { previewPane, menu, cleanup } = await mountView({ bytes });
+  try {
+    selectBetween(previewPane.querySelector('[data-ref="preview-content"]'), 'second', 'bold');
+    openContextMenu(previewPane);
+    const submenuOf = (label) => [...menu.querySelectorAll('.nav-menu-parent')]
+      .find((el) => el.textContent.trim() === label).parentElement.querySelector('.nav-context-submenu');
+    const items = (label) => [...submenuOf(label).querySelectorAll('[data-menu-action]')];
+    assert.deepEqual(items('Copy').map((el) => el.querySelector('.nav-menu-label').textContent), ['Plain Text', 'Formatted Text', 'HTML']);
+    const tip = (label, action) => submenuOf(label).querySelector(`[data-menu-action="${action}"]`).dataset.tooltip;
+    assert.equal(tip('Copy', 'preview-copy'), tip('Copy All', 'preview-copy-all'), 'Plain Text tips match');
+    assert.equal(tip('Copy', 'preview-copy-selection-formatted'), tip('Copy All', 'preview-copy-all-images'), 'Formatted Text tips match');
+    assert.ok(submenuOf('Copy').querySelector('[data-menu-action="preview-copy-selection-formatted"] .nav-menu-shortcut'),
+      'Formatted Text carries Ctrl+C, which does the same');
+  } finally {
+    cleanup();
+  }
+});
+
+test('Copy > Formatted Text writes the selection as HTML plus plain text', async () => {
+  const bytes = new TextEncoder().encode('# Notes\n\n- first item\n- second **bold** item\n');
+  const { previewPane, menu, cleanup } = await mountView({ bytes });
+  const items = [];
+  const originalClipboard = Object.getOwnPropertyDescriptor(window.navigator, 'clipboard');
+  const originalClipboardItem = window.ClipboardItem;
+  window.ClipboardItem = class { constructor(parts) { this.parts = parts; } };
+  Object.defineProperty(window.navigator, 'clipboard', {
+    value: { write: async (written) => { items.push(...written); }, writeText: async () => {} },
+    configurable: true
+  });
+  try {
+    selectBetween(previewPane.querySelector('[data-ref="preview-content"]'), 'second', 'bold');
+    openContextMenu(previewPane);
+    clickMenuAction(menu, 'preview-copy-selection-formatted');
+    await waitFor(() => assert.equal(items.length, 1));
+    assert.equal(await items[0].parts['text/html'].text(), '<ul><li>second <strong>bold</strong></li></ul>');
+    assert.equal((await items[0].parts['text/plain'].text()).trim(), 'second bold');
+  } finally {
+    if (originalClipboard) Object.defineProperty(window.navigator, 'clipboard', originalClipboard);
+    else delete window.navigator.clipboard;
+    window.ClipboardItem = originalClipboardItem;
+    cleanup();
+  }
+});
+
+test('Ctrl+C on a preview selection copies clean formatted text, not the raw preview', async () => {
+  const bytes = new TextEncoder().encode('# Notes\n\nBefore the code.\n\n```js\nconst answer = 42;\n```\n');
+  const { previewPane, cleanup } = await mountView({ bytes });
+  try {
+    const previewContent = previewPane.querySelector('[data-ref="preview-content"]');
+    await waitFor(() => assert.ok(previewContent.querySelector('.mdzip-code-block-header'), 'code block chrome is mounted'));
+    selectBetween(previewContent, 'Before', '42');
+    const data = {};
+    const event = new window.Event('copy', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'clipboardData', { value: { setData: (type, value) => { data[type] = value; } } });
+    previewContent.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, true, 'the editor handles the copy');
+    assert.match(data['text/html'], /^<p>Before the code\.<\/p>[\s\S]*<pre><code/);
+    assert.doesNotMatch(data['text/html'], /mdzip-code-block|<button/, 'no editor chrome');
+    assert.match(data['text/plain'], /Before the code\.[\s\S]*const answer = 42/);
+    assert.doesNotMatch(data['text/plain'], /\bjs\b|Copy/, 'no code block header in the text either');
+  } finally {
+    cleanup();
+  }
+});
