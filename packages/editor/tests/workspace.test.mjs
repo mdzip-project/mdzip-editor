@@ -225,8 +225,8 @@ test('previewMaxWidth sets --mdzip-preview-content-max-width and setPreviewMaxWi
     assert.ok(editor, 'CodeMirror editor was created');
     assert.equal(
       root?.style.getPropertyValue('--mdzip-preview-content-max-width'),
-      '650px',
-      'constructor previewMaxWidth applies once the first document renders'
+      'calc(650px * var(--mdz-zoom, 1))',
+      'constructor previewMaxWidth applies once the first document renders, scaled with zoom'
     );
 
     view.setPreviewMaxWidth(720);
@@ -234,7 +234,13 @@ test('previewMaxWidth sets --mdzip-preview-content-max-width and setPreviewMaxWi
     assert.equal(root?.style.getPropertyValue('--mdzip-preview-content-max-width'), '720px');
 
     view.setPreviewMaxWidth('wide');
-    assert.equal(root?.style.getPropertyValue('--mdzip-preview-content-max-width'), '1200px');
+    assert.equal(root?.style.getPropertyValue('--mdzip-preview-content-max-width'), 'calc(1200px * var(--mdz-zoom, 1))');
+
+    view.setPreviewMaxWidth('full');
+    assert.equal(root?.style.getPropertyValue('--mdzip-preview-content-max-width'), 'none');
+
+    view.setPreviewMaxWidth('default');
+    assert.equal(root?.style.getPropertyValue('--mdzip-preview-content-max-width'), '', "'default' is the built-in default");
 
     view.setPreviewMaxWidth(undefined);
     assert.equal(
@@ -242,6 +248,118 @@ test('previewMaxWidth sets --mdzip-preview-content-max-width and setPreviewMaxWi
       '',
       'unset removes the inline override, falling back to the built-in (zoom-scaled) CSS default'
     );
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('page width is an icon dropdown: Narrow, Default, Wide, Full width', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const choices = [];
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'preview',
+    initialColorScheme: 'light',
+    onPreviewWidthChanged: (width) => choices.push(width)
+  });
+
+  try {
+    await view.open(new TextEncoder().encode('# Notes\n'), { mode: 'editable', fileName: 'notes.md' });
+    const root = container.querySelector('.mdzip-root');
+    const toggle = container.querySelector('[data-ref="width-menu-btn"]');
+    const popover = container.querySelector('[data-ref="width-popover"]');
+    const icon = container.querySelector('[data-ref="width-menu-icon"]');
+    const items = [...popover.querySelectorAll('[role="menuitemradio"]')];
+    const item = (width) => popover.querySelector(`[data-width="${width}"]`);
+    const toolbarRefs = [...container.querySelectorAll('.toolbar-controls > [data-ref]')].map((el) => el.dataset.ref);
+
+    assert.deepEqual(toolbarRefs.slice(toolbarRefs.indexOf('zoom-btn'), toolbarRefs.indexOf('zoom-btn') + 3),
+      ['zoom-btn', 'width-controls', 'theme-controls'], 'sits between zoom and the color scheme menu');
+    assert.deepEqual(items.map((el) => el.getAttribute('aria-label')),
+      ['Narrow (650 px)', 'Default (900 px)', 'Wide (1200 px)', 'Full Width'], 'Full Width is the last item');
+    assert.ok(items.every((el) => el.textContent.trim() === ''), 'icon only');
+    assert.equal(popover.hidden, true, 'menu starts closed');
+    assert.equal(item('default').getAttribute('aria-checked'), 'true', 'Default is checked when unset');
+    assert.equal(toggle.getAttribute('aria-label'), 'Page width: Default (900 px)');
+    const defaultIcon = icon.innerHTML;
+
+    toggle.click();
+    assert.equal(popover.hidden, false);
+    item('full').click();
+    assert.deepEqual(choices, ['full']);
+    assert.equal(popover.hidden, true, 'choosing closes the menu');
+    assert.equal(root.style.getPropertyValue('--mdzip-preview-content-max-width'), 'none');
+    assert.equal(item('full').getAttribute('aria-checked'), 'true');
+    assert.equal(toggle.getAttribute('aria-label'), 'Page width: Full Width');
+
+    container.querySelector('[data-action="zoom-in"]').click();
+    toggle.click();
+    assert.equal(item('wide').getAttribute('aria-label'), 'Wide (1320 px)', 'labels follow zoom');
+    container.querySelector('[data-action="zoom-reset"]').click();
+    document.body.click();
+
+    // jsdom has no layout; a 461px pane is narrower than Default and Wide.
+    Object.defineProperty(container.querySelector('[data-ref="preview-pane"]'), 'clientWidth', { value: 461 });
+    toggle.click();
+    assert.deepEqual(items.map((el) => el.getAttribute('aria-label')),
+      ['Narrow (650 px, fits to 461 px)', 'Default (900 px, fits to 461 px)', 'Wide (1200 px, fits to 461 px)', 'Full Width'],
+      'a narrow pane adds the width each setting fits to');
+    document.body.click();
+    assert.notEqual(icon.innerHTML, defaultIcon, 'the button shows the chosen width');
+
+    toggle.click();
+    item('full').click();
+    assert.deepEqual(choices, ['full'], 're-choosing the current width reports nothing');
+
+    toggle.click();
+    container.querySelector('[data-ref="theme-menu-btn"]').click();
+    assert.equal(popover.hidden, true, 'opening the color scheme menu closes this one');
+    toggle.click();
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    assert.equal(popover.hidden, true, 'Escape closes the menu');
+
+    view.setPreviewMaxWidth(720);
+    assert.ok(items.every((el) => el.getAttribute('aria-checked') === 'false'), 'a custom pixel width checks no item');
+    assert.equal(toggle.getAttribute('aria-label'), 'Page width: 720 px');
+    assert.deepEqual(choices, ['full'], 'a host change is not a user choice');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('the page-width menu is hidden when no Markdown preview is shown', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, { controls: 'standalone-editor', initialLayout: 'split' });
+  try {
+    await view.open(new TextEncoder().encode('# Notes\n'), { mode: 'editable', fileName: 'notes.md' });
+    const controls = container.querySelector('[data-ref="width-controls"]');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(controls.hidden, false, 'shown in split');
+    container.querySelector('[data-ref="width-menu-btn"]').click();
+    container.querySelector('[data-ref="source-btn"]').click();
+    await settle();
+    assert.equal(controls.hidden, true, 'hidden in edit layout');
+    assert.equal(container.querySelector('[data-ref="width-popover"]').hidden, true, 'an open menu closes');
+    container.querySelector('[data-ref="preview-btn"]').click();
+    await settle();
+    assert.equal(controls.hidden, false, 'back in view layout');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('the preview preset has no page-width menu', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, { controls: 'preview' });
+  try {
+    await view.open(new TextEncoder().encode('# Notes\n'), { mode: 'read-only', fileName: 'notes.md' });
+    assert.equal(container.querySelector('[data-ref="width-controls"]').hidden, true);
   } finally {
     view.destroy();
     container.remove();
@@ -1194,6 +1312,7 @@ test('resolves control policy presets for common host scenarios', () => {
     lineNumbers: true,
     save: false,
     zoom: true,
+    previewWidth: true,
     colorScheme: true,
     orphanActions: false,
     fileActions: false,
@@ -2034,4 +2153,126 @@ test('readBinaryFileFromArchive/readTextFileFromArchive reuse one parsed handle 
   } finally {
     MdzArchiveCore.open = originalOpen;
   }
+});
+
+test('color scheme is a dropdown: one icon button opens a menu of light and dark icons', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const changes = [];
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'preview',
+    initialColorScheme: 'light',
+    onColorSchemeChanged: (scheme) => changes.push(scheme)
+  });
+
+  try {
+    await view.open(new TextEncoder().encode('# Notes\n'), { mode: 'editable', fileName: 'notes.md' });
+    const toggle = container.querySelector('[data-ref="theme-menu-btn"]');
+    const popover = container.querySelector('[data-ref="theme-popover"]');
+    const icon = container.querySelector('[data-ref="theme-menu-icon"]');
+    const dark = container.querySelector('[data-ref="dark-theme-btn"]');
+    const light = container.querySelector('[data-ref="light-theme-btn"]');
+
+    assert.equal(popover.hidden, true, 'menu starts closed');
+    assert.equal(toggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(toggle.getAttribute('aria-haspopup'), 'menu');
+    assert.equal(light.getAttribute('aria-checked'), 'true');
+    assert.equal(dark.getAttribute('aria-checked'), 'false');
+    assert.equal(light.textContent.trim(), '', 'menu items are icon-only');
+    assert.equal(container.querySelector('[data-ref="system-theme-btn"]').getAttribute('aria-checked'), 'false');
+    assert.equal(dark.getAttribute('aria-label'), 'Dark mode');
+    const lightIcon = icon.innerHTML;
+
+    toggle.click();
+    assert.equal(popover.hidden, false, 'clicking the button opens the menu');
+    assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+
+    dark.click();
+    assert.deepEqual(changes, ['dark']);
+    assert.equal(popover.hidden, true, 'choosing a scheme closes the menu');
+    assert.equal(dark.getAttribute('aria-checked'), 'true');
+    assert.notEqual(icon.innerHTML, lightIcon, 'the button now shows the dark icon');
+
+    toggle.click();
+    document.body.click();
+    assert.equal(popover.hidden, true, 'a click elsewhere closes the menu');
+
+    toggle.click();
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+    assert.equal(popover.hidden, true, 'Escape closes the menu');
+
+    dark.click();
+    assert.deepEqual(changes, ['dark'], 're-choosing the current scheme reports nothing');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('System follows the OS setting live, and is the default when no scheme is given', async () => {
+  // jsdom has no matchMedia; a fake one lets the test flip the OS setting.
+  const listeners = new Set();
+  const query = {
+    matches: true,
+    addEventListener: (type, fn) => listeners.add(fn),
+    removeEventListener: (type, fn) => listeners.delete(fn)
+  };
+  const previous = window.matchMedia;
+  window.matchMedia = () => query;
+  const setOs = (dark) => {
+    query.matches = dark;
+    for (const fn of listeners) fn();
+  };
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const schemes = [];
+  const preferences = [];
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'preview',
+    onColorSchemeChanged: (scheme) => schemes.push(scheme),
+    onColorSchemePreferenceChanged: (preference) => preferences.push(preference)
+  });
+
+  try {
+    await view.open(new TextEncoder().encode('# Notes\n'), { mode: 'editable', fileName: 'notes.md' });
+    const toggle = container.querySelector('[data-ref="theme-menu-btn"]');
+    const system = container.querySelector('[data-ref="system-theme-btn"]');
+    const light = container.querySelector('[data-ref="light-theme-btn"]');
+
+    assert.equal(system.getAttribute('aria-checked'), 'true', 'System is the default');
+    assert.equal(system.textContent.trim(), '', 'icon only');
+    assert.equal(toggle.getAttribute('aria-label'), 'Color scheme: System (dark)');
+    assert.equal(container.querySelector('.theme-menu-chevron'), null, 'no chevron');
+
+    setOs(false);
+    assert.equal(toggle.getAttribute('aria-label'), 'Color scheme: System (light)', 'follows the OS live');
+    assert.deepEqual(schemes, [], 'an OS change is not a user choice');
+
+    toggle.click();
+    light.click();
+    assert.deepEqual(preferences, ['light']);
+    assert.deepEqual(schemes, [], 'already light: no scheme change to report');
+    setOs(true);
+    assert.equal(toggle.getAttribute('aria-label'), 'Color scheme: Light', 'an explicit choice ignores the OS');
+
+    toggle.click();
+    system.click();
+    assert.deepEqual(preferences, ['light', 'system']);
+    assert.deepEqual(schemes, ['dark'], 'back to System switches to the OS scheme and reports it');
+    assert.equal(toggle.getAttribute('aria-label'), 'Color scheme: System (dark)');
+
+    view.setColorScheme('light');
+    assert.equal(light.getAttribute('aria-checked'), 'true', 'setColorScheme still sets an explicit scheme');
+    view.setColorScheme('system');
+    assert.equal(system.getAttribute('aria-checked'), 'true', "setColorScheme accepts 'system'");
+    assert.deepEqual(preferences, ['light', 'system'], 'host calls are not reported');
+  } finally {
+    view.destroy();
+    container.remove();
+    window.matchMedia = previous;
+  }
+  assert.equal(listeners.size, 0, 'destroy stops listening to the OS setting');
 });

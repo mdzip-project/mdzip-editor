@@ -151,24 +151,31 @@ workspace:
 
 ## Preview Width
 
-`previewMaxWidth` is a developer-facing option, not toolbar UI — it sets the
-preview's reading-column width (`--mdzip-preview-content-max-width` under the
-hood). A number is an exact pixel value; `'narrow'` / `'default'` / `'wide'`
-are convenience aliases for 650 / 900 / 1200px:
+The toolbar's page-width menu (between zoom and the color scheme menu) sets
+the preview's reading-column width: **Narrow**, **Default**, **Wide** or
+**Full Width**. Narrow, Default and Wide are 650 / 900 / 1200px at 100% zoom
+and scale with zoom; Full Width fills the preview pane. Each item's tooltip
+shows its width at the current zoom, e.g. "Wide (1200 px)", plus the width it
+fits to when the pane is narrower: "Wide (1200 px, fits to 461 px)". Hide the menu with
+`controls: { previewWidth: false }`.
+
+`previewMaxWidth` sets the width from code (`--mdzip-preview-content-max-width`
+under the hood), and `onPreviewWidthChanged(width)` reports the user's menu
+choice so a host can remember it:
 
 ```ts
 const view = new MdzipWorkspaceView(container, {
   controls: 'hosted-editor',
-  previewMaxWidth: 'wide' // or an exact pixel number, e.g. 760
+  previewMaxWidth: savedWidth ?? 'default', // 'narrow' | 'default' | 'wide' | 'full', or pixels
+  onPreviewWidthChanged: (width) => saveWidth(width)
 });
 
 view.setPreviewMaxWidth(720);
 ```
 
-Leaving it unset (the default) keeps the built-in CSS default in effect,
-which scales with the zoom control; an explicit value set here (or via the
-`--mdzip-preview-content-max-width` CSS variable directly) does not scale
-with zoom — it's used exactly as given.
+Unset is the same as `'default'`. A pixel number is used exactly as given and
+doesn't scale with zoom, and leaves no menu item checked; so does setting the
+`--mdzip-preview-content-max-width` CSS variable directly.
 
 ## Host Persistence
 
@@ -370,6 +377,16 @@ DOMPurify pass. Keep contributions minimal — they widen the policy for the
 whole preview, since the extension output and surrounding markdown HTML are
 sanitized together.
 
+Switching between light and dark keeps the rendered preview: the root's theme
+class re-colors it through CSS, and nothing is re-rendered or moves. An
+extension whose output has the scheme baked in (a diagram's SVG colors, say)
+implements `updateColorScheme(root, context)` to re-theme just its own output
+in place, with `context.colorScheme` set to the new scheme; extensions whose
+output doesn't depend on the scheme implement it as a no-op. While any
+registered extension that transforms or mounts content lacks the hook, or with
+a custom `markdownRenderer`, a scheme change re-renders the whole preview, as
+before. The Mermaid and front-matter extensions implement it.
+
 ### Mermaid diagrams
 
 Render fenced ` ```mermaid ` blocks to inline SVG with the optional extension
@@ -395,10 +412,15 @@ CSP-restricted host, mermaid bundles into the consumer's webview script (no new
 `img-src` needs); if you lazy-load its chunk, serve it under the existing
 `script-src` nonce.
 
-**Right-angle ER diagrams (ELK).** By default an `erDiagram` uses mermaid's
-Dagre layout, with curved relationship lines. To use ELK for ER diagrams, as
-GitHub does, set a default layout for that diagram type and supply the layout
-engine:
+**ELK layout.** Mermaid 12 bundles the ELK layout engine and uses it by default
+for ER, flowchart, state, class, requirement and use-case diagrams, giving
+right-angle lines like GitHub's. A diagram can opt back out with frontmatter
+`config: layout: dagre`. The extension leaves Mermaid's own default look, so
+Mermaid 12's new default styling applies too.
+
+On Mermaid 11, diagrams use the Dagre layout, with curved lines. To use ELK for
+ER diagrams there, set a default layout for that diagram type and supply the
+layout engine:
 
 ```ts
 mdzipMermaidExtension({
@@ -411,7 +433,7 @@ mdzipMermaidExtension({
 A layout the diagram declares itself (frontmatter `config: layout: dagre`, or an
 `%%{init}%%` directive) always wins, and other diagram types are unaffected.
 The layout engine loads lazily, the first time an ER diagram needs it, and is
-registered once. On Mermaid 12, which bundles ELK, `loadLayouts` isn't needed.
+registered once. On Mermaid 12 neither option is needed.
 If it fails to load, diagrams keep mermaid's default layout.
 
 ### Front matter

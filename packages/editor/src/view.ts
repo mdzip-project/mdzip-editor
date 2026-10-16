@@ -49,6 +49,7 @@ import {
   List,
   ListOrdered,
   CornerDownLeft,
+  Monitor,
   Moon,
   PackagePlus,
   PanelLeft,
@@ -79,6 +80,12 @@ import {
   type MdzipAssetCache
 } from './asset-cache.js';
 import { MD_MARKDOWN_ICON, type LucideIconNode } from './icons/md-markdown.js';
+import {
+  PAGE_WIDTH_DEFAULT_ICON,
+  PAGE_WIDTH_FULL_ICON,
+  PAGE_WIDTH_NARROW_ICON,
+  PAGE_WIDTH_WIDE_ICON
+} from './icons/page-width.js';
 import { MDZIP_RUNTIME_LIBRARIES } from './library-info.js';
 import type {
   MdzipDocumentChangeEvent,
@@ -171,6 +178,11 @@ const SEARCH_ICON_HTML = lucideIcon(Search, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
 const DARK_THEME_ICON_HTML = lucideIcon(Moon, TOOLBAR_ICON_CLASS);
 const LIGHT_THEME_ICON_HTML = lucideIcon(Sun, TOOLBAR_ICON_CLASS);
+const SYSTEM_THEME_ICON_HTML = lucideIcon(Monitor, TOOLBAR_ICON_CLASS);
+const PAGE_WIDTH_NARROW_ICON_HTML = lucideIcon(PAGE_WIDTH_NARROW_ICON, TOOLBAR_ICON_CLASS);
+const PAGE_WIDTH_DEFAULT_ICON_HTML = lucideIcon(PAGE_WIDTH_DEFAULT_ICON, TOOLBAR_ICON_CLASS);
+const PAGE_WIDTH_WIDE_ICON_HTML = lucideIcon(PAGE_WIDTH_WIDE_ICON, TOOLBAR_ICON_CLASS);
+const PAGE_WIDTH_FULL_ICON_HTML = lucideIcon(PAGE_WIDTH_FULL_ICON, TOOLBAR_ICON_CLASS);
 const FORMAT_ICON_CLASS = 'format-icon';
 const BOLD_ICON_HTML = lucideIcon(Bold, FORMAT_ICON_CLASS);
 const ITALIC_ICON_HTML = lucideIcon(Italic, FORMAT_ICON_CLASS);
@@ -285,6 +297,11 @@ function renderContextMenuItems(items: Array<MdzipNavMenuItem | null>): string {
 export type MdzipWorkspaceLayout = 'preview' | 'source' | 'split';
 export type MdzipNavigationMode = 'editor' | 'host' | 'none';
 export type MdzipColorScheme = 'light' | 'dark';
+/**
+ * A color scheme choice: `'light'`, `'dark'`, or `'system'`, which follows the
+ * operating system's setting (`prefers-color-scheme`) and updates when it changes.
+ */
+export type MdzipColorSchemePreference = MdzipColorScheme | 'system';
 export type MdzipHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 export type MdzipImageHydrationAnimation = 'auto' | 'initial' | 'off';
 export type MdzipImageInsertMode = 'markdown' | 'ask' | 'html';
@@ -294,12 +311,16 @@ export type MdzipImagePosition = 'inline' | 'left' | 'center' | 'right' | 'wrap-
 export type MdzipToolbarDensity = 'comfortable' | 'compact' | 'dense';
 export type MdzipContentDensity = 'comfortable' | 'compact';
 /**
- * Preview reading-column width. A `number` is an exact pixel value; `'narrow'`
- * / `'default'` / `'wide'` are convenience aliases for common values. Unset
- * (the default) leaves the built-in CSS default in effect, which scales with
- * zoom — see {@link MdzipWorkspaceView.setPreviewMaxWidth}.
+ * Preview reading-column width — the toolbar's page-width menu choices, or an
+ * exact pixel `number`. `'narrow'` / `'default'` / `'wide'` are 650 / 900 /
+ * 1200px at 100% zoom and scale with zoom; `'full'` removes the limit, so the
+ * column fills the pane. A number is used exactly and doesn't scale. Unset
+ * (the default) is the same as `'default'` — see
+ * {@link MdzipWorkspaceView.setPreviewMaxWidth}.
  */
-export type MdzipPreviewMaxWidth = number | 'narrow' | 'default' | 'wide';
+export type MdzipPreviewMaxWidth = number | MdzipPreviewWidthChoice;
+/** The page-width menu's choices, in menu order. */
+export type MdzipPreviewWidthChoice = 'narrow' | 'default' | 'wide' | 'full';
 
 const PREVIEW_MAX_WIDTH_ALIASES: Record<'narrow' | 'default' | 'wide', number> = {
   narrow: 650,
@@ -307,10 +328,27 @@ const PREVIEW_MAX_WIDTH_ALIASES: Record<'narrow' | 'default' | 'wide', number> =
   wide: 1200,
 };
 
-function resolvePreviewMaxWidthPx(value: MdzipPreviewMaxWidth | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  return typeof value === 'number' ? value : PREVIEW_MAX_WIDTH_ALIASES[value];
+/** The CSS value for --mdzip-preview-content-max-width, or undefined for the built-in default. */
+function previewMaxWidthCss(value: MdzipPreviewMaxWidth | undefined): string | undefined {
+  if (value === undefined || value === 'default') return undefined;
+  if (typeof value === 'number') return `${value}px`;
+  if (value === 'full') return 'none';
+  return `calc(${PREVIEW_MAX_WIDTH_ALIASES[value]}px * var(--mdz-zoom, 1))`;
 }
+
+const PREVIEW_WIDTH_LABELS: Record<MdzipPreviewWidthChoice, string> = {
+  narrow: 'Narrow',
+  default: 'Default',
+  wide: 'Wide',
+  full: 'Full Width'
+};
+
+const PREVIEW_WIDTH_ICONS_HTML: Record<MdzipPreviewWidthChoice, string> = {
+  narrow: PAGE_WIDTH_NARROW_ICON_HTML,
+  default: PAGE_WIDTH_DEFAULT_ICON_HTML,
+  wide: PAGE_WIDTH_WIDE_ICON_HTML,
+  full: PAGE_WIDTH_FULL_ICON_HTML
+};
 
 export interface MdzipImageInsertRequest {
   fileName: string;
@@ -532,6 +570,8 @@ export interface MdzipControlPolicy {
   lineNumbers?: boolean;
   save?: boolean;
   zoom?: boolean;
+  /** The page-width menu (Narrow, Default, Wide, Full width). */
+  previewWidth?: boolean;
   colorScheme?: boolean;
   orphanActions?: boolean;
   /** Enables nav-pane file management (create, rename, delete, move, …). */
@@ -590,6 +630,7 @@ export interface MdzipResolvedControlPolicy {
   lineNumbers: boolean;
   save: boolean;
   zoom: boolean;
+  previewWidth: boolean;
   colorScheme: boolean;
   orphanActions: boolean;
   fileActions: boolean;
@@ -702,11 +743,9 @@ export interface MdzipWorkspaceViewOptions {
    */
   contentDensity?: MdzipContentDensity;
   /**
-   * Developer-facing preview reading-column width — not exposed as toolbar
-   * UI. A number is an exact pixel value; `'narrow'`/`'default'`/`'wide'`
-   * are convenience aliases (650/900/1200px). Unset leaves the built-in
-   * default in effect, which scales with zoom; an explicit value here does
-   * not (see {@link MdzipWorkspaceView.setPreviewMaxWidth}).
+   * Initial preview reading-column width: a page-width menu choice
+   * (`'narrow'`, `'default'`, `'wide'`, `'full'`) or an exact pixel number.
+   * Unset is `'default'`. See {@link MdzipPreviewMaxWidth}.
    */
   previewMaxWidth?: MdzipPreviewMaxWidth;
   /**
@@ -768,7 +807,11 @@ export interface MdzipWorkspaceViewOptions {
    */
   showSpellingSuggestionsHint?: boolean;
   initialLayout?: MdzipWorkspaceLayout;
-  initialColorScheme?: MdzipColorScheme;
+  /**
+   * Starting color scheme. `'system'` (the default) follows the operating
+   * system's light/dark setting and updates when it changes.
+   */
+  initialColorScheme?: MdzipColorSchemePreference;
   navigationMode?: MdzipNavigationMode;
   navigationButtonActive?: boolean;
   /**
@@ -806,6 +849,19 @@ export interface MdzipWorkspaceViewOptions {
   onDirtyChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
+  /**
+   * Fires when the user picks Light, Dark or System in the toolbar menu, with
+   * that choice (`'system'` included), so a host can remember it. Unlike
+   * `onColorSchemeChanged`, which reports the light/dark scheme in effect, it
+   * fires even when the scheme on screen doesn't change.
+   */
+  onColorSchemePreferenceChanged?: (preference: MdzipColorSchemePreference) => void;
+  /**
+   * Fires when the user picks a width in the toolbar's page-width menu, with
+   * that choice, so a host can remember it and pass it back as
+   * `previewMaxWidth` next time.
+   */
+  onPreviewWidthChanged?: (width: MdzipPreviewWidthChoice) => void;
   /**
    * Fires when a rendered-preview link is clicked and its href doesn't
    * resolve to another Markdown document inside this archive — e.g. a
@@ -970,6 +1026,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     lineNumbers: false,
     save: false,
     zoom: false,
+    previewWidth: false,
     colorScheme: false,
     orphanActions: false,
     fileActions: false,
@@ -987,6 +1044,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     lineNumbers: true,
     save: false,
     zoom: true,
+    previewWidth: true,
     colorScheme: true,
     orphanActions: false,
     fileActions: false,
@@ -1004,6 +1062,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     lineNumbers: true,
     save: true,
     zoom: true,
+    previewWidth: true,
     colorScheme: true,
     orphanActions: true,
     fileActions: true,
@@ -1021,6 +1080,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     lineNumbers: true,
     save: false,
     zoom: true,
+    previewWidth: true,
     colorScheme: true,
     orphanActions: true,
     fileActions: true,
@@ -1430,6 +1490,21 @@ const noSpellcheckHighlight = ViewPlugin.fromClass(class {
 // createCmEditor. Fully inert unless a host imageEditHandler is set — see
 // that click handler's own gate.
 const IMAGE_EDIT_AFFORDANCE_CLICK_EVENT = 'mdzip-image-edit-affordance-click';
+/** Holds an archive image's original `src` in the preview, whose `src` becomes a blob: URL. */
+const PREVIEW_IMAGE_SOURCE_ATTRIBUTE = 'data-mdzip-source';
+// Preview chrome the editor adds around rendered content: removed, or
+// unwrapped (children kept), when the selection is copied as HTML.
+const PREVIEW_CHROME_REMOVE_SELECTOR = [
+  '.mdzip-code-block-header',
+  '.mdzip-chunk-sentinel',
+  '[data-mdzip-image-edit-affordance]'
+].join(',');
+const PREVIEW_CHROME_UNWRAP_SELECTOR = [
+  '.mdzip-chunk',
+  '.mdzip-code-block',
+  '.mdzip-code-block-body',
+  '.mdzip-image-slot'
+].join(',');
 
 const imageEditAffordanceEffect = StateEffect.define<{ from: number; to: number } | null>();
 
@@ -1497,6 +1572,15 @@ function injectStyles(doc: Document): void {
   style.setAttribute(STYLE_ATTR, '');
   style.textContent = WORKSPACE_CSS;
   (doc.head ?? doc.documentElement).appendChild(style);
+}
+
+/**
+ * Sets a control's tooltip after startup. prepareTooltips() turns `title` into
+ * `data-tooltip` only once, so a later `title` would show a stale tooltip.
+ */
+function setTooltip(element: HTMLElement, text: string): void {
+  element.dataset['tooltip'] = text;
+  element.removeAttribute('title');
 }
 
 function lucideIcon(icon: LucideIconNode, className: string): string {
@@ -1720,6 +1804,25 @@ export class MdzipWorkspaceView {
   private navVisible = true;
   private zoom = 1;
   private zoomOpen = false;
+  private themeMenuOpen = false;
+  private widthMenuOpen = false;
+  /** Choice whose icon the page-width button shows, so render() only swaps it on change. */
+  private widthMenuIconChoice: MdzipPreviewWidthChoice | null = null;
+  /** Choice whose icon the theme menu button shows, so render() only swaps it on change. */
+  private themeMenuIconPreference: MdzipColorSchemePreference | null = null;
+  private colorSchemePreference: MdzipColorSchemePreference = 'system';
+  private readonly systemColorSchemeQuery: MediaQueryList | null;
+  /** Re-resolves the scheme when the OS setting changes while 'system' is chosen. */
+  private readonly onSystemColorSchemeChange = (): void => {
+    if (this.colorSchemePreference !== 'system' || this.destroyed) {
+      return;
+    }
+    const next = this.resolveColorScheme('system');
+    if (next !== this.colorScheme) {
+      this.colorScheme = next;
+      this.render();
+    }
+  };
   private colorScheme: MdzipColorScheme;
   private titleDialogOpen = false;
   private metadataDialogOpen = false;
@@ -1825,7 +1928,7 @@ export class MdzipWorkspaceView {
   private contextMenuState:
     | { kind: 'nav'; target: MdzipNavMenuTarget; x: number; y: number }
     | { kind: 'editor'; from: number; to: number; x: number; y: number }
-    | { kind: 'preview'; text: string; x: number; y: number }
+    | { kind: 'preview'; text: string; html: string; x: number; y: number }
     | null = null;
   private nameDialogState: {
     mode: MdzipNameDialogMode;
@@ -1956,6 +2059,8 @@ export class MdzipWorkspaceView {
   private previewMemo: MdzipPreviewMemo | null = null;
   private previewGeneration = 0;
   private previewAbort: AbortController | null = null;
+  /** Aborts an in-flight in-place re-theme (see rethemePreview). */
+  private rethemeAbort: AbortController | null = null;
   private previewHandles: MdzipRenderHandle[] = [];
   // Whether the latest preview generation has finished mounting and hydrating
   // its images; drives `whenRendered()` and gates the hydration callback.
@@ -1990,8 +2095,16 @@ export class MdzipWorkspaceView {
   private readonly elSaveBtn: HTMLButtonElement;
   private readonly elSearchBtn: HTMLButtonElement;
   private readonly elZoomBtn: HTMLButtonElement;
+  private readonly elWidthControls: HTMLElement;
+  private readonly elWidthMenuBtn: HTMLButtonElement;
+  private readonly elWidthMenuIcon: HTMLElement;
+  private readonly elWidthPopover: HTMLElement;
   private readonly elThemeControls: HTMLElement;
   private readonly elDarkThemeBtn: HTMLButtonElement;
+  private readonly elThemeMenuBtn: HTMLButtonElement;
+  private readonly elThemeMenuIcon: HTMLElement;
+  private readonly elThemePopover: HTMLElement;
+  private readonly elSystemThemeBtn: HTMLButtonElement;
   private readonly elLightThemeBtn: HTMLButtonElement;
   private readonly elZoomPopover: HTMLElement;
   private readonly elZoomLevel: HTMLElement;
@@ -2066,10 +2179,10 @@ export class MdzipWorkspaceView {
     this.contentDensity = options.contentDensity ?? 'comfortable';
     this.previewMaxWidth = options.previewMaxWidth;
     this.layout = options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy);
-    this.colorScheme = options.initialColorScheme
-      ?? (container.ownerDocument.defaultView?.matchMedia('(prefers-color-scheme: dark)').matches
-        ? 'dark'
-        : 'light');
+    this.systemColorSchemeQuery = container.ownerDocument.defaultView?.matchMedia?.('(prefers-color-scheme: dark)') ?? null;
+    this.systemColorSchemeQuery?.addEventListener?.('change', this.onSystemColorSchemeChange);
+    this.colorSchemePreference = options.initialColorScheme ?? 'system';
+    this.colorScheme = this.resolveColorScheme(this.colorSchemePreference);
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
     this.markdownRenderer = options.markdownRenderer;
     this.markdownExtensions = options.markdownExtensions ?? [];
@@ -2103,8 +2216,16 @@ export class MdzipWorkspaceView {
     this.elSaveBtn = q('[data-ref="save-btn"]');
     this.elSearchBtn = q('[data-ref="search-btn"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
+    this.elWidthControls = q('[data-ref="width-controls"]');
+    this.elWidthMenuBtn = q('[data-ref="width-menu-btn"]');
+    this.elWidthMenuIcon = q('[data-ref="width-menu-icon"]');
+    this.elWidthPopover = q('[data-ref="width-popover"]');
     this.elThemeControls = q('[data-ref="theme-controls"]');
     this.elDarkThemeBtn = q('[data-ref="dark-theme-btn"]');
+    this.elThemeMenuBtn = q('[data-ref="theme-menu-btn"]');
+    this.elThemeMenuIcon = q('[data-ref="theme-menu-icon"]');
+    this.elThemePopover = q('[data-ref="theme-popover"]');
+    this.elSystemThemeBtn = q('[data-ref="system-theme-btn"]');
     this.elLightThemeBtn = q('[data-ref="light-theme-btn"]');
     this.elZoomPopover = q('[data-ref="zoom-popover"]');
     this.elZoomLevel = q('[data-ref="zoom-level"]');
@@ -2506,6 +2627,7 @@ export class MdzipWorkspaceView {
   }
 
   public destroy(): void {
+    this.systemColorSchemeQuery?.removeEventListener?.('change', this.onSystemColorSchemeChange);
     this.conversionDocumentGeneration += 1;
     this.resolveImageInsertDialog(null);
     this.resolvePackFilesDialog(null);
@@ -2666,10 +2788,11 @@ export class MdzipWorkspaceView {
   }
 
   /**
-   * Sets the preview reading-column width. Developer-facing only — there is
-   * no toolbar UI for this. Pass `undefined` to return to the built-in
-   * default (which scales with zoom); any other value is used exactly as
-   * given and does not scale with zoom (see {@link MdzipPreviewMaxWidth}).
+   * Sets the preview reading-column width, as the toolbar's page-width menu
+   * does: `'narrow'`, `'default'`, `'wide'` (all scale with zoom) or `'full'`.
+   * A number is an exact pixel width that doesn't scale with zoom, and leaves
+   * no menu item checked. `undefined` is `'default'` (see
+   * {@link MdzipPreviewMaxWidth}).
    */
   public setPreviewMaxWidth(value: MdzipPreviewMaxWidth | undefined): void {
     if (value === this.previewMaxWidth) {
@@ -2771,6 +2894,8 @@ export class MdzipWorkspaceView {
   private resetPreviewState(): void {
     this.previewAbort?.abort();
     this.previewAbort = null;
+    this.rethemeAbort?.abort();
+    this.rethemeAbort = null;
     this.previewGeneration += 1;
     this.destroyPreviewHandles();
     this.previewMemo = null;
@@ -2821,6 +2946,66 @@ export class MdzipWorkspaceView {
       && memo.colorScheme === this.colorScheme;
   }
 
+  /**
+   * True when only the color scheme changed since `memo`, and the preview can
+   * be kept: the default renderer (whose HTML doesn't depend on the scheme),
+   * every extension that transforms or mounts content can re-theme in place,
+   * and the current render has finished mounting (otherwise its chunks were
+   * rendered, or are still rendering, with the old scheme).
+   */
+  private canRethemePreviewInPlace(memo: MdzipPreviewMemo, snapshot: MdzipWorkspaceSnapshot): boolean {
+    return memo.colorScheme !== this.colorScheme
+      && memo.path === snapshot.currentPath
+      && memo.pathType === snapshot.currentPathType
+      && memo.text === snapshot.currentText
+      && this.renderingService.supportsChunking
+      && this.previewMountedGeneration === this.previewGeneration
+      && !this.chunkedRenderState?.mounting
+      && this.markdownExtensions.every((extension) =>
+        !!extension.updateColorScheme
+        || !(extension.transformMarkdown || extension.transformHtml || extension.mount));
+  }
+
+  /**
+   * Applies a scheme-only change without re-rendering: the root's theme class
+   * (set in render()) re-colors the DOM; chunks not mounted yet will render
+   * with the new scheme; cached chunk HTML (which may hold old-scheme diagram
+   * SVG) is dropped; and each extension re-themes its mounted output.
+   */
+  private rethemePreview(snapshot: MdzipWorkspaceSnapshot, memo: MdzipPreviewMemo): void {
+    memo.colorScheme = this.colorScheme;
+    if (this.chunkedRenderState) {
+      this.chunkedRenderState.context = { ...this.chunkedRenderState.context, colorScheme: this.colorScheme };
+    }
+    this.chunkHtmlCache = null;
+    if (snapshot.currentPathType !== 'markdown') {
+      return;
+    }
+    this.rethemeAbort?.abort();
+    const abort = new AbortController();
+    this.rethemeAbort = abort;
+    const context = this.createMarkdownContext(snapshot, abort.signal);
+    const generation = this.previewGeneration;
+    const report = (error: unknown): void => {
+      if (generation === this.previewGeneration && !abort.signal.aborted) {
+        this.options.onFailed?.(error);
+      }
+    };
+    for (const extension of this.markdownExtensions) {
+      if (!extension.updateColorScheme) {
+        continue;
+      }
+      try {
+        const result = extension.updateColorScheme(this.elPreviewContent, context);
+        if (isThenable(result)) {
+          void Promise.resolve(result).catch(report);
+        }
+      } catch (error) {
+        report(error);
+      }
+    }
+  }
+
   private updatePreview(snapshot: MdzipWorkspaceSnapshot, entryClaimed: boolean): void {
     this.lastContentChangeTime = performance.now();
     // Captured before anything below can move it — see
@@ -2844,6 +3029,12 @@ export class MdzipWorkspaceView {
     if (this.previewMemoMatchesSnapshot(snapshot)) {
       // Nothing that feeds the preview changed; keep the existing DOM and any
       // mounted extension handles.
+      return;
+    }
+    if (memo && this.canRethemePreviewInPlace(memo, snapshot)) {
+      // Only the color scheme changed: CSS re-colors the existing DOM, and
+      // extensions re-theme their own output, so nothing moves.
+      this.rethemePreview(snapshot, memo);
       return;
     }
 
@@ -2873,6 +3064,8 @@ export class MdzipWorkspaceView {
 
     this.previewAbort?.abort();
     this.previewAbort = null;
+    this.rethemeAbort?.abort();
+    this.rethemeAbort = null;
     if (!priorChunkedState) {
       this.destroyPreviewHandles();
     }
@@ -3076,6 +3269,8 @@ export class MdzipWorkspaceView {
           }
           continue;
         }
+        // The src is replaced by a blob: URL; Copy as HTML restores it from here.
+        image.setAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE, source);
         const known = this.assetSession.resolveKnownImage(source, context.currentPath);
         if (known) {
           if (known.width && known.height && !image.hasAttribute('width') && !image.hasAttribute('height')) {
@@ -3799,10 +3994,15 @@ export class MdzipWorkspaceView {
       // Same race this field guards against everywhere else: an edit landing
       // while this scroll-triggered continuation is mid-flight must not
       // reconcile against a cursor that doesn't yet reflect it.
+      // The live context, not the one captured when this sentinel was armed:
+      // a color scheme change since then (rethemePreview) replaces it, and
+      // chunks mounted from here on must render with the new scheme.
+      let liveContext = context;
       if (this.chunkedRenderState?.generation === generation) {
         this.chunkedRenderState.mounting = true;
+        liveContext = this.chunkedRenderState.context;
       }
-      void this.mountChunkBatch(records, nextCursor, context, generation, animateImageHydration, () => {})
+      void this.mountChunkBatch(records, nextCursor, liveContext, generation, animateImageHydration, () => {})
         .then((newCursor) => {
           // Record whatever this batch actually mounted regardless of
           // whether a newer edit has since landed — recordChunkProgress's
@@ -3820,7 +4020,7 @@ export class MdzipWorkspaceView {
             this.chunkedRenderState.mounting = false;
           }
           if (newCursor < records.length) {
-            this.armChunkSentinel(records, newCursor, context, generation, animateImageHydration);
+            this.armChunkSentinel(records, newCursor, liveContext, generation, animateImageHydration);
           }
         });
     };
@@ -4566,6 +4766,13 @@ export class MdzipWorkspaceView {
     const showSaveControl = this.controlPolicy.save && snapshot.mode !== 'read-only';
     const showZoomControl = this.controlPolicy.zoom;
     const showColorSchemeControl = this.controlPolicy.colorScheme;
+    // Only the rendered Markdown preview has a reading column to size, so the
+    // menu is hidden in edit (source) layout and for images and other files.
+    const showWidthControl = this.controlPolicy.previewWidth && !entryClaimed
+      && snapshot.currentPathType === 'markdown' && this.layout !== 'source';
+    if (!showWidthControl) {
+      this.widthMenuOpen = false;
+    }
     const showSearchControl = this.controlPolicy.search
       && canShowSource && snapshot.currentPathType === 'markdown';
     const showEditControls = canEdit
@@ -4574,7 +4781,8 @@ export class MdzipWorkspaceView {
       && hasFormattingControls(this.controlPolicy.formatting);
     const showToolbar = this.controlPolicy.toolbar
       && (showNavigationControl || showLayoutControls || showSaveControl
-        || showZoomControl || showColorSchemeControl || showSearchControl || showEditControls);
+        || showZoomControl || showWidthControl || showColorSchemeControl || showSearchControl
+        || showEditControls);
 
     this.elDocumentStrip.hidden = !showTitleControl;
     this.elToolbar.hidden = !showToolbar;
@@ -4582,7 +4790,7 @@ export class MdzipWorkspaceView {
     this.elEditToolbar.hidden = !showEditControls;
     this.elLayoutControls.hidden = !showLayoutControls;
     this.elToolbarControls.hidden = !showSaveControl && !showZoomControl
-      && !showColorSchemeControl && !showSearchControl;
+      && !showWidthControl && !showColorSchemeControl && !showSearchControl;
     this.elNavBtn.hidden = !showNavigationControl;
     this.elPreviewBtn.hidden = !this.controlPolicy.layout.preview;
     this.elSplitBtn.hidden = !this.controlPolicy.layout.split;
@@ -4590,16 +4798,17 @@ export class MdzipWorkspaceView {
     this.elSaveBtn.hidden = !showSaveControl;
     this.elSearchBtn.hidden = !showSearchControl;
     this.elZoomBtn.hidden = !showZoomControl;
+    this.elWidthControls.hidden = !showWidthControl;
     this.elThemeControls.hidden = !showColorSchemeControl;
 
     this.elRoot.style.setProperty('--mdz-zoom', String(this.zoom));
     this.elRoot.style.setProperty('--nav-pane-width', `${this.navPaneWidth}px`);
     this.elRoot.style.setProperty('--split-edit-ratio', String(this.splitRatio));
-    const previewMaxWidthPx = resolvePreviewMaxWidthPx(this.previewMaxWidth);
-    if (previewMaxWidthPx === undefined) {
+    const previewMaxWidth = previewMaxWidthCss(this.previewMaxWidth);
+    if (previewMaxWidth === undefined) {
       this.elRoot.style.removeProperty('--mdzip-preview-content-max-width');
     } else {
-      this.elRoot.style.setProperty('--mdzip-preview-content-max-width', `${previewMaxWidthPx}px`);
+      this.elRoot.style.setProperty('--mdzip-preview-content-max-width', previewMaxWidth);
     }
     this.elRoot.classList.toggle('resizing', this.resizing);
     this.elRoot.classList.toggle('mdzip-theme-dark', this.colorScheme === 'dark');
@@ -4659,10 +4868,42 @@ export class MdzipWorkspaceView {
       this.elNavBtn.setAttribute('aria-pressed', String(this.navVisible));
     }
     this.elZoomBtn.classList.toggle('active', this.zoomOpen);
-    this.elDarkThemeBtn.classList.toggle('active', this.colorScheme === 'dark');
-    this.elLightThemeBtn.classList.toggle('active', this.colorScheme === 'light');
-    this.elDarkThemeBtn.setAttribute('aria-pressed', String(this.colorScheme === 'dark'));
-    this.elLightThemeBtn.setAttribute('aria-pressed', String(this.colorScheme === 'light'));
+    for (const [button, preference] of this.themeMenuItems()) {
+      button.classList.toggle('active', this.colorSchemePreference === preference);
+      button.setAttribute('aria-checked', String(this.colorSchemePreference === preference));
+    }
+    if (this.themeMenuIconPreference !== this.colorSchemePreference) {
+      this.themeMenuIconPreference = this.colorSchemePreference;
+      this.elThemeMenuIcon.innerHTML = this.colorSchemePreference === 'system'
+        ? SYSTEM_THEME_ICON_HTML
+        : this.colorSchemePreference === 'dark' ? DARK_THEME_ICON_HTML : LIGHT_THEME_ICON_HTML;
+    }
+    const schemeLabel = this.colorSchemePreference === 'system'
+      ? `System (${this.colorScheme})`
+      : this.colorSchemePreference === 'dark' ? 'Dark' : 'Light';
+    setTooltip(this.elThemeMenuBtn, `Color scheme: ${schemeLabel}`);
+    this.elThemeMenuBtn.setAttribute('aria-label', `Color scheme: ${schemeLabel}`);
+    this.elThemeMenuBtn.classList.toggle('active', this.themeMenuOpen);
+    this.elThemeMenuBtn.setAttribute('aria-expanded', String(this.themeMenuOpen));
+    this.elThemePopover.hidden = !this.themeMenuOpen;
+
+    const widthChoice = this.previewWidthChoice();
+    for (const [button, choice] of this.widthMenuItems()) {
+      button.classList.toggle('active', widthChoice === choice);
+      button.setAttribute('aria-checked', String(widthChoice === choice));
+    }
+    // A custom pixel width (set by the host) shows the default icon, with no item checked.
+    const widthIconChoice = widthChoice ?? 'default';
+    if (this.widthMenuIconChoice !== widthIconChoice) {
+      this.widthMenuIconChoice = widthIconChoice;
+      this.elWidthMenuIcon.innerHTML = PREVIEW_WIDTH_ICONS_HTML[widthIconChoice];
+    }
+    // Measuring the pane forces layout, so only while the menu is open; hover
+    // and focus on the button refresh the labels too.
+    this.updateWidthLabels(this.widthMenuOpen);
+    this.elWidthMenuBtn.classList.toggle('active', this.widthMenuOpen);
+    this.elWidthMenuBtn.setAttribute('aria-expanded', String(this.widthMenuOpen));
+    this.elWidthPopover.hidden = !this.widthMenuOpen;
 
     this.elZoomPopover.hidden = !this.zoomOpen;
     this.elZoomLevel.textContent = `${Math.round(this.zoom * 100)}%`;
@@ -4844,8 +5085,10 @@ export class MdzipWorkspaceView {
 
     doc.addEventListener('click', () => {
       this.closeFormatMenus();
-      if (this.zoomOpen || this.contextMenuState) {
+      if (this.zoomOpen || this.themeMenuOpen || this.widthMenuOpen || this.contextMenuState) {
         this.zoomOpen = false;
+        this.themeMenuOpen = false;
+        this.widthMenuOpen = false;
         this.contextMenuState = null;
         this.render();
       }
@@ -4854,6 +5097,12 @@ export class MdzipWorkspaceView {
     doc.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') {
         return;
+      }
+      if (this.themeMenuOpen) {
+        this.closeThemeMenu(true);
+      }
+      if (this.widthMenuOpen) {
+        this.closeWidthMenu(true);
       }
       if (this.contextMenuState || this.deleteDialogState || this.nameDialogState) {
         this.contextMenuState = null;
@@ -4942,6 +5191,8 @@ export class MdzipWorkspaceView {
       }
       e.stopPropagation();
       this.zoomOpen = !this.zoomOpen;
+      this.themeMenuOpen = false;
+      this.widthMenuOpen = false;
       this.render();
     });
 
@@ -4952,8 +5203,48 @@ export class MdzipWorkspaceView {
       .addEventListener('click', () => this.setZoom(this.zoom + 0.1));
     this.elZoomPopover.querySelector('[data-action="zoom-reset"]')!
       .addEventListener('click', () => this.setZoom(1));
-    this.elDarkThemeBtn.addEventListener('click', () => this.setColorSchemeFromToolbar('dark'));
-    this.elLightThemeBtn.addEventListener('click', () => this.setColorSchemeFromToolbar('light'));
+    this.elThemeMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.themeMenuOpen = !this.themeMenuOpen;
+      this.zoomOpen = false;
+      this.widthMenuOpen = false;
+      this.render();
+      // Keyboard activation (Enter/Space reports detail 0) moves focus into the
+      // menu; a mouse click doesn't, so no focus tooltip covers the icons.
+      if (this.themeMenuOpen && e.detail === 0) {
+        this.themeMenuItems().find(([, preference]) => preference === this.colorSchemePreference)?.[0].focus();
+      }
+    });
+    this.elThemePopover.addEventListener('click', (e) => e.stopPropagation());
+    this.elThemePopover.addEventListener('keydown', (e) => {
+      this.moveMenuFocus(e, this.themeMenuItems().map(([button]) => button));
+    });
+    for (const [button, preference] of this.themeMenuItems()) {
+      button.addEventListener('click', () => this.chooseColorSchemeFromMenu(preference));
+    }
+
+    this.elWidthMenuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.widthMenuOpen = !this.widthMenuOpen;
+      this.zoomOpen = false;
+      this.themeMenuOpen = false;
+      this.render();
+      // As with the theme menu, only keyboard activation moves focus inside.
+      if (this.widthMenuOpen && e.detail === 0) {
+        const items = this.widthMenuItems();
+        const choice = this.previewWidthChoice() ?? 'default';
+        (items.find(([, item]) => item === choice) ?? items[0])[0].focus();
+      }
+    });
+    this.elWidthMenuBtn.addEventListener('pointerenter', () => this.updateWidthLabels(true));
+    this.elWidthMenuBtn.addEventListener('focus', () => this.updateWidthLabels(true));
+    this.elWidthPopover.addEventListener('click', (e) => e.stopPropagation());
+    this.elWidthPopover.addEventListener('keydown', (e) => {
+      this.moveMenuFocus(e, this.widthMenuItems().map(([button]) => button));
+    });
+    for (const [button, choice] of this.widthMenuItems()) {
+      button.addEventListener('click', () => this.choosePreviewWidthFromMenu(choice));
+    }
 
     this.elEditToolbar.addEventListener('click', (event) => {
       const menuToggle = (event.target as HTMLElement)
@@ -5285,11 +5576,11 @@ export class MdzipWorkspaceView {
       // button collapses the browser selection before the action runs (same
       // reason the editor menu captures its CodeMirror range up front).
       const domSelection = this.elPreviewPane.ownerDocument.defaultView?.getSelection();
-      const text = domSelection && !domSelection.isCollapsed
-        && this.elPreviewContent.contains(domSelection.anchorNode)
-        ? domSelection.toString()
-        : '';
-      this.contextMenuState = { kind: 'preview', text, x: e.clientX, y: e.clientY };
+      const selected = domSelection && !domSelection.isCollapsed
+        && this.elPreviewContent.contains(domSelection.anchorNode);
+      const text = selected ? domSelection.toString() : '';
+      const html = selected && domSelection.rangeCount > 0 ? this.previewSelectionHtml(domSelection.getRangeAt(0)) : '';
+      this.contextMenuState = { kind: 'preview', text, html, x: e.clientX, y: e.clientY };
       if (this.previewMenuItems().length === 0) {
         this.contextMenuState = null;
         return;
@@ -6692,8 +6983,15 @@ export class MdzipWorkspaceView {
       return [];
     }
     const items: Array<MdzipNavMenuItem | null> = [];
+    const markdown = this.workspace?.snapshot().currentPathType === 'markdown';
+    // A selection of only an image has no text to Copy, but still has markup.
     if (state.text) {
       items.push({ action: 'preview-copy', label: 'Copy', icon: MENU_COPY_ICON_HTML, shortcut: this.editorShortcut('C') });
+    }
+    if (markdown && state.html) {
+      items.push({ action: 'preview-copy-selection-html', label: 'Copy as HTML', icon: MENU_COPY_ICON_HTML });
+    }
+    if (state.text || (markdown && state.html)) {
       items.push(null);
     }
     items.push({
@@ -6707,12 +7005,20 @@ export class MdzipWorkspaceView {
       label: 'Copy All with Images',
       icon: MENU_COPY_ICON_HTML
     });
-    // Source copies (#56): the rendered markup and the Markdown itself, for
-    // when the editor pane isn't there to copy from.
-    if (this.workspace?.snapshot().currentPathType === 'markdown') {
-      items.push(null);
-      items.push({ action: 'preview-copy-html', label: 'Copy HTML', icon: MENU_COPY_ICON_HTML });
-      items.push({ action: 'preview-copy-markdown', label: 'Copy Markdown', icon: MENU_COPY_ICON_HTML });
+    // Whole-document source copies (#56): the Markdown itself and its rendered
+    // markup. Markdown is whole-document only: the preview can't map a
+    // selection back to exact source characters (the source pane's own Copy
+    // does that).
+    if (markdown) {
+      items.push({
+        action: 'preview-copy-all-as',
+        label: 'Copy All as',
+        icon: MENU_COPY_ICON_HTML,
+        submenu: [
+          { action: 'preview-copy-markdown', label: 'Markdown' },
+          { action: 'preview-copy-html', label: 'HTML' }
+        ]
+      });
     }
     return items;
   }
@@ -6740,6 +7046,10 @@ export class MdzipWorkspaceView {
           .then((outcome) => this.finishCopyNotification(false, outcome));
         break;
       }
+      case 'preview-copy-selection-html':
+        void this.writeClipboardText(state.html, 'HTML copied to clipboard as text')
+          .then((outcome) => this.finishCopyNotification(false, outcome));
+        break;
       case 'preview-copy':
         // Partial Copy never shows the render dialog (there's nothing to
         // drain), so its confirmation is always the brief toast.
@@ -6822,6 +7132,53 @@ export class MdzipWorkspaceView {
   /** Writes `text` to the clipboard. Returns null if there was nothing to copy (a true no-op, not a failure); otherwise a success message or the failure text (also reported via `onFailed`, but that's a host callback with no guaranteed visible surface — the caller needs the text itself to show the user). */
   private copyPreviewSelection(text: string): Promise<{ message: string } | { error: string } | null> {
     return this.writeClipboardText(text, 'Plain text copied to clipboard');
+  }
+
+  /**
+   * The rendered HTML of a preview selection, as Copy as HTML copies it: the
+   * selected markup inside its enclosing elements (so part of a list item is
+   * still `<ul><li>…`), without the editor's own chrome (code-block headers,
+   * image slots and edit buttons, chunk wrappers) and with archive images'
+   * `src` back to their archive paths instead of blob: URLs.
+   */
+  private previewSelectionHtml(range: Range): string {
+    const doc = this.elPreviewContent.ownerDocument;
+    let content: Node = range.cloneContents();
+    let ancestor: Node | null = range.commonAncestorContainer;
+    if (ancestor.nodeType !== 1) {
+      ancestor = ancestor.parentNode;
+    }
+    while (ancestor && ancestor.nodeType === 1 && ancestor !== this.elPreviewContent
+      && this.elPreviewContent.contains(ancestor)) {
+      const wrapper = ancestor.cloneNode(false);
+      wrapper.appendChild(content);
+      content = wrapper;
+      ancestor = ancestor.parentNode;
+    }
+    const container = doc.createElement('div');
+    container.appendChild(content);
+    for (const element of Array.from(container.querySelectorAll(PREVIEW_CHROME_REMOVE_SELECTOR))) {
+      element.remove();
+    }
+    for (const element of Array.from(container.querySelectorAll(PREVIEW_CHROME_UNWRAP_SELECTOR))) {
+      element.replaceWith(...Array.from(element.childNodes));
+    }
+    for (const image of Array.from(container.querySelectorAll('img'))) {
+      const source = image.getAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE);
+      if (source !== null) {
+        image.setAttribute('src', source);
+        image.removeAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE);
+      }
+      for (const name of Array.from(image.classList)) {
+        if (name === 'mdzip-image-loading') {
+          image.classList.remove(name);
+        }
+      }
+      if (!image.classList.length) {
+        image.removeAttribute('class');
+      }
+    }
+    return container.innerHTML.trim();
   }
 
   /** `writeText` with the same timeout and outcome reporting as {@link copyPreviewSelection}; `message` is the success confirmation. */
@@ -7741,23 +8098,134 @@ export class MdzipWorkspaceView {
    * reacting to `data-vscode-theme-kind` changes via MutationObserver — so the
    * editor follows the host theme without being recreated (recreation would
    * destroy the CodeMirror instance and lose unsaved edits). No-op when the
-   * scheme is unchanged. Does not fire `onColorSchemeChanged`, which only
-   * reports user-initiated toggles from the built-in toolbar buttons.
+   * scheme is unchanged. `'system'` follows the operating system's setting
+   * from then on. Does not fire `onColorSchemeChanged` or
+   * `onColorSchemePreferenceChanged`, which only report choices made in the
+   * built-in toolbar menu.
    */
-  public setColorScheme(colorScheme: MdzipColorScheme): void {
-    if (this.colorScheme === colorScheme) {
+  public setColorScheme(colorScheme: MdzipColorSchemePreference): void {
+    const next = this.resolveColorScheme(colorScheme);
+    if (this.colorSchemePreference === colorScheme && this.colorScheme === next) {
       return;
     }
-    this.colorScheme = colorScheme;
+    this.colorSchemePreference = colorScheme;
+    this.colorScheme = next;
     this.render();
   }
 
-  private setColorSchemeFromToolbar(colorScheme: MdzipColorScheme): void {
-    if (this.colorScheme === colorScheme) {
+  /** The light/dark scheme a choice means right now; `'system'` reads the OS setting. */
+  private resolveColorScheme(preference: MdzipColorSchemePreference): MdzipColorScheme {
+    if (preference !== 'system') {
+      return preference;
+    }
+    return this.systemColorSchemeQuery?.matches ? 'dark' : 'light';
+  }
+
+  private themeMenuItems(): Array<[HTMLButtonElement, MdzipColorSchemePreference]> {
+    return [
+      [this.elLightThemeBtn, 'light'],
+      [this.elDarkThemeBtn, 'dark'],
+      [this.elSystemThemeBtn, 'system']
+    ];
+  }
+
+  /** Arrow keys cycle focus through a toolbar menu's items. */
+  private moveMenuFocus(e: KeyboardEvent, buttons: HTMLButtonElement[]): void {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') {
       return;
     }
-    this.setColorScheme(colorScheme);
-    this.options.onColorSchemeChanged?.(colorScheme);
+    e.preventDefault();
+    const current = buttons.indexOf(this.elRoot.ownerDocument.activeElement as HTMLButtonElement);
+    const step = e.key === 'ArrowDown' ? 1 : -1;
+    buttons[(current + step + buttons.length) % buttons.length].focus();
+  }
+
+  private widthMenuItems(): Array<[HTMLButtonElement, MdzipPreviewWidthChoice]> {
+    return Array.from(this.elWidthPopover.querySelectorAll<HTMLButtonElement>('[data-width]'))
+      .map((button) => [button, button.dataset['width'] as MdzipPreviewWidthChoice]);
+  }
+
+  /** The menu choice matching the current width, or null for a custom pixel width. */
+  private previewWidthChoice(): MdzipPreviewWidthChoice | null {
+    if (this.previewMaxWidth === undefined) {
+      return 'default';
+    }
+    return typeof this.previewMaxWidth === 'number' ? null : this.previewMaxWidth;
+  }
+
+  /**
+   * A choice's label: its own width (base width times zoom) and, when `measure`
+   * is set and the preview pane is narrower than that, the width it fits to.
+   * Full Width has no number: it is always the pane's width.
+   */
+  private previewWidthLabel(choice: MdzipPreviewWidthChoice, measure: boolean): string {
+    if (choice === 'full') {
+      return PREVIEW_WIDTH_LABELS[choice];
+    }
+    const width = Math.round(PREVIEW_MAX_WIDTH_ALIASES[choice] * this.zoom);
+    const pane = measure ? this.elPreviewPane.clientWidth : 0;
+    const fit = pane > 0 && pane < width ? `, fits to ${pane} px` : '';
+    return `${PREVIEW_WIDTH_LABELS[choice]} (${width} px${fit})`;
+  }
+
+  /** Labels each width menu item, and the button, with the pixel width it gives. */
+  private updateWidthLabels(measure: boolean): void {
+    for (const [button, choice] of this.widthMenuItems()) {
+      const label = this.previewWidthLabel(choice, measure);
+      setTooltip(button, label);
+      button.setAttribute('aria-label', label);
+    }
+    const choice = this.previewWidthChoice();
+    const label = `Page width: ${choice ? this.previewWidthLabel(choice, measure) : `${this.previewMaxWidth as number} px`}`;
+    setTooltip(this.elWidthMenuBtn, label);
+    this.elWidthMenuBtn.setAttribute('aria-label', label);
+  }
+
+  private choosePreviewWidthFromMenu(choice: MdzipPreviewWidthChoice): void {
+    const changed = this.previewWidthChoice() !== choice;
+    this.previewMaxWidth = choice;
+    this.closeWidthMenu(true);
+    if (changed) {
+      this.options.onPreviewWidthChanged?.(choice);
+    }
+  }
+
+  /** Closes the page-width menu; `refocus` returns focus to its button (keyboard use). */
+  private closeWidthMenu(refocus: boolean): void {
+    this.widthMenuOpen = false;
+    this.render();
+    if (refocus) {
+      this.elWidthMenuBtn.focus();
+    }
+  }
+
+  private chooseColorSchemeFromMenu(preference: MdzipColorSchemePreference): void {
+    this.setColorSchemeFromToolbar(preference);
+    this.closeThemeMenu(true);
+  }
+
+  /** Closes the color scheme menu; `refocus` returns focus to its button (keyboard use). */
+  private closeThemeMenu(refocus: boolean): void {
+    if (!this.themeMenuOpen) {
+      return;
+    }
+    this.themeMenuOpen = false;
+    this.render();
+    if (refocus) {
+      this.elThemeMenuBtn.focus();
+    }
+  }
+
+  private setColorSchemeFromToolbar(preference: MdzipColorSchemePreference): void {
+    if (this.colorSchemePreference === preference) {
+      return;
+    }
+    const before = this.colorScheme;
+    this.setColorScheme(preference);
+    this.options.onColorSchemePreferenceChanged?.(preference);
+    if (this.colorScheme !== before) {
+      this.options.onColorSchemeChanged?.(this.colorScheme);
+    }
   }
 
   private async setLayout(requested: MdzipWorkspaceLayout): Promise<void> {
@@ -8774,15 +9242,38 @@ const SHELL_HTML = `
       <button type="button" class="icon-toggle zoom-toggle" data-ref="zoom-btn" title="Zoom controls" aria-label="Zoom controls">
         ${ZOOM_ICON_HTML}
       </button>
-      <div class="theme-toggle-group" data-ref="theme-controls" role="group" aria-label="Color scheme">
-        <button type="button" class="icon-toggle theme-toggle" data-ref="dark-theme-btn"
-          title="Dark mode" aria-label="Dark mode" aria-pressed="false">
-          ${DARK_THEME_ICON_HTML}
+      <div class="toolbar-menu width-menu" data-ref="width-controls">
+        <button type="button" class="icon-toggle toolbar-menu-toggle" data-ref="width-menu-btn"
+          title="Page width" aria-label="Page width" aria-haspopup="menu" aria-expanded="false">
+          <span class="toolbar-menu-icon" data-ref="width-menu-icon">${PAGE_WIDTH_DEFAULT_ICON_HTML}</span>
         </button>
-        <button type="button" class="icon-toggle theme-toggle" data-ref="light-theme-btn"
-          title="Light mode" aria-label="Light mode" aria-pressed="false">
-          ${LIGHT_THEME_ICON_HTML}
+        <div class="toolbar-popover" data-ref="width-popover" role="menu" aria-label="Page width" hidden>
+          ${(['narrow', 'default', 'wide', 'full'] as const).map((choice) => `
+          <button type="button" role="menuitemradio" class="icon-toggle toolbar-menu-item" data-width="${choice}"
+            title="${PREVIEW_WIDTH_LABELS[choice]}" aria-label="${PREVIEW_WIDTH_LABELS[choice]}" aria-checked="false">
+            ${PREVIEW_WIDTH_ICONS_HTML[choice]}
+          </button>`).join('')}
+        </div>
+      </div>
+      <div class="theme-menu" data-ref="theme-controls">
+        <button type="button" class="icon-toggle theme-menu-toggle" data-ref="theme-menu-btn"
+          title="Color scheme" aria-label="Color scheme" aria-haspopup="menu" aria-expanded="false">
+          <span class="theme-menu-icon" data-ref="theme-menu-icon">${SYSTEM_THEME_ICON_HTML}</span>
         </button>
+        <div class="theme-popover" data-ref="theme-popover" role="menu" aria-label="Color scheme" hidden>
+          <button type="button" role="menuitemradio" class="icon-toggle theme-toggle" data-ref="light-theme-btn"
+            title="Light mode" aria-label="Light mode" aria-checked="false">
+            ${LIGHT_THEME_ICON_HTML}
+          </button>
+          <button type="button" role="menuitemradio" class="icon-toggle theme-toggle" data-ref="dark-theme-btn"
+            title="Dark mode" aria-label="Dark mode" aria-checked="false">
+            ${DARK_THEME_ICON_HTML}
+          </button>
+          <button type="button" role="menuitemradio" class="icon-toggle theme-toggle" data-ref="system-theme-btn"
+            title="System setting" aria-label="System setting" aria-checked="false">
+            ${SYSTEM_THEME_ICON_HTML}
+          </button>
+        </div>
       </div>
       <div class="zoom-popover" data-ref="zoom-popover" hidden role="group" aria-label="Zoom">
         <span class="zoom-level" data-ref="zoom-level">100%</span>

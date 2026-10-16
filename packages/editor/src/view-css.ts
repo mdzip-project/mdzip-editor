@@ -40,7 +40,7 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root.toolbar-density-compact {
   --mdzip-density-toolbar-padding: 3px 10px;
-  --mdzip-density-toolbar-gap: 6px;
+  --mdzip-density-toolbar-gap: 4px;
   --mdzip-density-toolbar-start-gap: 8px;
   --mdzip-density-toolbar-group-padding: 2px;
   --mdzip-density-toolbar-button-width: 34px;
@@ -59,7 +59,7 @@ export const WORKSPACE_CSS = `
 
 .mdzip-root.toolbar-density-dense {
   --mdzip-density-toolbar-padding: 2px 8px;
-  --mdzip-density-toolbar-gap: 4px;
+  --mdzip-density-toolbar-gap: 3px;
   --mdzip-density-toolbar-start-gap: 6px;
   --mdzip-density-toolbar-group-padding: 1px;
   --mdzip-density-toolbar-button-width: 30px;
@@ -139,7 +139,7 @@ export const WORKSPACE_CSS = `
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: var(--mdzip-toolbar-gap, var(--mdzip-density-toolbar-gap, 10px));
+  gap: var(--mdzip-toolbar-gap, var(--mdzip-density-toolbar-gap, 6px));
 }
 
 .mdzip-root .toolbar-start {
@@ -352,33 +352,89 @@ export const WORKSPACE_CSS = `
   height: var(--mdzip-toolbar-icon-large-size, var(--mdzip-density-toolbar-icon-large-size, 1.5em));
 }
 
-.mdzip-root .zoom-toggle.active {
-  background: var(--mdzip-control-hover-background-color);
-  color: var(--mdzip-link-color);
-}
-
-.mdzip-root .theme-toggle-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: var(--mdzip-toolbar-group-padding, var(--mdzip-density-toolbar-group-padding, 3px));
-  border: 1px solid var(--mdzip-widget-border-color);
-  border-radius: 8px;
-  background: var(--mdzip-widget-background-color);
-}
-
-.mdzip-root .theme-toggle {
+/* Search, save and zoom match the menus beside them and the layout buttons:
+   one compact button size and one icon size, so the icons are evenly spaced. */
+.mdzip-root .toolbar-controls > .icon-toggle {
   width: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
   height: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
   border-radius: 6px;
 }
 
-.mdzip-root .theme-toggle.active {
+.mdzip-root .toolbar-controls > .icon-toggle .toggle-icon {
+  width: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
+  height: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
+}
+
+.mdzip-root .zoom-toggle.active {
   background: var(--mdzip-control-hover-background-color);
   color: var(--mdzip-link-color);
 }
 
-.mdzip-root .theme-toggle .toggle-icon {
+.mdzip-root .theme-menu,
+.mdzip-root .toolbar-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.mdzip-root .theme-menu-toggle,
+.mdzip-root .toolbar-menu-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
+  height: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
+  border-radius: 6px;
+}
+
+.mdzip-root .theme-menu-toggle.active,
+.mdzip-root .toolbar-menu-toggle.active {
+  background: var(--mdzip-control-hover-background-color);
+  color: var(--mdzip-link-color);
+}
+
+.mdzip-root .theme-menu-icon,
+.mdzip-root .toolbar-menu-icon {
+  display: inline-flex;
+}
+
+.mdzip-root .theme-menu-icon .toggle-icon,
+.mdzip-root .toolbar-menu-icon .toggle-icon {
+  width: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
+  height: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
+}
+
+.mdzip-root .theme-popover,
+.mdzip-root .toolbar-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--mdzip-widget-border-color);
+  border-radius: 7px;
+  background: var(--mdzip-widget-background-color);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.mdzip-root .theme-toggle,
+.mdzip-root .toolbar-menu-item {
+  width: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
+  height: var(--mdzip-toolbar-compact-button-size, var(--mdzip-density-toolbar-compact-button-size, 32px));
+  border-radius: 6px;
+}
+
+.mdzip-root .theme-toggle.active,
+.mdzip-root .toolbar-menu-item.active {
+  background: var(--mdzip-control-hover-background-color);
+  color: var(--mdzip-link-color);
+}
+
+.mdzip-root .theme-toggle .toggle-icon,
+.mdzip-root .toolbar-menu-item .toggle-icon {
   width: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
   height: var(--mdzip-theme-icon-size, var(--mdzip-density-theme-icon-size, 18px));
 }
@@ -2069,6 +2125,8 @@ export const WORKSPACE_CSS = `
   .mdzip-root .mdzip-tooltip,
   .mdzip-root .nav-context-menu,
   .mdzip-root .title-dialog-backdrop,
+  .mdzip-root .theme-popover,
+  .mdzip-root .toolbar-popover,
   .mdzip-root .zoom-popover {
     display: none !important;
   }

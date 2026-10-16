@@ -73,7 +73,7 @@ test('renders a mermaid block to inline SVG that survives sanitization', async (
   assert.equal(state.config.securityLevel, 'strict');
   assert.equal(state.config.htmlLabels, false, 'labels render as sanitizer-safe SVG <text>');
   assert.equal(state.config.flowchart.htmlLabels, false);
-  assert.match(html, /class="mdzip-mermaid"/);
+  assert.match(html, /class="mdzip-mermaid( [^"]*)?"/);
   assert.match(html, /<svg/);
   assert.match(html, /<rect[^>]*style="fill:#fff"/, 'inline SVG styles survive');
   assert.match(html, /<style>\.node\{stroke:#000\}<\/style>/, 'the diagram <style> survives');
@@ -189,7 +189,52 @@ test('overlapping renders do not sweep away each other\'s in-progress diagram DO
     service.renderMarkdown('```mermaid\ngraph TD; FAST-->B;\n```\n', renderContext())
   ]);
 
-  assert.match(fast, /class="mdzip-mermaid"/);
-  assert.match(slow, /class="mdzip-mermaid"/, 'the slower render must survive the faster one finishing first');
+  assert.match(fast, /class="mdzip-mermaid( [^"]*)?"/);
+  assert.match(slow, /class="mdzip-mermaid( [^"]*)?"/, 'the slower render must survive the faster one finishing first');
   assert.doesNotMatch(slow, /mdzip-mermaid-error/);
+});
+
+test('updateColorScheme redraws only the diagrams, in place, with the new theme', async () => {
+  const { api, state } = fakeMermaid();
+  const extension = mdzipMermaidExtension({ loadMermaid: async () => api });
+  const service = new MdzipRenderingService(defaultSafeMarkdownRenderer, [extension]);
+  const html = await service.renderMarkdown(
+    'Intro\n\n```mermaid\ngraph TD; A-->B;\n```\n\n```mermaid\ngraph LR; C-->D;\n```\n',
+    renderContext({ colorScheme: 'light' })
+  );
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  document.body.appendChild(root);
+  try {
+    const paragraph = root.querySelector('p');
+    const diagrams = [...root.querySelectorAll('.mdzip-mermaid')];
+    assert.equal(diagrams.length, 2);
+    const svgsBefore = diagrams.map((d) => d.querySelector('svg'));
+    state.sources.length = 0;
+
+    await extension.updateColorScheme(root, renderContext({ colorScheme: 'dark' }));
+
+    assert.equal(state.theme, 'dark', 'redrawn with the dark theme');
+    assert.deepEqual(state.sources, ['graph TD; A-->B;', 'graph LR; C-->D;'], 'each diagram redrawn from its own source');
+    assert.strictEqual(root.querySelector('p'), paragraph, 'the rest of the preview is untouched');
+    assert.deepEqual([...root.querySelectorAll('.mdzip-mermaid')], diagrams, 'the same diagram containers');
+    for (const [i, diagram] of diagrams.entries()) {
+      assert.notStrictEqual(diagram.querySelector('svg'), svgsBefore[i], 'with a new SVG inside');
+      assert.equal(diagram.querySelector('script'), null, 'still sanitized');
+    }
+  } finally {
+    root.remove();
+  }
+});
+
+test('updateColorScheme does nothing when the theme is fixed', async () => {
+  const { api, state } = fakeMermaid();
+  const extension = mdzipMermaidExtension({ loadMermaid: async () => api, theme: 'forest' });
+  const html = await new MdzipRenderingService(defaultSafeMarkdownRenderer, [extension])
+    .renderMarkdown('```mermaid\ngraph TD; A-->B;\n```\n', renderContext());
+  const root = document.createElement('div');
+  root.innerHTML = html;
+  const calls = state.calls;
+  await extension.updateColorScheme(root, renderContext({ colorScheme: 'dark' }));
+  assert.equal(state.calls, calls, 'no redraw: a fixed theme does not follow the scheme');
 });

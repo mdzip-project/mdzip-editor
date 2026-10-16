@@ -479,20 +479,91 @@ test('reconciliation: a mid-lazy-load edit entirely within the unmounted tail ca
   }
 });
 
-test('reconciliation: a colorScheme change still fully remounts, not reconciles', async () => {
+test('a color scheme change keeps the rendered preview: no re-render, nothing moves', async () => {
   const { view, dispose } = await createOpenView({ progressiveTextRendering: false, initialColorScheme: 'light' }, manyParagraphMarkdown(150));
   try {
     await waitFor(() => assert.equal(view.elPreviewContent.querySelectorAll('p').length, 150));
+    const chunksBefore = [...view.elPreviewContent.querySelectorAll('.mdzip-chunk')];
+    const firstParagraph = view.elPreviewContent.querySelector('p');
+
+    view.setColorScheme('dark');
+    await flushMicrotasks();
+
+    assert.deepEqual([...view.elPreviewContent.querySelectorAll('.mdzip-chunk')], chunksBefore, 'same chunk elements');
+    assert.strictEqual(view.elPreviewContent.querySelector('p'), firstParagraph, 'same paragraph element');
+    assert.ok(view.elRoot.classList.contains('mdzip-theme-dark'), 'CSS does the re-coloring');
+  } finally {
+    dispose();
+  }
+});
+
+test('a color scheme change calls updateColorScheme on extensions instead of re-rendering', async () => {
+  const calls = [];
+  const extension = {
+    name: 'scheme-aware',
+    transformHtml: (html, context) => html.replace(/<p>/g, `<p class="scheme-${context.colorScheme}">`),
+    updateColorScheme: (root, context) => {
+      calls.push(context.colorScheme);
+      for (const p of root.querySelectorAll('p')) {
+        p.className = `scheme-${context.colorScheme}`;
+      }
+    }
+  };
+  const { view, dispose } = await createOpenView(
+    { progressiveTextRendering: false, markdownExtensions: [extension] }, manyParagraphMarkdown(20));
+  try {
+    await waitFor(() => assert.equal(view.elPreviewContent.querySelectorAll('p.scheme-light').length, 20));
+    const firstParagraph = view.elPreviewContent.querySelector('p');
+
+    view.setColorScheme('dark');
+    await flushMicrotasks();
+
+    assert.deepEqual(calls, ['dark']);
+    assert.strictEqual(view.elPreviewContent.querySelector('p'), firstParagraph, 'kept');
+    assert.equal(view.elPreviewContent.querySelectorAll('p.scheme-dark').length, 20, 'the extension re-themed its output');
+  } finally {
+    dispose();
+  }
+});
+
+test('an extension without updateColorScheme still gets a full re-render on a scheme change', async () => {
+  const extension = { name: 'legacy', transformHtml: (html, context) => html.replace(/<p>/g, `<p class="scheme-${context.colorScheme}">`) };
+  const { view, dispose } = await createOpenView(
+    { progressiveTextRendering: false, markdownExtensions: [extension] }, manyParagraphMarkdown(20));
+  try {
+    await waitFor(() => assert.equal(view.elPreviewContent.querySelectorAll('p.scheme-light').length, 20));
     const firstChunkBefore = view.elPreviewContent.querySelector('.mdzip-chunk');
 
     view.setColorScheme('dark');
+    await waitFor(() => assert.equal(view.elPreviewContent.querySelectorAll('p.scheme-dark').length, 20));
+
+    assert.notStrictEqual(view.elPreviewContent.querySelector('.mdzip-chunk'), firstChunkBefore, 'rebuilt, as before');
+  } finally {
+    dispose();
+  }
+});
+
+test('chunks mounted after a scheme change render with the new scheme', async () => {
+  const extension = {
+    name: 'scheme-aware',
+    transformHtml: (html, context) => html.replace(/<p>/g, `<p class="scheme-${context.colorScheme}">`),
+    updateColorScheme: (root, context) => {
+      for (const p of root.querySelectorAll('p')) p.className = `scheme-${context.colorScheme}`;
+    }
+  };
+  const { view, dispose } = await createOpenView({ markdownExtensions: [extension] }, manyParagraphMarkdown(150));
+  try {
+    await waitFor(() => assert.ok(view.elPreviewContent.querySelector('.mdzip-chunk-sentinel'), 'some chunks still deferred'));
+    const mountedBefore = view.elPreviewContent.querySelectorAll('p').length;
+    assert.ok(mountedBefore < 150);
+
+    view.setColorScheme('dark');
+    await flushMicrotasks();
+    await mountAllChunks(view);
     await waitFor(() => assert.equal(view.elPreviewContent.querySelectorAll('p').length, 150));
 
-    assert.notStrictEqual(
-      view.elPreviewContent.querySelector('.mdzip-chunk'),
-      firstChunkBefore,
-      'a colorScheme change is not a same-document text edit — everything is torn down and rebuilt, same as before this fix'
-    );
+    assert.equal(view.elPreviewContent.querySelectorAll('p.scheme-light').length, 0, 'no chunk kept or got the old scheme');
+    assert.equal(view.elPreviewContent.querySelectorAll('p.scheme-dark').length, 150);
   } finally {
     dispose();
   }

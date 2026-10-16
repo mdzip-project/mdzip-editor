@@ -32,7 +32,7 @@ export const MDZIP_RUNTIME_LIBRARIES = [
   },
   {
     "name": "DOMPurify",
-    "version": "3.4.8",
+    "version": "3.4.17",
     "repositoryUrl": "https://github.com/cure53/DOMPurify",
     "description": "HTML sanitization."
   },

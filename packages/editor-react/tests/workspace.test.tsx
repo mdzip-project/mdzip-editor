@@ -11,6 +11,7 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setRenderingOptions = vi.fn();
     public readonly setControls = vi.fn();
     public readonly setDensityOptions = vi.fn();
+    public readonly setPreviewMaxWidth = vi.fn();
     public readonly setImageHydrationAnimation = vi.fn();
     public readonly setImageInsertOptions = vi.fn();
     public readonly setImageEditOptions = vi.fn();

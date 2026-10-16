@@ -203,7 +203,7 @@ test('right-click over the rendered preview offers Copy All', async () => {
     assert.equal(menu.hidden, false, 'menu is shown');
     assert.deepEqual(
       [...menu.querySelectorAll('[data-menu-action]')].map((el) => el.dataset.menuAction),
-      ['preview-copy-all', 'preview-copy-all-images', 'preview-copy-html', 'preview-copy-markdown']
+      ['preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html']
     );
   } finally {
     cleanup();
@@ -284,7 +284,7 @@ test('right-click over an existing preview selection offers Copy ahead of Copy A
 
     assert.deepEqual(
       [...menu.querySelectorAll('[data-menu-action]')].map((el) => el.dataset.menuAction),
-      ['preview-copy', 'preview-copy-all', 'preview-copy-all-images', 'preview-copy-html', 'preview-copy-markdown']
+      ['preview-copy', 'preview-copy-selection-html', 'preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html']
     );
   } finally {
     cleanup();

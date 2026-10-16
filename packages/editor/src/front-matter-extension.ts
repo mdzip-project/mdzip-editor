@@ -147,6 +147,8 @@ export function mdzipFrontMatterExtension(options: MdzipFrontMatterOptions = {})
       }
       const panel = renderPanel(options, parsed);
       return panel ? panel + html : html;
-    }
+    },
+    // The panel is colored by CSS, so a scheme change needs no re-render.
+    updateColorScheme() {}
   };
 }

@@ -208,6 +208,19 @@ export interface MdzipMarkdownRenderExtension {
   ): void | MdzipRenderHandle | Promise<void | MdzipRenderHandle>;
 
   /**
+   * Re-themes this extension's output in the live preview after a color
+   * scheme change (`context.colorScheme` is the new scheme), so the view can
+   * keep the rendered preview instead of rebuilding it. Text, code, tables and
+   * images re-color through CSS on their own; only output with the scheme
+   * baked in (a diagram's SVG colors, say) needs work here. Extensions whose
+   * output doesn't depend on the scheme implement it as a no-op.
+   *
+   * While any registered extension that transforms or mounts content lacks
+   * this hook, a scheme change re-renders the whole preview, as before.
+   */
+  updateColorScheme?(root: HTMLElement, context: MdzipMarkdownRenderContext): void | Promise<void>;
+
+  /**
    * Marks a top-level block token as expensive enough to isolate into its own
    * chunk for {@link groupTokensIntoChunks}, regardless of the char/token
    * budget — e.g. a mermaid extension claiming its own ` ```mermaid ` fence.

@@ -7,6 +7,9 @@ import type {
   MdzipControlPreset,
   MdzipContentDensity,
   MdzipColorScheme,
+  MdzipColorSchemePreference,
+  MdzipPreviewMaxWidth,
+  MdzipPreviewWidthChoice,
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipDocumentChangeEvent,
@@ -148,7 +151,9 @@ export interface MdzipWorkspaceProps {
   imageInsertHandler?: MdzipImageInsertHandler;
   imageEditHandler?: MdzipImageEditHandler;
   initialLayout?: MdzipWorkspaceLayout;
-  initialColorScheme?: MdzipColorScheme;
+  initialColorScheme?: MdzipColorSchemePreference;
+  /** Preview reading-column width; the user can change it from the toolbar's page-width menu. */
+  previewMaxWidth?: MdzipPreviewMaxWidth;
   /**
    * Mounts the preview in chunks near the viewport instead of rendering the
    * whole document synchronously up front. Recommended for hosts that may
@@ -169,6 +174,10 @@ export interface MdzipWorkspaceProps {
   onDirtyChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onValidationChanged?: (snapshot: MdzipWorkspaceSnapshot) => void;
   onColorSchemeChanged?: (colorScheme: MdzipColorScheme) => void;
+  /** The user's Light / Dark / System choice from the toolbar menu. */
+  onColorSchemePreferenceChanged?: (preference: MdzipColorSchemePreference) => void;
+  /** The user's choice from the toolbar's page-width menu. */
+  onPreviewWidthChanged?: (width: MdzipPreviewWidthChoice) => void;
   /** Fires when the preview HTML for the current selection is mounted. */
   onPreviewRendered?: (snapshot: MdzipWorkspaceSnapshot) => void;
   /** Fires once the mounted preview's images have finished loading. */
@@ -280,6 +289,7 @@ function MdzipWorkspace({
   imageEditHandler,
   initialLayout,
   initialColorScheme,
+  previewMaxWidth,
   progressiveTextRendering,
   navigationMode,
   navigationButtonActive,
@@ -294,6 +304,8 @@ function MdzipWorkspace({
   onDirtyChanged,
   onValidationChanged,
   onColorSchemeChanged,
+  onColorSchemePreferenceChanged,
+  onPreviewWidthChanged,
   onPreviewRendered,
   onAssetsHydrated,
   onLinkActivated,
@@ -331,6 +343,8 @@ function MdzipWorkspace({
     onDirtyChanged,
     onValidationChanged,
     onColorSchemeChanged,
+    onColorSchemePreferenceChanged,
+    onPreviewWidthChanged,
     onPreviewRendered,
     onAssetsHydrated,
     onLinkActivated,
@@ -352,6 +366,8 @@ function MdzipWorkspace({
     onDirtyChanged,
     onValidationChanged,
     onColorSchemeChanged,
+    onColorSchemePreferenceChanged,
+    onPreviewWidthChanged,
     onPreviewRendered,
     onAssetsHydrated,
     onLinkActivated,
@@ -368,8 +384,12 @@ function MdzipWorkspace({
   const contentRef = useRef({ bytes, workspace, mode, sourceFormat, fileName });
   contentRef.current = { bytes, workspace, mode, sourceFormat, fileName };
 
-  const controlsRef = useRef({ controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode });
-  controlsRef.current = { controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode };
+  const controlsRef = useRef({
+    controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode, previewMaxWidth
+  });
+  controlsRef.current = {
+    controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode, previewMaxWidth
+  };
 
   // Latest rendering props, read at view-create and apply time so prop
   // identity changes alone never rebuild the workspace view.
@@ -434,6 +454,7 @@ function MdzipWorkspace({
       imageInsertMode: controlsRef.current.imageInsertMode,
       initialLayout,
       initialColorScheme,
+      previewMaxWidth: controlsRef.current.previewMaxWidth,
       progressiveTextRendering,
       navigationMode,
       navigationButtonActive,
@@ -448,6 +469,9 @@ function MdzipWorkspace({
       onDirtyChanged: (snapshot) => callbacksRef.current.onDirtyChanged?.(snapshot),
       onValidationChanged: (snapshot) => callbacksRef.current.onValidationChanged?.(snapshot),
       onColorSchemeChanged: (colorScheme) => callbacksRef.current.onColorSchemeChanged?.(colorScheme),
+      onColorSchemePreferenceChanged: (preference) =>
+        callbacksRef.current.onColorSchemePreferenceChanged?.(preference),
+      onPreviewWidthChanged: (width) => callbacksRef.current.onPreviewWidthChanged?.(width),
       onPreviewRendered: (snapshot) => callbacksRef.current.onPreviewRendered?.(snapshot),
       onAssetsHydrated: (snapshot) => callbacksRef.current.onAssetsHydrated?.(snapshot),
       onLinkActivated: (event) => callbacksRef.current.onLinkActivated?.(event),
@@ -513,6 +537,10 @@ function MdzipWorkspace({
   useEffect(() => {
     viewRef.current?.setDensityOptions({ toolbarDensity, contentDensity });
   }, [toolbarDensity, contentDensity]);
+
+  useEffect(() => {
+    viewRef.current?.setPreviewMaxWidth(previewMaxWidth);
+  }, [previewMaxWidth]);
 
   useEffect(() => {
     viewRef.current?.setImageHydrationAnimation(imageHydrationAnimation);

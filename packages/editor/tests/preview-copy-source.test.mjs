@@ -175,3 +175,96 @@ test('Copy HTML on a large progressive document copies all of it', async () => {
     cleanup();
   }
 });
+
+function selectBetween(root, startText, endText) {
+  const find = (text) => {
+    const walker = document.createTreeWalker(root, window.NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const index = node.textContent.indexOf(text);
+      if (index !== -1) return { node, index };
+    }
+    throw new Error(`text not found in preview: ${text}`);
+  };
+  const start = find(startText);
+  const end = find(endText);
+  const range = document.createRange();
+  range.setStart(start.node, start.index);
+  range.setEnd(end.node, end.index + endText.length);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+test('Markdown and HTML for the whole document are under a Copy All as submenu', async () => {
+  const { previewPane, menu, cleanup } = await mountView({ bytes: new TextEncoder().encode('# Notes\n\nText.\n') });
+  try {
+    openContextMenu(previewPane);
+    const parent = [...menu.querySelectorAll('.nav-menu-parent')].find((el) => el.textContent.includes('Copy All as'));
+    assert.ok(parent, 'Copy All as submenu');
+    const submenu = parent.parentElement.querySelector('.nav-context-submenu');
+    assert.deepEqual([...submenu.querySelectorAll('[data-menu-action]')].map((el) => el.textContent.trim()), ['Markdown', 'HTML']);
+    assert.equal(menu.querySelector('[data-menu-action="preview-copy-selection-html"]'), null, 'no selection: no Copy as HTML');
+  } finally {
+    cleanup();
+  }
+});
+
+test('Copy as HTML copies the selection inside its enclosing elements', async () => {
+  const bytes = new TextEncoder().encode('# Notes\n\n- first item\n- second **bold** item\n\nAfter.\n');
+  const { view, previewPane, menu, cleanup } = await mountView({ bytes });
+  const clipboard = stubClipboard();
+  try {
+    const previewContent = previewPane.querySelector('[data-ref="preview-content"]');
+    selectBetween(previewContent, 'second', 'bold');
+    openContextMenu(previewPane);
+    clickMenuAction(menu, 'preview-copy-selection-html');
+    await waitFor(() => assert.equal(clipboard.written.length, 1));
+    assert.equal(clipboard.written[0], '<ul><li>second <strong>bold</strong></li></ul>', 'part of a list item keeps its list');
+    await waitFor(() => assert.equal(view.elCopyToast.textContent, 'HTML copied to clipboard as text'));
+  } finally {
+    clipboard.restore();
+    cleanup();
+  }
+});
+
+test('Copy as HTML leaves out the code block header and preview wrappers', async () => {
+  const bytes = new TextEncoder().encode('# Notes\n\nBefore the code.\n\n```js\nconst answer = 42;\n```\n');
+  const { previewPane, menu, cleanup } = await mountView({ bytes });
+  const clipboard = stubClipboard();
+  try {
+    const previewContent = previewPane.querySelector('[data-ref="preview-content"]');
+    await waitFor(() => assert.ok(previewContent.querySelector('.mdzip-code-block-header'), 'code block chrome is mounted'));
+    selectBetween(previewContent, 'Before', '42');
+    openContextMenu(previewPane);
+    clickMenuAction(menu, 'preview-copy-selection-html');
+    await waitFor(() => assert.equal(clipboard.written.length, 1));
+    const html = clipboard.written[0];
+    assert.match(html, /^<p>Before the code\.<\/p>/);
+    assert.match(html, /<pre><code class="[^"]*language-js[^"]*">[\s\S]*42[\s\S]*<\/code><\/pre>$/);
+    assert.doesNotMatch(html, /mdzip-code-block|mdzip-chunk|<button/, 'no editor chrome');
+  } finally {
+    clipboard.restore();
+    cleanup();
+  }
+});
+
+test('a selection of only an image offers Copy as HTML but not Copy', async () => {
+  const bytes = new TextEncoder().encode('# Notes\n\n![Logo](images/logo.png)\n');
+  const { previewPane, menu, cleanup } = await mountView({ bytes });
+  const clipboard = stubClipboard();
+  try {
+    const image = previewPane.querySelector('[data-ref="preview-content"] img');
+    const range = document.createRange();
+    range.selectNode(image);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    openContextMenu(previewPane);
+    assert.equal(menu.querySelector('[data-menu-action="preview-copy"]'), null, 'no text to copy');
+    clickMenuAction(menu, 'preview-copy-selection-html');
+    await waitFor(() => assert.equal(clipboard.written.length, 1));
+    assert.match(clipboard.written[0], /^<p><img[^>]+src="images\/logo\.png"[^>]*><\/p>$/);
+  } finally {
+    clipboard.restore();
+    cleanup();
+  }
+});

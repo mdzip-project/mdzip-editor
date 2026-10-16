@@ -41,8 +41,9 @@ export interface MdzipMermaidOptions {
    * `config: layout:` or an `%%{init}%%` directive) always wins; other diagram
    * types are unaffected. Off by default.
    *
-   * Mermaid 11 doesn't include ELK: pass {@link loadLayouts} too. Mermaid 12
-   * bundles it.
+   * Only needed on Mermaid 11. Mermaid 12 bundles ELK and already uses it by
+   * default for ER, flowchart, state, class, requirement and use-case diagrams.
+   * On Mermaid 11, pass {@link loadLayouts} too.
    */
   defaultLayouts?: MdzipMermaidDefaultLayouts;
   /**
@@ -117,6 +118,13 @@ const MERMAID_SANITIZE = {
   unforbidAttr: ['style']
 } as const;
 
+// Rendered diagrams carry a class marker naming their source in a side map,
+// so updateColorScheme can redraw them in place: the sanitizer strips data
+// attributes, but keeps classes.
+const MERMAID_SOURCE_CLASS_PREFIX = 'mdzip-mermaid-src-';
+// Oldest entries are dropped past this many, so a long session's map stays small.
+const MAX_REMEMBERED_SOURCES = 1000;
+
 function mermaidErrorMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
   return `Mermaid diagram error: ${detail}`;
@@ -189,6 +197,59 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
   }
 
   let layoutLoadFailed = false;
+  const sources = new Map<string, string>();
+  let sourceCounter = 0;
+
+  /** Remembers a diagram's source and returns the class marker that names it. */
+  function rememberSource(source: string): string {
+    const marker = `${MERMAID_SOURCE_CLASS_PREFIX}${(sourceCounter += 1)}`;
+    sources.set(marker, source);
+    if (sources.size > MAX_REMEMBERED_SOURCES) {
+      sources.delete(sources.keys().next().value as string);
+    }
+    return marker;
+  }
+
+  /**
+   * Renders one diagram to sanitized SVG with the context's color scheme, or
+   * null when the context was aborted first. Throws on an invalid diagram.
+   */
+  async function renderDiagram(
+    mermaid: MdzipMermaidApi,
+    doc: Document,
+    source: string,
+    context: MdzipMarkdownRenderContext
+  ): Promise<string | null> {
+    let layout = defaultLayoutFor(source);
+    if (layout && !(await ensureLayoutsRegistered(mermaid))) {
+      layout = undefined;
+    }
+    // Queued behind any other in-flight render; a render whose preview
+    // generation was superseded while waiting is skipped, not run.
+    const rendered = await runMermaidSerially(async () => {
+      if (context.signal.aborted) {
+        return null;
+      }
+      mermaid.initialize({
+        // Per render: a diagram-type default (defaultLayouts), never a diagram's own choice.
+        ...(layout ? { layout } : {}),
+        startOnLoad: false,
+        securityLevel: 'strict',
+        // Render labels as SVG <text> rather than HTML inside <foreignObject>.
+        // The bundled sanitizer keeps the SVG but strips foreignObject HTML, so
+        // html labels would otherwise vanish — this keeps the emitted SVG
+        // self-consistent with the policy without re-allowing HTML in labels.
+        htmlLabels: false,
+        flowchart: { htmlLabels: false },
+        theme: resolveTheme(options.theme ?? 'auto', context.colorScheme),
+        // Stops mermaid from injecting its own error diagram into the DOM on
+        // failure; this extension renders its own error block instead.
+        suppressErrorRendering: true
+      });
+      return withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
+    });
+    return rendered ? sanitizeMdzipHtml(rendered.svg, [MERMAID_SANITIZE]) : null;
+  }
 
   /** Registers `loadLayouts` once; false if it failed, so the diagram keeps mermaid's own layout. */
   async function ensureLayoutsRegistered(mermaid: MdzipMermaidApi): Promise<boolean> {
@@ -228,22 +289,6 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
     if (context.signal.aborted) {
       return template.innerHTML;
     }
-    const configure = (layout?: string): void => mermaid.initialize({
-      // Per render: a diagram-type default (defaultLayouts), never a diagram's own choice.
-      ...(layout ? { layout } : {}),
-      startOnLoad: false,
-      securityLevel: 'strict',
-      // Render labels as SVG <text> rather than HTML inside <foreignObject>.
-      // The bundled sanitizer keeps the SVG but strips foreignObject HTML, so
-      // html labels would otherwise vanish — this keeps the emitted SVG
-      // self-consistent with the policy without re-allowing HTML in labels.
-      htmlLabels: false,
-      flowchart: { htmlLabels: false },
-      theme: resolveTheme(options.theme ?? 'auto', context.colorScheme),
-      // Stops mermaid from injecting its own error diagram into the DOM on
-      // failure; this extension renders its own error block instead.
-      suppressErrorRendering: true
-    });
 
     for (const code of blocks) {
       const pre = code.parentElement;
@@ -253,25 +298,12 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
       const source = code.textContent ?? '';
       const container = doc.createElement('div');
       try {
-        // Queued behind any other in-flight render; a render whose preview
-        // generation was superseded while waiting is skipped, not run.
-        let layout = defaultLayoutFor(source);
-        if (layout && !(await ensureLayoutsRegistered(mermaid))) {
-          layout = undefined;
-        }
-        const rendered = await runMermaidSerially(async () => {
-          if (context.signal.aborted) {
-            return null;
-          }
-          configure(layout);
-          return withBodyCleanup(doc, () => mermaid.render(`mdzip-mermaid-${(counter += 1)}`, source));
-        });
-        if (!rendered) {
+        const svg = await renderDiagram(mermaid, doc, source, context);
+        if (svg === null) {
           return template.innerHTML;
         }
-        const { svg } = rendered;
-        container.className = 'mdzip-mermaid';
-        container.innerHTML = sanitizeMdzipHtml(svg, [MERMAID_SANITIZE]);
+        container.className = `mdzip-mermaid ${rememberSource(source)}`;
+        container.innerHTML = svg;
       } catch (error) {
         container.className = 'mdzip-mermaid-error';
         container.textContent = mermaidErrorMessage(error);
@@ -302,6 +334,32 @@ export function mdzipMermaidExtension(options: MdzipMermaidOptions = {}): MdzipM
         return html;
       }
       return renderMermaidBlocks(template, blocks, context);
+    },
+    // Redraws only the diagrams, in place, so a light/dark switch doesn't
+    // re-render the preview. A fixed theme doesn't follow the scheme at all.
+    async updateColorScheme(root, context) {
+      if ((options.theme ?? 'auto') !== 'auto') {
+        return;
+      }
+      const diagrams = Array.from(root.querySelectorAll<HTMLElement>('.mdzip-mermaid'));
+      if (diagrams.length === 0) {
+        return;
+      }
+      const mermaid = await load();
+      for (const diagram of diagrams) {
+        const marker = Array.from(diagram.classList).find((name) => name.startsWith(MERMAID_SOURCE_CLASS_PREFIX));
+        const source = marker ? sources.get(marker) : undefined;
+        if (source === undefined) {
+          continue;
+        }
+        const svg = await renderDiagram(mermaid, root.ownerDocument, source, context);
+        if (svg === null) {
+          return;
+        }
+        if (diagram.isConnected) {
+          diagram.innerHTML = svg;
+        }
+      }
     }
   };
 }

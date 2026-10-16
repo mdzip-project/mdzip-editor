@@ -1,5 +1,5 @@
-Status: ready-to-commit
-Last: Branch feat/core-js-2: v2.0.1 on @mdzip/core-js 2.0.1 (spec 1.2.0, case-sensitive paths); npm run verify passes (325 tests)
+Status: awaiting-test
+Last:   Branch feat/theme-menu (stacked on uncommitted feat/mermaid-12): theme dropdown with System; scheme switch keeps the preview; new page-width dropdown (Narrow/Default/Wide with live px, Full Width); evenly spaced toolbar buttons; width menu hidden without a preview; preview menu Copy as HTML (selection) + Copy All as > Markdown/HTML; verify passes (366 tests) — not committed
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 

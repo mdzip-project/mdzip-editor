@@ -23,6 +23,9 @@ import type {
   MdzipControlPreset,
   MdzipContentDensity,
   MdzipColorScheme,
+  MdzipColorSchemePreference,
+  MdzipPreviewMaxWidth,
+  MdzipPreviewWidthChoice,
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipEditorSnapshot,
@@ -155,7 +158,9 @@ export const MdzipWorkspace = defineComponent({
     imageInsertHandler: Function as PropType<MdzipImageInsertHandler>,
     imageEditHandler: Function as PropType<MdzipImageEditHandler>,
     initialLayout: String as PropType<MdzipWorkspaceLayout>,
-    initialColorScheme: String as PropType<MdzipColorScheme>,
+    initialColorScheme: String as PropType<MdzipColorSchemePreference>,
+    /** Preview reading-column width; the user can change it from the toolbar's page-width menu. */
+    previewMaxWidth: [Number, String] as PropType<MdzipPreviewMaxWidth>,
     /**
      * Mounts the preview in chunks near the viewport instead of rendering the
      * whole document synchronously up front. Recommended for hosts that may
@@ -245,6 +250,8 @@ export const MdzipWorkspace = defineComponent({
     'dirtyChanged',
     'validationChanged',
     'colorSchemeChanged',
+    'colorSchemePreferenceChanged',
+    'previewWidthChanged',
     'previewRendered',
     'assetsHydrated',
     /**
@@ -355,6 +362,7 @@ export const MdzipWorkspace = defineComponent({
         imageInsertMode: props.imageInsertMode,
         initialLayout: props.initialLayout,
         initialColorScheme: props.initialColorScheme,
+        previewMaxWidth: props.previewMaxWidth,
         progressiveTextRendering: props.progressiveTextRendering,
         navigationMode: props.navigationMode,
         navigationButtonActive: props.navigationButtonActive,
@@ -369,6 +377,9 @@ export const MdzipWorkspace = defineComponent({
         onDirtyChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('dirtyChanged', snapshot),
         onValidationChanged: (snapshot: MdzipWorkspaceSnapshot) => emit('validationChanged', snapshot),
         onColorSchemeChanged: (colorScheme: MdzipColorScheme) => emit('colorSchemeChanged', colorScheme),
+        onColorSchemePreferenceChanged: (preference: MdzipColorSchemePreference) =>
+          emit('colorSchemePreferenceChanged', preference),
+        onPreviewWidthChanged: (width: MdzipPreviewWidthChoice) => emit('previewWidthChanged', width),
         onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => emit('previewRendered', snapshot),
         onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => emit('assetsHydrated', snapshot),
         onLinkActivated: (event: MdzipLinkActivatedEvent) => emit('linkActivated', event),
@@ -445,6 +456,10 @@ export const MdzipWorkspace = defineComponent({
 
     watch([() => props.toolbarDensity, () => props.contentDensity], ([toolbarDensity, contentDensity]) => {
       view?.setDensityOptions({ toolbarDensity, contentDensity });
+    });
+
+    watch(() => props.previewMaxWidth, (width) => {
+      view?.setPreviewMaxWidth(width);
     });
 
     watch(() => props.imageHydrationAnimation, (animation) => {

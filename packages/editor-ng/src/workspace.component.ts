@@ -22,6 +22,9 @@ import type {
   MdzipControlPreset,
   MdzipContentDensity,
   MdzipColorScheme,
+  MdzipColorSchemePreference,
+  MdzipPreviewMaxWidth,
+  MdzipPreviewWidthChoice,
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipEditorCommand,
@@ -109,7 +112,9 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() imageInsertHandler?: MdzipImageInsertHandler;
   @Input() imageEditHandler?: MdzipImageEditHandler;
   @Input() initialLayout?: MdzipWorkspaceLayout;
-  @Input() initialColorScheme?: MdzipColorScheme;
+  @Input() initialColorScheme?: MdzipColorSchemePreference;
+  /** Preview reading-column width; the user can change it from the toolbar's page-width menu. */
+  @Input() previewMaxWidth?: MdzipPreviewMaxWidth;
   /**
    * Mounts the preview in chunks near the viewport instead of rendering the
    * whole document synchronously up front. Recommended for hosts that may
@@ -171,6 +176,10 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Output() readonly dirtyChanged = new EventEmitter<MdzipWorkspaceSnapshot>();
   @Output() readonly validationChanged = new EventEmitter<MdzipWorkspaceSnapshot>();
   @Output() readonly colorSchemeChanged = new EventEmitter<MdzipColorScheme>();
+  /** Emits the user's Light / Dark / System choice from the toolbar menu. */
+  @Output() readonly colorSchemePreferenceChanged = new EventEmitter<MdzipColorSchemePreference>();
+  /** Emits the user's choice from the toolbar's page-width menu. */
+  @Output() readonly previewWidthChanged = new EventEmitter<MdzipPreviewWidthChoice>();
   /** Emits when the preview HTML for the current selection is mounted. */
   @Output() readonly previewRendered = new EventEmitter<MdzipWorkspaceSnapshot>();
   /** Emits once the mounted preview's images have finished loading. */
@@ -221,6 +230,9 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
         toolbarDensity: this.toolbarDensity,
         contentDensity: this.contentDensity,
       });
+    }
+    if (this.view && changes['previewMaxWidth']) {
+      this.view.setPreviewMaxWidth(this.previewMaxWidth);
     }
     if (this.view && changes['imageHydrationAnimation']) {
       this.view.setImageHydrationAnimation(this.imageHydrationAnimation);
@@ -275,7 +287,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     this.view?.focus();
   }
 
-  setColorScheme(scheme: MdzipColorScheme): void {
+  setColorScheme(scheme: MdzipColorSchemePreference): void {
     this.view?.setColorScheme(scheme);
   }
 
@@ -389,6 +401,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       imageInsertMode: this.imageInsertMode,
       initialLayout: this.initialLayout,
       initialColorScheme: this.initialColorScheme,
+      previewMaxWidth: this.previewMaxWidth,
       progressiveTextRendering: this.progressiveTextRendering,
       navigationMode: this.navigationMode,
       navigationButtonActive: this.navigationButtonActive,
@@ -403,6 +416,9 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onDirtyChanged: (snapshot: MdzipWorkspaceSnapshot) => this.dirtyChanged.emit(snapshot),
       onValidationChanged: (snapshot: MdzipWorkspaceSnapshot) => this.validationChanged.emit(snapshot),
       onColorSchemeChanged: (colorScheme: MdzipColorScheme) => this.colorSchemeChanged.emit(colorScheme),
+      onColorSchemePreferenceChanged: (preference: MdzipColorSchemePreference) =>
+        this.colorSchemePreferenceChanged.emit(preference),
+      onPreviewWidthChanged: (width: MdzipPreviewWidthChoice) => this.previewWidthChanged.emit(width),
       onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => this.previewRendered.emit(snapshot),
       onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => this.assetsHydrated.emit(snapshot),
       onLinkActivated: (event: MdzipLinkActivatedEvent) => this.linkActivated.emit(event),
