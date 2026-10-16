@@ -6188,8 +6188,9 @@ export class MdzipWorkspaceView {
 
   private showTooltipForElementNow(element: HTMLElement): void {
     const rect = element.getBoundingClientRect();
-    // A menu item's tip goes beside it, so it doesn't cover the items above.
-    const placement = element.closest('.nav-context-menu') ? 'side' : 'above';
+    // A menu item's tip goes beside it, so it doesn't cover the items above:
+    // context menus and the toolbar's dropdowns (color scheme, page width).
+    const placement = element.closest('.nav-context-menu, .theme-popover, .toolbar-popover') ? 'side' : 'above';
     this.showTooltip(element.dataset['tooltip'] ?? '', rect.left + rect.width / 2, rect.top, placement, rect);
   }
 
