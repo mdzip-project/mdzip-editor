@@ -5203,6 +5203,7 @@ export class MdzipWorkspaceView {
       }
       e.preventDefault();
       this.selectAllPreview();
+      this.keepPreviewSelectAll();
     });
 
     this.elNavBtn.addEventListener('click', () => {
@@ -7356,6 +7357,32 @@ export class MdzipWorkspaceView {
       start: range.startContainer, startOffset: range.startOffset,
       end: range.endContainer, endOffset: range.endOffset
     };
+  }
+
+  /**
+   * Some hosts run their own Select All after the key event, even when the
+   * editor handled it: a VS Code webview selects the whole page, source pane
+   * included. For a moment after Ctrl+A, a selection that reaches outside
+   * the preview is put back to the preview's own.
+   */
+  private keepPreviewSelectAll(): void {
+    const doc = this.elPreviewContent.ownerDocument;
+    const stop = (): void => doc.removeEventListener('selectionchange', onChange);
+    const onChange = (): void => {
+      const selection = doc.defaultView?.getSelection();
+      if (this.destroyed || !this.previewSelectAll || !selection || selection.rangeCount === 0) {
+        stop();
+        return;
+      }
+      const range = selection.getRangeAt(0);
+      if (range.intersectsNode(this.elPreviewContent) && !this.elPreviewContent.contains(range.commonAncestorContainer)
+        && range.commonAncestorContainer !== this.elPreviewContent) {
+        stop();
+        this.selectAllPreview();
+      }
+    };
+    doc.addEventListener('selectionchange', onChange);
+    setTimeout(stop, 500);
   }
 
   /**

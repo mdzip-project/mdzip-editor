@@ -1489,3 +1489,21 @@ test('the preview menu has Select All, which works like Ctrl+A', async () => {
     cleanup();
   }
 });
+
+test("after Ctrl+A, a host's own Select All (as in a VS Code webview) is put back to the preview", async () => {
+  const { previewPane, previewContent, cleanup } = await mountView();
+  try {
+    pressCtrlA(previewPane);
+    // The host then selects the whole page, as VS Code's webview Select All does.
+    const range = document.createRange();
+    range.selectNodeContents(document.body);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    document.dispatchEvent(new window.Event('selectionchange'));
+    const now = window.getSelection().getRangeAt(0);
+    assert.equal(now.startContainer, previewContent, 'the preview selection is back');
+    assert.equal(now.endOffset, previewContent.childNodes.length);
+  } finally {
+    cleanup();
+  }
+});
