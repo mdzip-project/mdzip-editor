@@ -913,7 +913,9 @@ export const WORKSPACE_CSS = `
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
   font-size: 12px;
   line-height: 1.35;
-  white-space: nowrap;
+  /* One line up to max-width, then wraps instead of being cut off. */
+  width: max-content;
+  white-space: normal;
   pointer-events: none;
 }
 

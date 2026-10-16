@@ -285,7 +285,8 @@ function renderContextMenuItem(item: MdzipNavMenuItem): string {
     ? `<span class="nav-menu-shortcut">${escapeHtml(item.shortcut)}</span>`
     : '';
   const disabledAttrs = item.disabled ? ' disabled aria-disabled="true"' : '';
-  return `<button type="button" role="menuitem" data-menu-action="${escapeHtml(item.action)}"${disabledAttrs}>${icon}${label}${shortcut}</button>`;
+  const tooltipAttr = item.tooltip ? ` data-tooltip="${escapeHtml(item.tooltip)}"` : '';
+  return `<button type="button" role="menuitem" data-menu-action="${escapeHtml(item.action)}"${disabledAttrs}${tooltipAttr}>${icon}${label}${shortcut}</button>`;
 }
 
 function renderContextMenuItems(items: Array<MdzipNavMenuItem | null>): string {
@@ -511,6 +512,8 @@ interface MdzipNavMenuItem {
   shortcut?: string;
   /** Renders as a non-interactive row — informational, no click action. */
   disabled?: boolean;
+  /** Hover/focus tip, shown with the editor's own tooltip (`data-tooltip`). */
+  tooltip?: string;
   /** When present, the item is a flyout parent rather than an action; null entries are separators. */
   submenu?: Array<MdzipNavMenuItem | null>;
 }
@@ -6097,10 +6100,23 @@ export class MdzipWorkspaceView {
 
   private showTooltipForElementNow(element: HTMLElement): void {
     const rect = element.getBoundingClientRect();
-    this.showTooltip(element.dataset['tooltip'] ?? '', rect.left + rect.width / 2, rect.top);
+    // A menu item's tip goes beside it, so it doesn't cover the items above.
+    const placement = element.closest('.nav-context-menu') ? 'side' : 'above';
+    this.showTooltip(element.dataset['tooltip'] ?? '', rect.left + rect.width / 2, rect.top, placement, rect);
   }
 
-  private showTooltip(text: string, anchorX: number, anchorY: number): void {
+  /**
+   * Shows the tooltip centered above (anchorX, anchorY), or, with `side`
+   * placement, beside `anchorRect` (to its right, or its left when there's no
+   * room), vertically centered on it.
+   */
+  private showTooltip(
+    text: string,
+    anchorX: number,
+    anchorY: number,
+    placement: 'above' | 'side' = 'above',
+    anchorRect?: DOMRect
+  ): void {
     if (!text) {
       this.hideTooltip();
       return;
@@ -6113,10 +6129,24 @@ export class MdzipWorkspaceView {
     const offset = 8;
     this.elTooltip.textContent = text;
     this.elTooltip.hidden = false;
+    // Measured at the origin, so its previous position doesn't make it wrap early.
+    this.elTooltip.style.left = '0px';
+    this.elTooltip.style.top = '0px';
 
     const rect = this.elTooltip.getBoundingClientRect();
-    const x = Math.max(viewportPadding, Math.min(anchorX - rect.width / 2, window.innerWidth - rect.width - viewportPadding));
-    const y = Math.max(viewportPadding, anchorY - rect.height - offset);
+    let x: number;
+    let y: number;
+    if (placement === 'side' && anchorRect) {
+      const right = anchorRect.right + offset;
+      x = right + rect.width <= window.innerWidth - viewportPadding
+        ? right
+        : Math.max(viewportPadding, anchorRect.left - offset - rect.width);
+      y = Math.max(viewportPadding, Math.min(anchorRect.top + (anchorRect.height - rect.height) / 2,
+        window.innerHeight - rect.height - viewportPadding));
+    } else {
+      x = Math.max(viewportPadding, Math.min(anchorX - rect.width / 2, window.innerWidth - rect.width - viewportPadding));
+      y = Math.max(viewportPadding, anchorY - rect.height - offset);
+    }
 
     this.tooltipState = { text, x, y };
     this.elTooltip.style.left = `${Math.round(x)}px`;
@@ -7009,10 +7039,21 @@ export class MdzipWorkspaceView {
     const markdown = this.workspace?.snapshot().currentPathType === 'markdown';
     // A selection of only an image has no text to Copy, but still has markup.
     if (state.text) {
-      items.push({ action: 'preview-copy', label: 'Copy', icon: MENU_COPY_ICON_HTML, shortcut: this.editorShortcut('C') });
+      items.push({
+        action: 'preview-copy',
+        label: 'Copy',
+        icon: MENU_COPY_ICON_HTML,
+        shortcut: this.editorShortcut('C'),
+        tooltip: 'The selected text, without formatting'
+      });
     }
     if (markdown && state.html) {
-      items.push({ action: 'preview-copy-selection-html', label: 'Copy as HTML', icon: MENU_COPY_ICON_HTML });
+      items.push({
+        action: 'preview-copy-selection-html',
+        label: 'Copy as HTML',
+        icon: MENU_COPY_ICON_HTML,
+        tooltip: "The selection's HTML markup, as text"
+      });
     }
     if (state.text || (markdown && state.html)) {
       items.push(null);
@@ -7021,13 +7062,22 @@ export class MdzipWorkspaceView {
     // and HTML are source copies (#56); the preview can't map a selection
     // back to exact Markdown (the source pane's own Copy does that).
     const copyAll: Array<MdzipNavMenuItem | null> = [
-      { action: 'preview-copy-all', label: 'Plain Text', shortcut: this.editorShortcut('A') },
-      { action: 'preview-copy-all-images', label: 'Formatted Text' }
+      {
+        action: 'preview-copy-all',
+        label: 'Plain Text',
+        shortcut: this.editorShortcut('A'),
+        tooltip: 'Text only, for Notepad or a code editor'
+      },
+      {
+        action: 'preview-copy-all-images',
+        label: 'Formatted Text',
+        tooltip: 'Headings, styles and images, for Word, Google Docs or email'
+      }
     ];
     if (markdown) {
       copyAll.push(
-        { action: 'preview-copy-markdown', label: 'Markdown' },
-        { action: 'preview-copy-html', label: 'HTML' }
+        { action: 'preview-copy-markdown', label: 'Markdown', tooltip: "The document's Markdown source" },
+        { action: 'preview-copy-html', label: 'HTML', tooltip: "The document's HTML markup, as text" }
       );
     }
     items.push({ action: 'preview-copy-all-menu', label: 'Copy All', icon: MENU_COPY_ICON_HTML, submenu: copyAll });

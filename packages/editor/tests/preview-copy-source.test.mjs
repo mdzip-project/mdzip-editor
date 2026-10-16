@@ -207,6 +207,16 @@ test('Copy All is a submenu naming each format: Plain Text, Formatted Text, Mark
       ['Plain Text', 'Formatted Text', 'Markdown', 'HTML']
     );
     assert.ok(submenu.querySelector('[data-menu-action="preview-copy-all"] .nav-menu-shortcut'), 'Plain Text keeps the Copy All shortcut');
+    assert.deepEqual(
+      [...submenu.querySelectorAll('[data-menu-action]')].map((el) => el.dataset.tooltip),
+      [
+        'Text only, for Notepad or a code editor',
+        'Headings, styles and images, for Word, Google Docs or email',
+        "The document's Markdown source",
+        "The document's HTML markup, as text"
+      ],
+      'each format has a hover tip'
+    );
     assert.equal(menu.querySelector('[data-menu-action="preview-copy-selection-html"]'), null, 'no selection: no Copy as HTML');
   } finally {
     cleanup();
