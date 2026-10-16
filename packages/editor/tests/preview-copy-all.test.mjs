@@ -513,12 +513,12 @@ test('cancelling the Copy All dialog aborts the drain without writing to the cli
 
 // --- Copy All with Images ---
 
-test('the context menu offers "Copy All with Images" alongside "Copy All"', async () => {
+test('the Copy All submenu offers Formatted Text (with images) alongside Plain Text', async () => {
   const { previewPane, menu, cleanup } = await mountView();
   try {
     openContextMenu(previewPane);
-    const labels = [...menu.querySelectorAll('[data-menu-action]')].map((el) => el.textContent);
-    assert.ok(labels.some((label) => label.includes('Copy All with Images')));
+    assert.match(menu.querySelector('[data-menu-action="preview-copy-all"]').textContent, /Plain Text/);
+    assert.match(menu.querySelector('[data-menu-action="preview-copy-all-images"]').textContent, /Formatted Text/);
   } finally {
     cleanup();
   }

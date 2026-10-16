@@ -195,14 +195,18 @@ function selectBetween(root, startText, endText) {
   selection.addRange(range);
 }
 
-test('Markdown and HTML for the whole document are under a Copy All as submenu', async () => {
+test('Copy All is a submenu naming each format: Plain Text, Formatted Text, Markdown, HTML', async () => {
   const { previewPane, menu, cleanup } = await mountView({ bytes: new TextEncoder().encode('# Notes\n\nText.\n') });
   try {
     openContextMenu(previewPane);
-    const parent = [...menu.querySelectorAll('.nav-menu-parent')].find((el) => el.textContent.includes('Copy All as'));
-    assert.ok(parent, 'Copy All as submenu');
+    const parent = [...menu.querySelectorAll('.nav-menu-parent')].find((el) => el.textContent.trim() === 'Copy All');
+    assert.ok(parent, 'Copy All submenu');
     const submenu = parent.parentElement.querySelector('.nav-context-submenu');
-    assert.deepEqual([...submenu.querySelectorAll('[data-menu-action]')].map((el) => el.textContent.trim()), ['Markdown', 'HTML']);
+    assert.deepEqual(
+      [...submenu.querySelectorAll('[data-menu-action]')].map((el) => el.querySelector('.nav-menu-label').textContent),
+      ['Plain Text', 'Formatted Text', 'Markdown', 'HTML']
+    );
+    assert.ok(submenu.querySelector('[data-menu-action="preview-copy-all"] .nav-menu-shortcut'), 'Plain Text keeps the Copy All shortcut');
     assert.equal(menu.querySelector('[data-menu-action="preview-copy-selection-html"]'), null, 'no selection: no Copy as HTML');
   } finally {
     cleanup();
@@ -263,6 +267,29 @@ test('a selection of only an image offers Copy as HTML but not Copy', async () =
     clickMenuAction(menu, 'preview-copy-selection-html');
     await waitFor(() => assert.equal(clipboard.written.length, 1));
     assert.match(clipboard.written[0], /^<p><img[^>]+src="images\/logo\.png"[^>]*><\/p>$/);
+  } finally {
+    clipboard.restore();
+    cleanup();
+  }
+});
+
+test('Copy All as Plain Text leaves out diagram stylesheets and editor chrome', async () => {
+  const bytes = new TextEncoder().encode('# Notes\n\nBefore.\n\n```js\nconst answer = 42;\n```\n\nAfter.\n');
+  const { previewPane, menu, cleanup } = await mountView({ bytes });
+  const clipboard = stubClipboard();
+  try {
+    const previewContent = previewPane.querySelector('[data-ref="preview-content"]');
+    await waitFor(() => assert.ok(previewContent.querySelector('.mdzip-code-block-header'), 'code block chrome is mounted'));
+    // Stands in for a drawn Mermaid diagram: an SVG carrying its own stylesheet.
+    previewContent.querySelector('p').insertAdjacentHTML('afterend',
+      '<div class="mdzip-mermaid"><svg><style>#d{font-family:sans-serif}</style><text>Label</text></svg></div>');
+    openContextMenu(previewPane);
+    clickMenuAction(menu, 'preview-copy-all');
+    await waitFor(() => assert.equal(clipboard.written.length, 1));
+    const text = clipboard.written[0];
+    assert.match(text, /Before\.[\s\S]*const answer = 42;[\s\S]*After\./);
+    assert.doesNotMatch(text, /font-family|Label/, 'no diagram stylesheet or drawn labels');
+    assert.doesNotMatch(text, /\bjs\b|Copy/, 'no code block header');
   } finally {
     clipboard.restore();
     cleanup();

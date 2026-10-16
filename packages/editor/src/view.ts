@@ -1499,6 +1499,29 @@ const PREVIEW_CHROME_REMOVE_SELECTOR = [
   '.mdzip-chunk-sentinel',
   '[data-mdzip-image-edit-affordance]'
 ].join(',');
+// Subtrees left out of a plain-text copy: the chrome above, plus markup whose
+// text isn't document text (a drawn diagram's SVG carries its stylesheet).
+const PLAIN_TEXT_SKIP_SELECTOR = `${PREVIEW_CHROME_REMOVE_SELECTOR},style,script,template,svg,button`;
+
+/**
+ * The text of rendered preview markup for a plain-text copy: the document's
+ * own text, without style or script contents, drawn diagrams or the editor's
+ * chrome. Walks the DOM (no clone), so it's cheap on a large live preview.
+ */
+function previewPlainText(root: Element): string {
+  const parts: string[] = [];
+  // NodeFilter: SHOW_ELEMENT | SHOW_TEXT; FILTER_ACCEPT 1, REJECT 2 (skips the subtree), SKIP 3.
+  const walker = root.ownerDocument.createTreeWalker(root, 0x1 | 0x4, {
+    acceptNode: (node) => node.nodeType === 1
+      ? ((node as Element).matches(PLAIN_TEXT_SKIP_SELECTOR) ? 2 : 3)
+      : 1
+  });
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    parts.push((node as Text).data);
+  }
+  return parts.join('');
+}
+
 const PREVIEW_CHROME_UNWRAP_SELECTOR = [
   '.mdzip-chunk',
   '.mdzip-code-block',
@@ -6994,32 +7017,20 @@ export class MdzipWorkspaceView {
     if (state.text || (markdown && state.html)) {
       items.push(null);
     }
-    items.push({
-      action: 'preview-copy-all',
-      label: 'Copy All',
-      icon: MENU_COPY_ICON_HTML,
-      shortcut: this.editorShortcut('A')
-    });
-    items.push({
-      action: 'preview-copy-all-images',
-      label: 'Copy All with Images',
-      icon: MENU_COPY_ICON_HTML
-    });
-    // Whole-document source copies (#56): the Markdown itself and its rendered
-    // markup. Markdown is whole-document only: the preview can't map a
-    // selection back to exact source characters (the source pane's own Copy
-    // does that).
+    // Copy All: the whole document, in the format each item names. Markdown
+    // and HTML are source copies (#56); the preview can't map a selection
+    // back to exact Markdown (the source pane's own Copy does that).
+    const copyAll: Array<MdzipNavMenuItem | null> = [
+      { action: 'preview-copy-all', label: 'Plain Text', shortcut: this.editorShortcut('A') },
+      { action: 'preview-copy-all-images', label: 'Formatted Text' }
+    ];
     if (markdown) {
-      items.push({
-        action: 'preview-copy-all-as',
-        label: 'Copy All as',
-        icon: MENU_COPY_ICON_HTML,
-        submenu: [
-          { action: 'preview-copy-markdown', label: 'Markdown' },
-          { action: 'preview-copy-html', label: 'HTML' }
-        ]
-      });
+      copyAll.push(
+        { action: 'preview-copy-markdown', label: 'Markdown' },
+        { action: 'preview-copy-html', label: 'HTML' }
+      );
     }
+    items.push({ action: 'preview-copy-all-menu', label: 'Copy All', icon: MENU_COPY_ICON_HTML, submenu: copyAll });
     return items;
   }
 
@@ -7289,7 +7300,7 @@ export class MdzipWorkspaceView {
   private async copyAllPreviewContent(): Promise<void> {
     const pending = this.chunkedRenderState;
     if (!pending || pending.cursor >= pending.records.length) {
-      const outcome = await this.copyPreviewSelection(this.elPreviewContent.textContent ?? '');
+      const outcome = await this.copyPreviewSelection(previewPlainText(this.elPreviewContent));
       this.finishCopyNotification(false, outcome);
       return;
     }
@@ -7339,10 +7350,10 @@ export class MdzipWorkspaceView {
       // activation by now, so the actual write waits for a fresh one
       // (the dialog's own Copy button) instead of firing automatically.
       // See copyReadyState's doc comment.
-      this.armCopyReady(() => this.copyPreviewSelection(this.elPreviewContent.textContent ?? ''));
+      this.armCopyReady(() => this.copyPreviewSelection(previewPlainText(this.elPreviewContent)));
       return;
     }
-    const outcome = await this.copyPreviewSelection(this.elPreviewContent.textContent ?? '');
+    const outcome = await this.copyPreviewSelection(previewPlainText(this.elPreviewContent));
     this.finishCopyNotification(false, outcome);
   }
 
@@ -7518,7 +7529,7 @@ export class MdzipWorkspaceView {
 
     const scratch = this.elPreviewContent.ownerDocument.createElement('div');
     scratch.innerHTML = finalHtml;
-    const plainText = scratch.textContent ?? '';
+    const plainText = previewPlainText(scratch);
     if (dialogShown) {
       // Same reasoning as copyAllPreviewContent: the prepare phase (often
       // the slower of the two here, once image embedding is involved) has
