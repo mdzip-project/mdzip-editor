@@ -2060,6 +2060,8 @@ export class MdzipWorkspaceView {
   private destroyed = false;
   /** Counts preview Ctrl+C copies, so a late image upgrade never overwrites a newer copy. */
   private previewCopyId = 0;
+  /** The preview Ctrl+A selection's boundaries; Ctrl+C copies the whole document while it's unchanged. */
+  private previewSelectAll: { start: Node; startOffset: number; end: Node; endOffset: number } | null = null;
   // After an anchor scroll, content above the target can still change height
   // (images loading or easing open, a diagram rendering) and push it out of
   // view. This holds the target at the pane's top edge until the user
@@ -5144,11 +5146,12 @@ export class MdzipWorkspaceView {
     });
 
     // Ctrl/Cmd+A normally selects the whole page, which in split layout grabs
-    // both panes' text at once. Scope it to a Copy All of the rendered
-    // content instead when focus is inside the preview pane (see the
-    // mousedown handler below for how it gets there); the source editor
-    // keeps its own defaultKeymap binding since CodeMirror's content root
-    // sits outside this element.
+    // both panes' text at once. With focus inside the preview pane (see the
+    // mousedown handler below for how it gets there) it selects just the
+    // rendered content; the source editor keeps its own defaultKeymap binding
+    // since CodeMirror's content root sits outside this element. The
+    // selection is remembered so the copy handler can copy the whole
+    // document, including chunks not mounted yet, while it's unchanged.
     doc.addEventListener('keydown', (e) => {
       if (e.key.toLowerCase() !== 'a' || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) {
         return;
@@ -5157,7 +5160,18 @@ export class MdzipWorkspaceView {
         return;
       }
       e.preventDefault();
-      void this.copyAllPreviewContent();
+      const selection = doc.defaultView?.getSelection();
+      if (!selection) {
+        return;
+      }
+      const range = doc.createRange();
+      range.selectNodeContents(this.elPreviewContent);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      this.previewSelectAll = {
+        start: range.startContainer, startOffset: range.startOffset,
+        end: range.endContainer, endOffset: range.endOffset
+      };
     });
 
     this.elNavBtn.addEventListener('click', () => {
@@ -5610,7 +5624,19 @@ export class MdzipWorkspaceView {
         || this.workspace?.snapshot().currentPathType !== 'markdown') {
         return;
       }
-      const { text, html } = this.previewSelectionContent(selection.getRangeAt(0));
+      const range = selection.getRangeAt(0);
+      const all = this.previewSelectAll;
+      if (all && range.startContainer === all.start && range.startOffset === all.startOffset
+        && range.endContainer === all.end && range.endOffset === all.endOffset) {
+        // Ctrl+A, Ctrl+C: the whole document as Formatted Text, like Copy All >
+        // Formatted Text, so chunks not mounted yet are copied too. Nothing
+        // goes on the clipboard synchronously: the mounted part alone would
+        // be a silently partial copy.
+        e.preventDefault();
+        void this.copyAllWithImagesPreviewContent();
+        return;
+      }
+      const { text, html } = this.previewSelectionContent(range);
       if (!html) {
         return;
       }
@@ -7092,13 +7118,13 @@ export class MdzipWorkspaceView {
     // and HTML are source copies (#56); the preview can't map a selection
     // back to exact Markdown (the source pane's own Copy does that).
     const copyAll: Array<MdzipNavMenuItem | null> = [
+      { action: 'preview-copy-all', label: 'Plain Text', tooltip: PLAIN_TEXT_TOOLTIP },
       {
-        action: 'preview-copy-all',
-        label: 'Plain Text',
-        shortcut: this.editorShortcut('A'),
-        tooltip: PLAIN_TEXT_TOOLTIP
-      },
-      { action: 'preview-copy-all-images', label: 'Formatted Text', tooltip: FORMATTED_TEXT_TOOLTIP }
+        action: 'preview-copy-all-images',
+        label: 'Formatted Text',
+        shortcut: `${this.editorShortcut('A')}, ${this.editorShortcut('C')}`,
+        tooltip: FORMATTED_TEXT_TOOLTIP
+      }
     ];
     if (markdown) {
       copyAll.push(

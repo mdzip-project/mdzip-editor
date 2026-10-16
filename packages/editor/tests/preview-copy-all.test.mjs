@@ -185,6 +185,15 @@ function stubClipboard(impl) {
   };
 }
 
+// What Ctrl+C dispatches: a copy event whose clipboardData records what's set.
+function pressCtrlC(target) {
+  const data = {};
+  const event = new window.Event('copy', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'clipboardData', { value: { setData: (type, value) => { data[type] = value; } } });
+  target.dispatchEvent(event);
+  return { event, data };
+}
+
 function pressCtrlA(target) {
   target.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
   document.dispatchEvent(new window.KeyboardEvent('keydown', {
@@ -231,16 +240,23 @@ test('Copy All writes the full rendered document to the clipboard, not a DOM sel
   }
 });
 
-test('Ctrl+A scoped to the preview pane copies the rendered content to the clipboard, not the editor', async () => {
-  const { view, previewPane, cleanup } = await mountView();
+test('Ctrl+A in the preview selects the rendered content; Ctrl+C then copies the whole document', async () => {
+  const { view, previewPane, previewContent, cleanup } = await mountView();
   const written = [];
   const restore = stubClipboard({ writeText: async (text) => { written.push(text); } });
   try {
     pressCtrlA(previewPane);
     assert.equal(document.activeElement, previewPane, 'clicking the preview focuses it');
+    const range = window.getSelection().getRangeAt(0);
+    assert.equal(range.startContainer, previewContent, 'Select All covers the rendered content');
+    assert.equal(range.endOffset, previewContent.childNodes.length);
     await flushMicrotasks();
+    assert.deepEqual(written, [], 'Ctrl+A alone copies nothing');
 
-    assert.equal(written.length, 1);
+    const { event } = pressCtrlC(previewContent);
+    assert.equal(event.defaultPrevented, true);
+    // jsdom has no ClipboardItem, so the Formatted Text copy falls back to plain text.
+    await waitFor(() => assert.equal(written.length, 1));
     assert.ok(written[0].includes('Notes'));
     assert.ok(written[0].includes('plain body text'));
     // The source editor's own selection must be untouched.
@@ -367,8 +383,8 @@ test('contextMenu.preview: false does not affect the editor menu or preview Ctrl
     document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
     pressCtrlA(previewPane);
-    await flushMicrotasks();
-    assert.ok(written[0]?.includes('Notes'), 'keyboard Copy All is untouched by the menu flag');
+    pressCtrlC(previewPane.querySelector('[data-ref="preview-content"]'));
+    await waitFor(() => assert.ok(written[0]?.includes('Notes'), 'keyboard copy is untouched by the menu flag'));
   } finally {
     restore();
     cleanup();
@@ -388,7 +404,7 @@ test('empty preview offers no context menu', async () => {
 // --- Progressive rendering: dialog debounce, drain, and cancel ---
 
 test('Copy All on a small progressively-rendered document copies instantly with no dialog', async () => {
-  const { view, previewPane, cleanup } = await mountView({ progressiveTextRendering: true });
+  const { view, previewPane, menu, cleanup } = await mountView({ progressiveTextRendering: true });
   const written = [];
   const restore = stubClipboard({ writeText: async (text) => { written.push(text); } });
   try {
@@ -403,7 +419,8 @@ test('Copy All on a small progressively-rendered document copies instantly with 
       'sanity: nothing left pending after the initial mount'
     );
 
-    pressCtrlA(previewPane);
+    openContextMenu(previewPane);
+    menu.querySelector('[data-menu-action="preview-copy-all"]').click();
     assert.equal(view.elCopyRenderDialog.hidden, true, 'dialog never shown for an instant copy');
     await flushMicrotasks();
 
@@ -1414,6 +1431,37 @@ test('Copy All with Images still succeeds correctly for a mermaid chunk the live
     assert.match(html, /id="mdzip-mermaid-\d+"/, 'a valid, independently-rendered mermaid svg id is still produced');
   } finally {
     window.ClipboardItem = originalClipboardItem;
+    restore();
+    cleanup();
+  }
+});
+
+test('Ctrl+A then Ctrl+C copies chunks not mounted yet; a changed selection copies just itself', async () => {
+  const { view, previewPane, previewContent, cleanup } = await mountView({
+    progressiveTextRendering: true,
+    source: manyParagraphMarkdown(300)
+  });
+  const written = [];
+  const restore = stubClipboard({ writeText: async (text) => { written.push(text); } });
+  try {
+    assert.ok(view.chunkedRenderState.cursor < view.chunkedRenderState.records.length, 'sanity: some chunks not mounted yet');
+    assert.ok(!previewContent.textContent.includes('Paragraph number 299'), 'sanity: the last paragraph is not mounted');
+
+    pressCtrlA(previewPane);
+    pressCtrlC(previewContent);
+    await waitFor(() => assert.equal(written.length, 1), 300);
+    assert.ok(written[0].includes('Paragraph number 299'), 'the whole document, not just the mounted part');
+
+    // A different selection afterwards copies only itself (clean markup set synchronously).
+    const first = previewContent.querySelector('p');
+    const range = document.createRange();
+    range.selectNodeContents(first);
+    window.getSelection().removeAllRanges();
+    window.getSelection().addRange(range);
+    const { data } = pressCtrlC(previewContent);
+    assert.equal(data['text/plain'], first.textContent);
+    assert.equal(written.length, 1, 'no whole-document copy this time');
+  } finally {
     restore();
     cleanup();
   }

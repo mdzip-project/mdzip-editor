@@ -206,7 +206,9 @@ test('Copy All is a submenu naming each format: Plain Text, Formatted Text, Mark
       [...submenu.querySelectorAll('[data-menu-action]')].map((el) => el.querySelector('.nav-menu-label').textContent),
       ['Plain Text', 'Formatted Text', 'Markdown', 'HTML']
     );
-    assert.ok(submenu.querySelector('[data-menu-action="preview-copy-all"] .nav-menu-shortcut'), 'Plain Text keeps the Copy All shortcut');
+    assert.equal(submenu.querySelector('[data-menu-action="preview-copy-all"] .nav-menu-shortcut'), null, 'Plain Text has no shortcut');
+    assert.equal(submenu.querySelector('[data-menu-action="preview-copy-all-images"] .nav-menu-shortcut').textContent, 'Ctrl+A, Ctrl+C',
+      'Formatted Text is what Select All then Copy does');
     assert.deepEqual(
       [...submenu.querySelectorAll('[data-menu-action]')].map((el) => el.dataset.tooltip),
       [
