@@ -1,0 +1,102 @@
+{
+  "description": "Consumer rendering checks for test T-016 (Sections 9.2, 9.3, 13.2; 1.2.0-draft). Serve HTTP on the canary origin, open hostile-content.mdz, render its entry point as the consumer normally would, wait until rendering settles (a few seconds), then check: (1) the canary received no request for any case with check \"canary\"; (2) the rendered document contains nothing listed under a case with check \"dom\"; (3) the archive's own image (images/ok.png) rendered, so a consumer can't pass by rendering nothing. A canary request path is /<id>, or starts with /<id>/. Each case names the requirement it rests on: MUST cases are conformance failures, SHOULD cases are recommendations. Nonconformant behaviour that never reaches the canary (for example an alert dialog) still fails the case.",
+  "source": "examples/hostile-content/",
+  "archive": "examples/fixtures/hostile-content.mdz",
+  "document": "index.md",
+  "canary": "http://127.0.0.1:18766",
+  "renders": ["images/ok.png"],
+  "cases": [
+    {
+      "id": "script-element",
+      "construct": "<script> element in the Markdown",
+      "check": "canary",
+      "requirement": "MUST",
+      "section": "13.2",
+      "note": "Consumers MUST NOT execute scripts from .mdz content."
+    },
+    {
+      "id": "event-handler",
+      "construct": "onerror attribute on an <img> whose source is missing",
+      "check": "canary",
+      "requirement": "MUST",
+      "section": "13.2"
+    },
+    {
+      "id": "svg-inline-script",
+      "construct": "inline <svg> with an onload attribute and a <script> child",
+      "check": "canary",
+      "requirement": "MUST",
+      "section": "13.2"
+    },
+    {
+      "id": "svg-file-script",
+      "construct": "an SVG entry in the archive (images/script.svg) containing a script, shown as an image",
+      "check": "canary",
+      "requirement": "MUST",
+      "section": "13.2",
+      "note": "Browsers don't run scripts in SVG loaded through <img>; this fails consumers that inline SVG files or show them in a frame."
+    },
+    {
+      "id": "javascript-link",
+      "construct": "Markdown link to a javascript: URL",
+      "check": "dom",
+      "forbidden": "a link or other element whose href or src starts with javascript: (after trimming and ignoring case)",
+      "requirement": "MUST",
+      "section": "13.2",
+      "note": "It needs a click, so check the rendered document. A harness that also clicks it must see no canary request."
+    },
+    {
+      "id": "base-element",
+      "construct": "<base> element followed by a relative image",
+      "check": "canary",
+      "requirement": "MUST",
+      "section": "9.3",
+      "note": "The base is always the referencing file's location; an HTML <base> element does not change how links resolve. A request for /base-element/images/ok.png means the image was resolved against the <base>."
+    },
+    {
+      "id": "meta-refresh",
+      "construct": "<meta http-equiv=\"refresh\"> to an external URL",
+      "check": "canary",
+      "requirement": "SHOULD",
+      "section": "13.2",
+      "note": "Consumers SHOULD warn before opening external URLs; an automatic redirect opens one without any warning."
+    },
+    {
+      "id": "stylesheet-link",
+      "construct": "<link rel=\"stylesheet\"> to an http: URL",
+      "check": "canary",
+      "requirement": "SHOULD",
+      "section": "9.2",
+      "note": "Consumers SHOULD NOT automatically load external resources over http:."
+    },
+    {
+      "id": "style-url",
+      "construct": "style attribute with a background-image url() over http:",
+      "check": "canary",
+      "requirement": "SHOULD",
+      "section": "9.2"
+    },
+    {
+      "id": "iframe",
+      "construct": "<iframe> to an http: URL",
+      "check": "canary",
+      "requirement": "SHOULD",
+      "section": "9.2"
+    },
+    {
+      "id": "object-embed",
+      "construct": "<object> and <embed> to an http: URL",
+      "check": "canary",
+      "requirement": "SHOULD",
+      "section": "9.2"
+    },
+    {
+      "id": "http-image",
+      "construct": "Markdown image from an http: URL",
+      "check": "canary",
+      "requirement": "SHOULD",
+      "section": "9.2",
+      "note": "Remote https: images are not covered: whether they load is the user's choice (Section 9.2), and the canary is plain HTTP."
+    }
+  ]
+}

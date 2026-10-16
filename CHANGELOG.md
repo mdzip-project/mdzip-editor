@@ -40,6 +40,10 @@ Versions now follow `@mdzip/core-js` (2.0.1), skipping 1.6–2.0.0, so the edito
 - A case-only rename (`Logo.png` to `logo.png`) saved both files: the pending write replaced the pending removal because both were keyed by the lowercased path.
 - Adding a second root Markdown file to an archive whose manifest has no `entryPoint` no longer fails to save (`ERR_ENTRYPOINT_UNRESOLVED`); the current entry point is recorded (fixed in core-js 2.0.1).
 
+### Tests
+- MDZip spec conformance test `T-016` (hostile content) for the default sanitizing renderer: `tests/hostile-content.test.mjs` renders the spec's `hostile-content.mdz` and checks that no script, event handler, inline SVG, `<base>`, `<meta>`, `<link>`, `<iframe>`, `<object>`, `<embed>`, `style` URL or `javascript:` link survives, that the archive's own image still renders, and that an `http:` image is left as a plain `<img>` for the host's policy. Fixtures copied from `mdzip-spec` into `tests/fixtures/spec/`.
+
+
 ## [1.5.0] - 2026-10-07
 
 ### Added
