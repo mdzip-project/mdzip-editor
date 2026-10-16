@@ -212,7 +212,7 @@ test('right-click over the rendered preview offers Copy All', async () => {
     assert.equal(menu.hidden, false, 'menu is shown');
     assert.deepEqual(
       [...menu.querySelectorAll('[data-menu-action]')].map((el) => el.dataset.menuAction),
-      ['preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html']
+      ['preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html', 'preview-select-all']
     );
   } finally {
     cleanup();
@@ -300,7 +300,7 @@ test('right-click over an existing preview selection offers Copy ahead of Copy A
 
     assert.deepEqual(
       [...menu.querySelectorAll('[data-menu-action]')].map((el) => el.dataset.menuAction),
-      ['preview-copy', 'preview-copy-selection-formatted', 'preview-copy-selection-html', 'preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html']
+      ['preview-copy', 'preview-copy-selection-formatted', 'preview-copy-selection-html', 'preview-copy-all', 'preview-copy-all-images', 'preview-copy-markdown', 'preview-copy-html', 'preview-select-all']
     );
   } finally {
     cleanup();
@@ -1461,6 +1461,29 @@ test('Ctrl+A then Ctrl+C copies chunks not mounted yet; a changed selection copi
     const { data } = pressCtrlC(previewContent);
     assert.equal(data['text/plain'], first.textContent);
     assert.equal(written.length, 1, 'no whole-document copy this time');
+  } finally {
+    restore();
+    cleanup();
+  }
+});
+
+test('the preview menu has Select All, which works like Ctrl+A', async () => {
+  const { previewPane, previewContent, menu, cleanup } = await mountView();
+  const written = [];
+  const restore = stubClipboard({ writeText: async (text) => { written.push(text); } });
+  try {
+    openContextMenu(previewPane);
+    const item = menu.querySelector('[data-menu-action="preview-select-all"]');
+    assert.match(item.textContent, /Select All/);
+    assert.match(item.querySelector('.nav-menu-shortcut').textContent, /A$/);
+    clickMenuAction(menu, 'preview-select-all');
+    const range = window.getSelection().getRangeAt(0);
+    assert.equal(range.startContainer, previewContent, 'the rendered content is selected');
+    assert.equal(range.endOffset, previewContent.childNodes.length);
+
+    pressCtrlC(previewContent);
+    await waitFor(() => assert.equal(written.length, 1));
+    assert.ok(written[0].includes('plain body text'), 'Ctrl+C then copies the whole document');
   } finally {
     restore();
     cleanup();

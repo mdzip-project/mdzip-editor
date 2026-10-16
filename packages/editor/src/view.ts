@@ -5160,18 +5160,7 @@ export class MdzipWorkspaceView {
         return;
       }
       e.preventDefault();
-      const selection = doc.defaultView?.getSelection();
-      if (!selection) {
-        return;
-      }
-      const range = doc.createRange();
-      range.selectNodeContents(this.elPreviewContent);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      this.previewSelectAll = {
-        start: range.startContainer, startOffset: range.startOffset,
-        end: range.endContainer, endOffset: range.endOffset
-      };
+      this.selectAllPreview();
     });
 
     this.elNavBtn.addEventListener('click', () => {
@@ -7133,6 +7122,8 @@ export class MdzipWorkspaceView {
       );
     }
     items.push({ action: 'preview-copy-all-menu', label: 'Copy All', icon: MENU_COPY_ICON_HTML, submenu: copyAll });
+    // Same item and group as the source editor's menu.
+    items.push(null, { action: 'preview-select-all', label: 'Select All', icon: MENU_SELECT_ALL_ICON_HTML, shortcut: this.editorShortcut('A') });
     return items;
   }
 
@@ -7159,6 +7150,10 @@ export class MdzipWorkspaceView {
           .then((outcome) => this.finishCopyNotification(false, outcome));
         break;
       }
+      case 'preview-select-all':
+        this.elPreviewPane.focus({ preventScroll: true });
+        this.selectAllPreview();
+        break;
       case 'preview-copy-selection-formatted':
         void this.copyPreviewSelectionFormatted(state.html, state.text)
           .then((outcome) => this.finishCopyNotification(false, outcome));
@@ -7298,6 +7293,27 @@ export class MdzipWorkspaceView {
       }
     }
     return { text, html: container.innerHTML.trim() };
+  }
+
+  /**
+   * Selects all of the rendered document (Ctrl+A and the menu's Select All),
+   * remembering the selection so Ctrl+C copies the whole document while it's
+   * unchanged (see the copy handler).
+   */
+  private selectAllPreview(): void {
+    const doc = this.elPreviewContent.ownerDocument;
+    const selection = doc.defaultView?.getSelection();
+    if (!selection) {
+      return;
+    }
+    const range = doc.createRange();
+    range.selectNodeContents(this.elPreviewContent);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    this.previewSelectAll = {
+      start: range.startContainer, startOffset: range.startOffset,
+      end: range.endContainer, endOffset: range.endOffset
+    };
   }
 
   /**
