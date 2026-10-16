@@ -26,6 +26,7 @@ import type {
   MdzipColorSchemePreference,
   MdzipPreviewMaxWidth,
   MdzipPreviewWidthChoice,
+  MdzipSystemColorScheme,
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipEditorSnapshot,
@@ -161,6 +162,8 @@ export const MdzipWorkspace = defineComponent({
     initialColorScheme: String as PropType<MdzipColorSchemePreference>,
     /** Preview reading-column width; the user can change it from the toolbar's page-width menu. */
     previewMaxWidth: [Number, String] as PropType<MdzipPreviewMaxWidth>,
+    /** What the color scheme menu's System choice follows instead of the OS setting (a host theme), with its own label and icon. */
+    systemColorScheme: Object as PropType<MdzipSystemColorScheme>,
     /**
      * Mounts the preview in chunks near the viewport instead of rendering the
      * whole document synchronously up front. Recommended for hosts that may
@@ -363,6 +366,7 @@ export const MdzipWorkspace = defineComponent({
         initialLayout: props.initialLayout,
         initialColorScheme: props.initialColorScheme,
         previewMaxWidth: props.previewMaxWidth,
+        systemColorScheme: props.systemColorScheme,
         progressiveTextRendering: props.progressiveTextRendering,
         navigationMode: props.navigationMode,
         navigationButtonActive: props.navigationButtonActive,
@@ -456,6 +460,10 @@ export const MdzipWorkspace = defineComponent({
 
     watch([() => props.toolbarDensity, () => props.contentDensity], ([toolbarDensity, contentDensity]) => {
       view?.setDensityOptions({ toolbarDensity, contentDensity });
+    });
+
+    watch(() => props.systemColorScheme, (source) => {
+      view?.setSystemColorScheme(source ?? null);
     });
 
     watch(() => props.previewMaxWidth, (width) => {

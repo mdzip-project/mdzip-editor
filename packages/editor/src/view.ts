@@ -303,6 +303,22 @@ export type MdzipColorScheme = 'light' | 'dark';
  * operating system's setting (`prefers-color-scheme`) and updates when it changes.
  */
 export type MdzipColorSchemePreference = MdzipColorScheme | 'system';
+/**
+ * What the color scheme menu's System choice follows, for a host with its own
+ * theme (VS Code's, say) instead of the operating system's setting. See
+ * {@link MdzipWorkspaceViewOptions.systemColorScheme}.
+ */
+export interface MdzipSystemColorScheme {
+  /** The host theme's current light/dark scheme. */
+  colorScheme: MdzipColorScheme;
+  /** The choice's name in the menu and tooltip, e.g. `'VS Code theme'`. Default `'System setting'`. */
+  label?: string;
+  /**
+   * Trusted SVG markup for the choice's icon, sized like the other menu icons
+   * (it isn't sanitized: pass only the host's own markup). Default: a monitor.
+   */
+  icon?: string;
+}
 export type MdzipHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6;
 export type MdzipImageHydrationAnimation = 'auto' | 'initial' | 'off';
 export type MdzipImageInsertMode = 'markdown' | 'ask' | 'html';
@@ -812,9 +828,18 @@ export interface MdzipWorkspaceViewOptions {
   initialLayout?: MdzipWorkspaceLayout;
   /**
    * Starting color scheme. `'system'` (the default) follows the operating
-   * system's light/dark setting and updates when it changes.
+   * system's light/dark setting and updates when it changes, or the host's
+   * theme when `systemColorScheme` is given.
    */
   initialColorScheme?: MdzipColorSchemePreference;
+  /**
+   * Makes the color scheme menu's System choice follow the host's own theme
+   * instead of the operating system's setting, with its own name and icon,
+   * e.g. `{ colorScheme: 'dark', label: 'VS Code theme', icon: '<svg…>' }`.
+   * Call {@link MdzipWorkspaceView.setSystemColorScheme} when the host theme
+   * changes. Unset, System follows the operating system.
+   */
+  systemColorScheme?: MdzipSystemColorScheme;
   navigationMode?: MdzipNavigationMode;
   navigationButtonActive?: boolean;
   /**
@@ -1841,9 +1866,13 @@ export class MdzipWorkspaceView {
   private themeMenuIconPreference: MdzipColorSchemePreference | null = null;
   private colorSchemePreference: MdzipColorSchemePreference = 'system';
   private readonly systemColorSchemeQuery: MediaQueryList | null;
+  /** The host theme System follows instead of the OS setting (see setSystemColorScheme). */
+  private systemColorSource: MdzipSystemColorScheme | null = null;
+  /** The System item's label and icon last rendered, so render() only rewrites them on change. */
+  private systemItemKey: string | null = null;
   /** Re-resolves the scheme when the OS setting changes while 'system' is chosen. */
   private readonly onSystemColorSchemeChange = (): void => {
-    if (this.colorSchemePreference !== 'system' || this.destroyed) {
+    if (this.colorSchemePreference !== 'system' || this.systemColorSource || this.destroyed) {
       return;
     }
     const next = this.resolveColorScheme('system');
@@ -2214,6 +2243,7 @@ export class MdzipWorkspaceView {
     this.layout = options.initialLayout ?? defaultLayoutForPolicy(this.controlPolicy);
     this.systemColorSchemeQuery = container.ownerDocument.defaultView?.matchMedia?.('(prefers-color-scheme: dark)') ?? null;
     this.systemColorSchemeQuery?.addEventListener?.('change', this.onSystemColorSchemeChange);
+    this.systemColorSource = options.systemColorScheme ?? null;
     this.colorSchemePreference = options.initialColorScheme ?? 'system';
     this.colorScheme = this.resolveColorScheme(this.colorSchemePreference);
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
@@ -4905,14 +4935,26 @@ export class MdzipWorkspaceView {
       button.classList.toggle('active', this.colorSchemePreference === preference);
       button.setAttribute('aria-checked', String(this.colorSchemePreference === preference));
     }
+    const systemIcon = this.systemColorSource?.icon
+      ? `<span class="${TOOLBAR_ICON_CLASS} mdzip-host-icon" aria-hidden="true">${this.systemColorSource.icon}</span>`
+      : SYSTEM_THEME_ICON_HTML;
+    const systemItemLabel = this.systemColorSource?.label ?? 'System setting';
+    const systemItemKey = `${systemItemLabel}\n${systemIcon}`;
+    if (this.systemItemKey !== systemItemKey) {
+      this.systemItemKey = systemItemKey;
+      this.themeMenuIconPreference = null;
+      this.elSystemThemeBtn.innerHTML = systemIcon;
+      setTooltip(this.elSystemThemeBtn, systemItemLabel);
+      this.elSystemThemeBtn.setAttribute('aria-label', systemItemLabel);
+    }
     if (this.themeMenuIconPreference !== this.colorSchemePreference) {
       this.themeMenuIconPreference = this.colorSchemePreference;
       this.elThemeMenuIcon.innerHTML = this.colorSchemePreference === 'system'
-        ? SYSTEM_THEME_ICON_HTML
+        ? systemIcon
         : this.colorSchemePreference === 'dark' ? DARK_THEME_ICON_HTML : LIGHT_THEME_ICON_HTML;
     }
     const schemeLabel = this.colorSchemePreference === 'system'
-      ? `System (${this.colorScheme})`
+      ? `${this.systemColorSource?.label ?? 'System'} (${this.colorScheme})`
       : this.colorSchemePreference === 'dark' ? 'Dark' : 'Light';
     setTooltip(this.elThemeMenuBtn, `Color scheme: ${schemeLabel}`);
     this.elThemeMenuBtn.setAttribute('aria-label', `Color scheme: ${schemeLabel}`);
@@ -8299,10 +8341,27 @@ export class MdzipWorkspaceView {
     this.render();
   }
 
-  /** The light/dark scheme a choice means right now; `'system'` reads the OS setting. */
+  /**
+   * Sets what the menu's System choice follows: the host theme in `source`
+   * (its current scheme, and optionally the choice's name and icon), or the
+   * operating system's setting again with `null`. Call it whenever the host
+   * theme changes; while System is chosen the preview switches with it,
+   * keeping the rendered preview in place. Like `setColorScheme`, it fires
+   * no change callbacks.
+   */
+  public setSystemColorScheme(source: MdzipSystemColorScheme | null): void {
+    this.systemColorSource = source;
+    this.colorScheme = this.resolveColorScheme(this.colorSchemePreference);
+    this.render();
+  }
+
+  /** The light/dark scheme a choice means right now; `'system'` reads the host theme or the OS setting. */
   private resolveColorScheme(preference: MdzipColorSchemePreference): MdzipColorScheme {
     if (preference !== 'system') {
       return preference;
+    }
+    if (this.systemColorSource) {
+      return this.systemColorSource.colorScheme;
     }
     return this.systemColorSchemeQuery?.matches ? 'dark' : 'light';
   }

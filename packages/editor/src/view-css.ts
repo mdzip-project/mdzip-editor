@@ -393,6 +393,16 @@ export const WORKSPACE_CSS = `
   color: var(--mdzip-link-color);
 }
 
+/* A host-supplied System icon (systemColorScheme.icon), sized by toggle-icon. */
+.mdzip-root .mdzip-host-icon {
+  display: inline-flex;
+}
+
+.mdzip-root .mdzip-host-icon > svg {
+  width: 100%;
+  height: 100%;
+}
+
 .mdzip-root .theme-menu-icon,
 .mdzip-root .toolbar-menu-icon {
   display: inline-flex;

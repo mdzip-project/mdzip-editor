@@ -10,6 +10,7 @@ import type {
   MdzipColorSchemePreference,
   MdzipPreviewMaxWidth,
   MdzipPreviewWidthChoice,
+  MdzipSystemColorScheme,
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipDocumentChangeEvent,
@@ -154,6 +155,8 @@ export interface MdzipWorkspaceProps {
   initialColorScheme?: MdzipColorSchemePreference;
   /** Preview reading-column width; the user can change it from the toolbar's page-width menu. */
   previewMaxWidth?: MdzipPreviewMaxWidth;
+  /** What the color scheme menu's System choice follows instead of the OS setting (a host theme), with its own label and icon. */
+  systemColorScheme?: MdzipSystemColorScheme;
   /**
    * Mounts the preview in chunks near the viewport instead of rendering the
    * whole document synchronously up front. Recommended for hosts that may
@@ -290,6 +293,7 @@ function MdzipWorkspace({
   initialLayout,
   initialColorScheme,
   previewMaxWidth,
+  systemColorScheme,
   progressiveTextRendering,
   navigationMode,
   navigationButtonActive,
@@ -385,10 +389,10 @@ function MdzipWorkspace({
   contentRef.current = { bytes, workspace, mode, sourceFormat, fileName };
 
   const controlsRef = useRef({
-    controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode, previewMaxWidth
+    controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode, previewMaxWidth, systemColorScheme
   });
   controlsRef.current = {
-    controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode, previewMaxWidth
+    controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode, previewMaxWidth, systemColorScheme
   };
 
   // Latest rendering props, read at view-create and apply time so prop
@@ -455,6 +459,7 @@ function MdzipWorkspace({
       initialLayout,
       initialColorScheme,
       previewMaxWidth: controlsRef.current.previewMaxWidth,
+      systemColorScheme: controlsRef.current.systemColorScheme,
       progressiveTextRendering,
       navigationMode,
       navigationButtonActive,
@@ -541,6 +546,10 @@ function MdzipWorkspace({
   useEffect(() => {
     viewRef.current?.setPreviewMaxWidth(previewMaxWidth);
   }, [previewMaxWidth]);
+
+  useEffect(() => {
+    viewRef.current?.setSystemColorScheme(systemColorScheme ?? null);
+  }, [systemColorScheme]);
 
   useEffect(() => {
     viewRef.current?.setImageHydrationAnimation(imageHydrationAnimation);

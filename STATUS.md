@@ -1,5 +1,5 @@
-Status: ready-to-commit
-Last:   Release v2.1.0 tagged locally (push, GitHub release and npm publish pending, Kyle); added the test bench to the repo (npm run testbench, testbench/)
+Status: idle
+Last:   Released v2.1.0: @mdzip/editor, -ng, -react, -vue on npm and GitHub (2026-10-16); test bench added (npm run testbench)
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 

@@ -25,6 +25,7 @@ import type {
   MdzipColorSchemePreference,
   MdzipPreviewMaxWidth,
   MdzipPreviewWidthChoice,
+  MdzipSystemColorScheme,
   MdzipConversionAction,
   MdzipConversionContext,
   MdzipEditorCommand,
@@ -115,6 +116,8 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() initialColorScheme?: MdzipColorSchemePreference;
   /** Preview reading-column width; the user can change it from the toolbar's page-width menu. */
   @Input() previewMaxWidth?: MdzipPreviewMaxWidth;
+  /** What the color scheme menu's System choice follows instead of the OS setting (a host theme), with its own label and icon. */
+  @Input() systemColorScheme?: MdzipSystemColorScheme;
   /**
    * Mounts the preview in chunks near the viewport instead of rendering the
    * whole document synchronously up front. Recommended for hosts that may
@@ -230,6 +233,9 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
         toolbarDensity: this.toolbarDensity,
         contentDensity: this.contentDensity,
       });
+    }
+    if (this.view && changes['systemColorScheme']) {
+      this.view.setSystemColorScheme(this.systemColorScheme ?? null);
     }
     if (this.view && changes['previewMaxWidth']) {
       this.view.setPreviewMaxWidth(this.previewMaxWidth);
@@ -402,6 +408,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       initialLayout: this.initialLayout,
       initialColorScheme: this.initialColorScheme,
       previewMaxWidth: this.previewMaxWidth,
+      systemColorScheme: this.systemColorScheme,
       progressiveTextRendering: this.progressiveTextRendering,
       navigationMode: this.navigationMode,
       navigationButtonActive: this.navigationButtonActive,

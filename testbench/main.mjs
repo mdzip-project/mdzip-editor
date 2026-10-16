@@ -64,5 +64,19 @@ $('rename').addEventListener('click', () => {
 
 $('current').addEventListener('click', () => log(`getCurrentPath() -> ${view.getCurrentPath()}`));
 
+// System following a host theme (as in VS Code), with its own label and icon.
+const HOST_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+  + 'stroke-linejoin="round"><path d="M12 22a10 10 0 1 1 10-10c0 2-1.5 3-3.5 3H16a2 2 0 0 0-1.5 3.3A2 2 0 0 1 12 22Z"/>'
+  + '<circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="10.5" r="1"/></svg>';
+const applyHostTheme = () => {
+  const source = $('host-theme').checked
+    ? { colorScheme: $('host-scheme').value, label: 'Host theme', icon: HOST_ICON }
+    : null;
+  view.setSystemColorScheme(source);
+  log(`setSystemColorScheme(${source ? `{ colorScheme: '${source.colorScheme}', label: 'Host theme' }` : 'null'})`);
+};
+$('host-theme').addEventListener('change', applyHostTheme);
+$('host-scheme').addEventListener('change', () => { if ($('host-theme').checked) applyHostTheme(); });
+
 const response = await fetch('dist/sample.mdz');
 await openBytes(new Uint8Array(await response.arrayBuffer()), 'sample.mdz');

@@ -8,6 +8,9 @@ The bench page has buttons for the ones only reachable through the API.
 - **Color scheme** (monitor, sun or moon icon): Light, Dark or System. System
   follows the operating system's setting live. Switching keeps the preview in
   place: nothing moves, and the diagrams below are redrawn in the new colors.
+  Tick **System follows a host theme** on the bench: System becomes "Host
+  theme" with a palette icon and follows the dark/light list beside it, as
+  it follows the VS Code theme in the extension.
 - **Page width** (page icon, between zoom and color scheme): Narrow, Default,
   Wide or Full Width, labeled with the pixel width each gives at the current
   zoom. Hidden in edit layout.

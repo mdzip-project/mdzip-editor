@@ -30,6 +30,7 @@ editor has to handle.
 | Feature | Where | Expected |
 |---|---|---|
 | Color scheme | Toolbar, right end | Light, Dark, System; switching keeps the preview in place and redraws the diagrams |
+| Host theme | **System follows a host theme**, then the dark/light list | System is renamed "Host theme" with a palette icon and follows the list, not the OS |
 | Page width | Toolbar, before the color scheme | Narrow, Default, Wide (with pixel widths), Full Width; hidden in edit layout |
 | Copying | Right-click the preview; Ctrl+A, Ctrl+C | See the "Copying" section of the sample; paste into Notepad and Word |
 | Task lists, rules, footnotes | Sample sections | As described in each section |

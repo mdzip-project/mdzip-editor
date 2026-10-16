@@ -2276,3 +2276,55 @@ test('System follows the OS setting live, and is the default when no scheme is g
   }
   assert.equal(listeners.size, 0, 'destroy stops listening to the OS setting');
 });
+
+test('System can follow a host theme instead of the OS, with its own label and icon', async () => {
+  // OS says dark; the host theme says light.
+  const listeners = new Set();
+  const query = { matches: true, addEventListener: (type, fn) => listeners.add(fn), removeEventListener: (type, fn) => listeners.delete(fn) };
+  const previous = window.matchMedia;
+  window.matchMedia = () => query;
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const host = { label: 'VS Code theme', icon: '<svg data-host-icon="1" viewBox="0 0 24 24"></svg>' };
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'standalone-editor',
+    initialLayout: 'preview',
+    systemColorScheme: { ...host, colorScheme: 'light' }
+  });
+  try {
+    await view.open(new TextEncoder().encode('# Notes\n'), { mode: 'editable', fileName: 'notes.md' });
+    const root = container.querySelector('.mdzip-root');
+    const toggle = container.querySelector('[data-ref="theme-menu-btn"]');
+    const system = container.querySelector('[data-ref="system-theme-btn"]');
+
+    assert.ok(root.classList.contains('mdzip-theme-light'), 'follows the host theme, not the OS');
+    assert.equal(toggle.getAttribute('aria-label'), 'Color scheme: VS Code theme (light)');
+    assert.equal(system.getAttribute('aria-label'), 'VS Code theme');
+    assert.equal(system.dataset.tooltip, 'VS Code theme');
+    assert.ok(system.querySelector('svg[data-host-icon]'), 'the menu item shows the host icon');
+    assert.ok(container.querySelector('[data-ref="theme-menu-icon"] svg[data-host-icon]'), 'so does the button');
+
+    query.matches = false;
+    for (const fn of listeners) fn();
+    assert.ok(root.classList.contains('mdzip-theme-light'), 'an OS change is ignored');
+
+    view.setSystemColorScheme({ ...host, colorScheme: 'dark' });
+    assert.ok(root.classList.contains('mdzip-theme-dark'), 'a host theme change switches the preview');
+    assert.equal(toggle.getAttribute('aria-label'), 'Color scheme: VS Code theme (dark)');
+
+    toggle.click();
+    container.querySelector('[data-ref="light-theme-btn"]').click();
+    view.setSystemColorScheme({ ...host, colorScheme: 'dark' });
+    assert.ok(root.classList.contains('mdzip-theme-light'), 'an explicit Light choice ignores the host theme');
+
+    view.setColorScheme('system');
+    view.setSystemColorScheme(null);
+    assert.ok(root.classList.contains('mdzip-theme-light'), 'null: System follows the OS again (now light)');
+    assert.equal(system.getAttribute('aria-label'), 'System setting', 'default label is back');
+    assert.equal(system.querySelector('svg[data-host-icon]'), null, 'default icon is back');
+  } finally {
+    view.destroy();
+    container.remove();
+    window.matchMedia = previous;
+  }
+});
