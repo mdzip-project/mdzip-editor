@@ -91,7 +91,8 @@ showUnchanged? }`) to opt any of them out.
 | `contentDensity` | `'comfortable' \| 'compact'` | `'comfortable'` | Semantic padding preset for editor and preview content |
 | `imageHydrationAnimation` | `'auto' \| 'initial' \| 'off'` | `'auto'` | Control preview image reveal animation: every render, first render per document path, or never |
 | `initialLayout` | `MdzipWorkspaceLayout` | — | Starting layout: `'preview'`, `'editor'`, `'split'` |
-| `initialColorScheme` | `MdzipColorScheme` | — | `'light'` or `'dark'` |
+| `initialColorScheme` | `MdzipColorSchemePreference` | `'system'` | `'light'`, `'dark'` or `'system'` (follows the OS setting live) |
+| `previewMaxWidth` | `MdzipPreviewMaxWidth` | `'default'` | Preview reading-column width: `'narrow'`, `'default'`, `'wide'`, `'full'` or a pixel number; the user can change it from the toolbar's page-width menu |
 | `navigationMode` | `MdzipNavigationMode` | — | Package navigation mode |
 | `navigationButtonActive` | `boolean` | — | Whether the navigation button is shown |
 | `markdownRenderer` | `MdzipMarkdownRenderer` | — | Custom markdown renderer (keep the reference stable, e.g. `useMemo`) |
@@ -139,6 +140,8 @@ re-mount), and unmounts on selection change.
 | `onDirtyChanged` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called when the dirty flag changes |
 | `onValidationChanged` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called when validation state changes |
 | `onColorSchemeChanged` | `(colorScheme: MdzipColorScheme) => void` | Called when the color scheme changes |
+| `onColorSchemePreferenceChanged` | `(preference: MdzipColorSchemePreference) => void` | Called when the user picks Light, Dark or System in the toolbar menu |
+| `onPreviewWidthChanged` | `(width: MdzipPreviewWidthChoice) => void` | Called when the user picks a width in the toolbar's page-width menu |
 | `onPreviewRendered` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called when the preview HTML is mounted |
 | `onAssetsHydrated` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called once the mounted preview's images have loaded |
 | `onLinkActivated` | `(event: MdzipLinkActivatedEvent) => void` | Called for every preview link click before built-in handling; call `event.preventDefault()` to take over |

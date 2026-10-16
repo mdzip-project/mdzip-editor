@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [2.1.0] - 2026-10-15
+
+Still requires `@mdzip/core-js` 2.0.1, which has no changes in this release, so the editor's version now moves on its own.
 
 ### Changed
 - The toolbar's right-hand buttons are evenly spaced: search, save and zoom now use the same compact button size and 18px icon as the menus beside them and the layout buttons, and the gap between them is 6px (was 10px) at the default density, 4px compact (was 6px) and 3px dense (was 4px). `--mdzip-toolbar-gap` still overrides it.
@@ -25,7 +27,8 @@
 - GFM task lists render checkboxes again (checked or not, disabled, nested too), with GitHub's `task-list-item` / `contains-task-list` classes. `<input>` in raw HTML is still stripped by the sanitizer. Closes #54.
 - Opening an archive no longer fails outside a secure context (plain HTTP on a LAN host), where `crypto.subtle` is undefined; hashing falls back to a pure-JS SHA-256 with identical results, so the asset cache and diff view work unchanged. Closes #55.
 - Consecutive horizontal rules no longer collapse into one thick band: `hr` has its own preview style (vertical margin, one themed line) in light and dark. Closes #57.
-
+### Tests
+- MDZip spec conformance test `T-016` (hostile content) for the default sanitizing renderer: `tests/hostile-content.test.mjs` renders the spec's `hostile-content.mdz` and checks that no script, event handler, inline SVG, `<base>`, `<meta>`, `<link>`, `<iframe>`, `<object>`, `<embed>`, `style` URL or `javascript:` link survives, that the archive's own image still renders, and that an `http:` image is left as a plain `<img>` for the host's policy. Fixtures copied from `mdzip-spec` into `tests/fixtures/spec/`.
 
 ## [2.0.1] - 2026-10-14
 
@@ -40,8 +43,6 @@ Versions now follow `@mdzip/core-js` (2.0.1), skipping 1.6–2.0.0, so the edito
 - A case-only rename (`Logo.png` to `logo.png`) saved both files: the pending write replaced the pending removal because both were keyed by the lowercased path.
 - Adding a second root Markdown file to an archive whose manifest has no `entryPoint` no longer fails to save (`ERR_ENTRYPOINT_UNRESOLVED`); the current entry point is recorded (fixed in core-js 2.0.1).
 
-### Tests
-- MDZip spec conformance test `T-016` (hostile content) for the default sanitizing renderer: `tests/hostile-content.test.mjs` renders the spec's `hostile-content.mdz` and checks that no script, event handler, inline SVG, `<base>`, `<meta>`, `<link>`, `<iframe>`, `<object>`, `<embed>`, `style` URL or `javascript:` link survives, that the archive's own image still renders, and that an `http:` image is left as a plain `<img>` for the host's policy. Fixtures copied from `mdzip-spec` into `tests/fixtures/spec/`.
 
 
 ## [1.5.0] - 2026-10-07

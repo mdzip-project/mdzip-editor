@@ -1,5 +1,5 @@
-Status: awaiting-test
-Last:   Branch feat/theme-menu (stacked on uncommitted feat/mermaid-12): theme dropdown with System; scheme switch keeps the preview; new page-width dropdown (Narrow/Default/Wide with live px, Full Width); evenly spaced toolbar buttons; width menu hidden without a preview; preview menu Copy as HTML (selection) + Copy All as > Markdown/HTML; verify passes (366 tests) — not committed
+Status: ready-to-commit
+Last:   Release v2.1.0 committed and tagged locally (Mermaid 12, theme/width menus, in-place re-theme, Copy as HTML, overnight fixes #51-#58, T-016 tests); push, GitHub release and npm publish pending (Kyle)
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 

@@ -99,7 +99,8 @@ showUnchanged? }`) to opt any of them out.
 | `contentDensity` | `'comfortable' \| 'compact'` | `'comfortable'` | Semantic padding preset for editor and preview content |
 | `imageHydrationAnimation` | `'auto' \| 'initial' \| 'off'` | `'auto'` | Control preview image reveal animation: every render, first render per document path, or never |
 | `initialLayout` | `MdzipWorkspaceLayout` | — | Starting layout: `'preview'`, `'editor'`, `'split'` |
-| `initialColorScheme` | `MdzipColorScheme` | — | `'light'` or `'dark'` |
+| `initialColorScheme` | `MdzipColorSchemePreference` | `'system'` | `'light'`, `'dark'` or `'system'` (follows the OS setting live) |
+| `previewMaxWidth` | `MdzipPreviewMaxWidth` | `'default'` | Preview reading-column width: `'narrow'`, `'default'`, `'wide'`, `'full'` or a pixel number; the user can change it from the toolbar's page-width menu |
 | `navigationMode` | `MdzipNavigationMode` | `'editor'` | Package navigation mode |
 | `navigationButtonActive` | `boolean` | `true` | Whether the navigation button is shown |
 | `markdownRenderer` | `MdzipMarkdownRenderer` | — | Custom markdown renderer (keep the reference stable) |
@@ -150,6 +151,8 @@ change.
 | `dirtyChanged` | `MdzipWorkspaceSnapshot` | Emitted when the dirty flag changes |
 | `validationChanged` | `MdzipWorkspaceSnapshot` | Emitted when validation state changes |
 | `colorSchemeChanged` | `MdzipColorScheme` | Emitted when the color scheme changes |
+| `colorSchemePreferenceChanged` | `MdzipColorSchemePreference` | Emitted when the user picks Light, Dark or System in the toolbar menu |
+| `previewWidthChanged` | `MdzipPreviewWidthChoice` | Emitted when the user picks a width in the toolbar's page-width menu |
 | `previewRendered` | `MdzipWorkspaceSnapshot` | Emitted when the preview HTML is mounted |
 | `assetsHydrated` | `MdzipWorkspaceSnapshot` | Emitted once the mounted preview's images have loaded |
 | `linkActivated` | `MdzipLinkActivatedEvent` | Emitted for every preview link click before built-in handling; call `event.preventDefault()` to take over |
