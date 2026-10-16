@@ -7,12 +7,13 @@
   <style>
     html, body { margin: 0; height: 100%; font: 13px system-ui, sans-serif; background: #fff; color: #111; }
     body { display: flex; flex-direction: column; }
-    header { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ccc; background: #f4f4f4; }
+    /* Header and log keep their size; the editor gets the rest and can't paint outside it. */
+    header { flex: none; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid #ccc; background: #f4f4f4; }
     header input[type=text] { width: 230px; }
     #secure.ok { color: #555; }
     #secure.warn { color: #b00; font-weight: 600; }
-    #app { flex: 1; min-height: 0; }
-    #log { margin: 0; padding: 6px 12px; height: 72px; overflow: auto; border-top: 1px solid #ccc; background: #fafafa; font: 12px ui-monospace, monospace; white-space: pre-wrap; }
+    #app { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+    #log { flex: none; position: relative; z-index: 1; margin: 0; padding: 6px 12px; height: 72px; overflow: auto; border-top: 1px solid #ccc; background: #fafafa; font: 12px ui-monospace, monospace; white-space: pre-wrap; }
   </style>
 </head>
 <body>
