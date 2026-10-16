@@ -5,6 +5,9 @@
 ### Added
 - The color scheme menu's **System** choice can follow the host's own theme instead of the operating system's setting, with its own name and icon: new `systemColorScheme` option (`{ colorScheme, label?, icon? }`, e.g. `{ colorScheme: 'dark', label: 'VS Code theme', icon: '<svg…>' }`) and `setSystemColorScheme(source | null)` to report host theme changes (`null` goes back to the OS setting). While System is chosen the preview switches with the host theme, in place. The button's tooltip uses the name too ("Color scheme: VS Code theme (dark)"). The wrappers take a `systemColorScheme` input/prop and apply changes live. The test bench has a **System follows a host theme** control to try it.
 
+### Fixed
+- A document with footnotes no longer makes the host page scroll: the footnotes section's visually hidden "Footnotes" heading was positioned against the page, below the preview's scroll area, so a page sized to the window grew by the document's height and the editor slid over whatever sat below it.
+
 ## [2.1.0] - 2026-10-15
 
 Still requires `@mdzip/core-js` 2.0.1, which has no changes in this release, so the editor's version now moves on its own.

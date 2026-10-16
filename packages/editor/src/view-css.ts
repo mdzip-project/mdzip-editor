@@ -1398,6 +1398,13 @@ export const WORKSPACE_CSS = `
   color: var(--mdzip-muted-foreground-color);
 }
 
+/* Contains the visually hidden "Footnotes" heading below: without a positioned
+   ancestor it would be placed against the page, outside the preview's scroll
+   area, and make the host page itself scroll. */
+.mdzip-root .preview-content .footnotes {
+  position: relative;
+}
+
 .mdzip-root .preview-content .footnotes .sr-only {
   position: absolute;
   width: 1px;
