@@ -92,6 +92,7 @@ showUnchanged? }`) to opt any of them out.
 | `imageHydrationAnimation` | `'auto' \| 'initial' \| 'off'` | `'auto'` | Control preview image reveal animation: every render, first render per document path, or never |
 | `initialLayout` | `MdzipWorkspaceLayout` | — | Starting layout: `'preview'`, `'editor'`, `'split'` |
 | `initialColorScheme` | `MdzipColorSchemePreference` | `'system'` | `'light'`, `'dark'` or `'system'` (follows the OS setting live) |
+| `systemColorScheme` | `MdzipSystemColorScheme` | — | Makes the color scheme menu's System choice follow the host's theme instead of the OS setting, with its own `label` and `icon`, e.g. `{ colorScheme: 'dark', label: 'VS Code theme', icon: '<svg…>' }`; changes apply live |
 | `previewMaxWidth` | `MdzipPreviewMaxWidth` | `'default'` | Preview reading-column width: `'narrow'`, `'default'`, `'wide'`, `'full'` or a pixel number; the user can change it from the toolbar's page-width menu |
 | `navigationMode` | `MdzipNavigationMode` | — | Package navigation mode |
 | `navigationButtonActive` | `boolean` | — | Whether the navigation button is shown |
