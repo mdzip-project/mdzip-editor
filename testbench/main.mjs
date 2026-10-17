@@ -13,9 +13,14 @@ $('secure').textContent = window.isSecureContext
   : 'NOT a secure context: crypto.subtle is undefined';
 $('secure').className = window.isSecureContext ? 'ok' : 'warn';
 
+// ?progressive=1 renders the preview in chunks near the viewport, as VS Code and
+// Studio do for large documents (e.g. a Google Voice export).
+const progressive = new URLSearchParams(location.search).get('progressive') === '1';
+
 const view = new MdzipWorkspaceView($('app'), {
   controls: 'standalone-editor',
   initialLayout: 'split',
+  progressiveTextRendering: progressive,
   markdownExtensions: [mdzipMermaidExtension()],
   onColorSchemePreferenceChanged: (preference) => log(`onColorSchemePreferenceChanged('${preference}')`),
   onPreviewWidthChanged: (width) => log(`onPreviewWidthChanged('${width}')`),

@@ -492,6 +492,52 @@ const marked = new Marked({
 marked.use(markedFootnote());
 
 /**
+ * Calls `callback` on every token, depth first, in the same order as marked's
+ * own `walkTokens` (table cells, list items, extension child tokens, then
+ * `tokens`). Marked's version also collects every callback's return value by
+ * concatenating arrays as it goes, which is quadratic in the token count: on
+ * a large chat export it took 13 seconds plus 6 of garbage collection, and
+ * pushed VS Code's window past 4GB. Those values only matter to marked's async
+ * mode, which the editor doesn't use.
+ */
+function walkAllTokens(tokens: Token[], callback: (token: Token) => unknown): void {
+  const childTokens = marked.defaults.extensions?.childTokens ?? {};
+  const visit = (list: Token[]): void => {
+    for (const token of list) {
+      callback.call(marked, token);
+      switch (token.type) {
+        case 'table': {
+          const table = token as Tokens.Table;
+          for (const cell of table.header) {
+            visit(cell.tokens);
+          }
+          for (const row of table.rows) {
+            for (const cell of row) {
+              visit(cell.tokens);
+            }
+          }
+          break;
+        }
+        case 'list':
+          visit((token as Tokens.List).items);
+          break;
+        default: {
+          const names = childTokens[token.type];
+          if (names) {
+            for (const name of names) {
+              visit(((token as unknown as Record<string, unknown[]>)[name] ?? []).flat(Infinity) as Token[]);
+            }
+          } else if ('tokens' in token && token.tokens) {
+            visit(token.tokens);
+          }
+        }
+      }
+    }
+  };
+  visit(tokens);
+}
+
+/**
  * `marked.lexer()` plus the extensions' `walkTokens` hooks, which marked only
  * runs inside `parse()`. The footnote extension needs its hook to move the
  * footnotes section to the end and reset its per-document state.
@@ -500,7 +546,7 @@ function lexMarkdown(markdown: string): TokensList {
   const tokens = marked.lexer(markdown);
   const walkTokens = marked.defaults.walkTokens;
   if (walkTokens) {
-    marked.walkTokens(tokens, walkTokens);
+    walkAllTokens(tokens, walkTokens);
   }
   // The extension adds its section token to every document, first; the hook
   // moves a non-empty one to the end and leaves an empty `space` token behind.

@@ -104,3 +104,30 @@ test('a footnote target in an unmounted progressive chunk is reachable', async (
     container.remove();
   }
 });
+
+test("rendering does not use marked's quadratic token walk", () => {
+  // marked's own walkTokens concatenates an array per token, which is
+  // quadratic in the token count (about 13s on a large chat export); the
+  // editor walks tokens itself. Counting concat calls checks that directly,
+  // without depending on machine speed: marked's walk makes one per token.
+  const paragraphs = [];
+  for (let i = 0; i < 2000; i += 1) {
+    paragraphs.push(`Message ${i} with **bold** and a [link](https://mdzip.org/${i}).`);
+  }
+  const markdown = `${paragraphs.join('\n\n')}\n\nThe end.[^1]\n\n[^1]: A footnote.\n`;
+  const concat = Array.prototype.concat;
+  let calls = 0;
+  Array.prototype.concat = function (...args) {
+    calls += 1;
+    return concat.apply(this, args);
+  };
+  let html;
+  try {
+    html = defaultSafeMarkdownRenderer.render(markdown);
+  } finally {
+    Array.prototype.concat = concat;
+  }
+  assert.ok(calls < 1000, `${calls} concat calls for ~2,000 paragraphs`);
+  assert.match(html, /Message 1999/);
+  assert.ok(html.lastIndexOf('A footnote.') > html.indexOf('Message 1999'), 'the footnotes section is still at the end');
+});
