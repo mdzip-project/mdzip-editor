@@ -1,5 +1,5 @@
-Status: ready-to-commit
-Last:   Release v2.2.0 committed and tagged locally (large-document fix, host-theme System, Select All in hosts, tooltips, footnote scroll); push, GitHub release and npm publish pending (Kyle)
+Status: idle
+Last:   Released v2.2.0: @mdzip/editor, -ng, -react, -vue on npm and GitHub (2026-10-16); fixes the 2.1.0 large-document slowdown
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 
