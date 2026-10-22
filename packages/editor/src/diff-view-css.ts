@@ -34,6 +34,10 @@ export function injectDiffViewStyles(doc: Document): void {
 .mdzip-diff-heading>div{padding:10px 14px;overflow-wrap:anywhere}.mdzip-diff-heading>div+div{border-left:1px solid var(--mdzip-border-color,#d0d7de)}
 .mdzip-diff-body{flex:1;min-height:0;overflow:auto;position:relative}.mdzip-diff-body .cm-mergeView{height:100%;overflow:auto}
 .mdzip-diff-body .cm-editor{height:100%;font-size:13px}.mdzip-diff-body .cm-scroller{overflow:auto}
+/* Line-number gutters follow the host's colors, like the main editor's (#37), instead of
+   CodeMirror's light default (#60). Three classes deep to outrank CodeMirror's own
+   two-class base-theme rule, which is added at runtime and may come after this sheet. */
+.mdzip-diff-body .cm-editor .cm-gutters{background:transparent;border-right:1px solid var(--mdzip-border-color,#d0d7de);color:var(--mdzip-muted-foreground-color,#57606a)}
 .mdzip-diff-message{padding:24px;color:var(--mdzip-muted-foreground-color,#57606a)}
 .mdzip-diff-pair{display:grid;grid-template-columns:1fr 1fr;height:100%}.mdzip-diff-side{padding:18px;overflow:auto;min-width:0}
 .mdzip-diff-side+.mdzip-diff-side{border-left:1px solid var(--mdzip-border-color,#d0d7de)}

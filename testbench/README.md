@@ -38,6 +38,10 @@ editor has to handle.
 | Deep link | Link at the end of the sample, or **openPath** | Opens `docs/chapter.md` with "Deep section" at the top |
 | Keep file on reload | Open `docs/chapter.md`, then **Reload, keep file** | Still on `docs/chapter.md`; **Reload, back to entry point** returns to `index.md` |
 | Rename in place | **Rename in place** | Title shows the new name, same file open; a `.md` name is refused (log says `false`) |
+| Links in SVG diagrams | "Links in SVG diagrams" section; `TestFiles/svg-links-test.mdz` for more | Each box's link works and shows in the log; the diagram sits on the right; plain SVGs stay images; no alert from the hostile SVG |
+| Add Files… | Right-click a folder (or the tree's empty space) | A file picker; the chosen files appear in that folder |
+| Host file actions | Right-click a file in the tree | **Log This File (bench)** sits above Download (also on `manifest.json`) and logs the file's path and kind |
+| Archive images stay local | DevTools Network tab, then reload | No request for `images/sample.png` or `images/links.svg` to the bench's own server |
 | Plain HTTP | A LAN address | Header says "NOT a secure context"; the archive still opens and images show |
 
 The log at the bottom shows API results and the editor's callbacks.

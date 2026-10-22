@@ -138,6 +138,7 @@ import {
 } from './rendering.js';
 import { mdzipFrontMatterExtension, type MdzipFrontMatterOptions } from './front-matter-extension.js';
 import { WORKSPACE_CSS } from './view-css.js';
+import { INLINE_SVG_SHADOW_CSS } from './svg-inline.js';
 import type { MdzipWorkspaceSnapshot } from './workspace.js';
 
 const STYLE_ATTR = 'data-mdzip-ws-styles';
@@ -515,6 +516,34 @@ type MdzipNavMenuTarget =
     }
   | { kind: 'directory'; path: string };
 
+const HOST_FILE_ACTION_PREFIX = 'host:';
+
+/** The data type carrying dropped file addresses, if the drag has one. */
+function droppedUriListType(dataTransfer: DataTransfer | null | undefined): string | null {
+  const types = dataTransfer?.types ?? [];
+  for (const type of ['application/vnd.code.uri-list', 'text/uri-list']) {
+    if (types.includes(type)) return type;
+  }
+  return null;
+}
+
+/** URIs from a uri-list: one per line, `#` lines are comments (RFC 2483). */
+function parseUriList(text: string): string[] {
+  return text.split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+}
+
+
+
+function fileActionTarget(target: Extract<MdzipNavMenuTarget, { kind: 'file' }>): MdzipFileActionTarget {
+  return {
+    path: target.path,
+    isMarkdown: target.isMarkdown,
+    isImage: target.isImage,
+    isManifest: target.isManifest,
+    isEntryPoint: target.isEntryPoint
+  };
+}
+
 interface MdzipNavMenuItem {
   action: string;
   label: string;
@@ -742,6 +771,30 @@ export interface MdzipOpenPathOptions {
   anchor?: string;
 }
 
+/** The archive file a {@link MdzipFileAction} runs on. */
+export interface MdzipFileActionTarget {
+  /** Archive path, e.g. `diagrams/system.drawio.svg`. */
+  path: string;
+  isMarkdown: boolean;
+  isImage: boolean;
+  isManifest: boolean;
+  isEntryPoint: boolean;
+}
+
+/**
+ * A host-defined item in the file tree's right-click menu for files, for
+ * actions only the host can do, such as opening the file in another editor.
+ * Shown in read-only workspaces too: the host decides what's allowed.
+ */
+export interface MdzipFileAction {
+  /** Unique within the list. */
+  id: string;
+  label: string;
+  /** Which files get the item. All files when omitted. */
+  appliesTo?: (file: MdzipFileActionTarget) => boolean;
+  run: (file: MdzipFileActionTarget) => void | Promise<void>;
+}
+
 export interface MdzipWorkspaceViewOptions {
   /**
    * Additional host or framework libraries to show in Document Information.
@@ -924,6 +977,29 @@ export interface MdzipWorkspaceViewOptions {
    * Change at runtime with {@link MdzipWorkspaceView.setExternalLinks}.
    */
   externalLinks?: MdzipExternalLinkPolicy;
+  /**
+   * Shows an archive SVG image that contains links as inline SVG instead of
+   * an `<img>`, so its links can be clicked (an SVG loaded as an image is a
+   * flat picture). The SVG is cleaned first: no scripts or event handlers,
+   * nothing loaded from outside the archive, and its styles and ids stay in
+   * its own shadow root. Its links go through the same handling as other
+   * preview links. SVGs without links stay images. Defaults to `true`.
+   */
+  inlineSvgLinks?: boolean;
+  /**
+   * Extra items for the file tree's right-click menu on files, run by the
+   * host (for example "Open in VS Code Editor"). See {@link MdzipFileAction}.
+   */
+  hostFileActions?: readonly MdzipFileAction[];
+  /**
+   * Reads files dropped as addresses rather than contents, so they can be
+   * added to the archive. Some hosts only pass a dragged file's URI: VS Code,
+   * for a file dragged from its own Explorer, gives the webview a
+   * `text/uri-list`. Called with those URIs; return each readable file's name
+   * and bytes (skip folders and anything unreadable). Without it, such drops
+   * are ignored and only drops that carry the files themselves are added.
+   */
+  resolveDroppedUris?: (uris: string[]) => Promise<Array<{ name: string; bytes: Uint8Array }>>;
   /**
    * Fires when the preview HTML for the current selection has been mounted
    * into the DOM (image `src`s already resolved to their session URLs).
@@ -1520,6 +1596,12 @@ const noSpellcheckHighlight = ViewPlugin.fromClass(class {
 const IMAGE_EDIT_AFFORDANCE_CLICK_EVENT = 'mdzip-image-edit-affordance-click';
 /** Holds an archive image's original `src` in the preview, whose `src` becomes a blob: URL. */
 const PREVIEW_IMAGE_SOURCE_ATTRIBUTE = 'data-mdzip-source';
+// Holds an archive-relative image source between parsing the preview HTML and
+// the image pass (collectPendingImages), so the browser never sees it as a
+// `src` and never requests it from the host page's server (#61).
+const PREVIEW_IMAGE_PENDING_ATTRIBUTE = 'data-mdzip-pending-src';
+// External, protocol-relative, data, blob and fragment URLs: left as they are.
+const NON_ARCHIVE_IMAGE_SOURCE_RE = /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i;
 // Preview chrome the editor adds around rendered content: removed, or
 // unwrapped (children kept), when the selection is copied as HTML.
 const PREVIEW_CHROME_REMOVE_SELECTOR = [
@@ -2227,6 +2309,8 @@ export class MdzipWorkspaceView {
   private readonly elDeleteDialogText: HTMLElement;
   private readonly elDeleteConfirmBtn: HTMLButtonElement;
   private readonly elReplaceInput: HTMLInputElement;
+  private readonly elAddFilesInput: HTMLInputElement;
+  private pendingAddFilesDir: string | null = null;
   private readonly elTooltip: HTMLElement;
   private readonly elCopyToast: HTMLElement;
   private readonly elEmptyState: HTMLElement;
@@ -2349,6 +2433,7 @@ export class MdzipWorkspaceView {
     this.elDeleteDialogText = q('[data-ref="delete-dialog-text"]');
     this.elDeleteConfirmBtn = q('[data-ref="delete-confirm-btn"]');
     this.elReplaceInput = q('[data-ref="replace-input"]');
+    this.elAddFilesInput = q('[data-ref="add-files-input"]');
     this.elTooltip = q('[data-ref="tooltip"]');
     this.elCopyToast = q('[data-ref="copy-toast"]');
     this.elEmptyState = q('[data-ref="empty-state"]');
@@ -2886,7 +2971,10 @@ export class MdzipWorkspaceView {
     this.applyExternalLinkPolicy(this.elPreviewContent);
   }
 
-  private applyExternalLinkPolicy(root: HTMLElement): void {
+  private applyExternalLinkPolicy(root: ParentNode): void {
+    for (const host of Array.from(root.querySelectorAll('.mdzip-inline-svg'))) {
+      if (host.shadowRoot) this.applyExternalLinkPolicy(host.shadowRoot);
+    }
     const policy = this.options.externalLinks;
     for (const link of Array.from(root.querySelectorAll('a[href]'))) {
       const original = this.externalLinkOriginals.get(link);
@@ -3271,7 +3359,7 @@ export class MdzipWorkspaceView {
     generation: number,
     animateImageHydration: boolean
   ): void {
-    this.elPreviewContent.innerHTML = html;
+    this.elPreviewContent.replaceChildren(this.inertPreviewFragment(html));
     // Cheap pass over every <img> happens before extensions/code-block
     // controls mount, same relative order as always — see
     // collectPendingImages for why it's split from the (expensive) slot
@@ -3291,9 +3379,9 @@ export class MdzipWorkspaceView {
 
   /**
    * Cheap, attribute-only pass over every `<img>` under `roots`: no DOM tree
-   * mutation. Archive-relative sources have their `src` stripped here
-   * (immediately, so the browser never fires a bad network request for the
-   * archive-relative path) and are returned for {@link hydrateImages};
+   * mutation. Archive-relative sources (already moved off `src` by
+   * {@link inertPreviewFragment}, so the browser never requested them) are
+   * returned for {@link hydrateImages};
    * external/data/fragment sources are left untouched (just get their align
    * class, if any — they never get a slot). Returns `[]` without touching
    * anything when there's no asset session to resolve archive images
@@ -3310,6 +3398,65 @@ export class MdzipWorkspaceView {
    * the image, since a fresh `<img>` element never carries over its
    * predecessor's already-resolved `src`.
    */
+  /**
+   * Parses preview HTML without loading anything: a `<template>`'s content is
+   * inert, whereas `innerHTML` on any element of a live document (attached or
+   * not) starts fetching every `<img src>` at once, resolved against the host
+   * page's URL. Archive-relative sources move to a holding attribute for
+   * {@link collectPendingImages}; with no asset session to resolve them
+   * against, they're left as they are (that pass then skips them too).
+   */
+  private inertPreviewFragment(html: string): DocumentFragment {
+    const template = this.elPreviewContent.ownerDocument.createElement('template');
+    template.innerHTML = html;
+    if (this.assetSession) {
+      for (const image of Array.from(template.content.querySelectorAll<HTMLImageElement>('img[src]'))) {
+        const source = image.getAttribute('src');
+        if (!source || NON_ARCHIVE_IMAGE_SOURCE_RE.test(source)) continue;
+        image.setAttribute(PREVIEW_IMAGE_PENDING_ATTRIBUTE, source);
+        image.removeAttribute('src');
+      }
+    }
+    return template.content;
+  }
+
+  private inlineSvgLinksEnabled(): boolean {
+    return this.options.inlineSvgLinks !== false;
+  }
+
+  /**
+   * Replaces `image` with a shadow-root host holding a copy of the cleaned
+   * `svg` (see `svg-inline.ts`). The host carries the image's alt text,
+   * size, alignment and source path, so the layout matches the `<img>`.
+   */
+  private mountInlineSvg(image: HTMLImageElement, svg: SVGSVGElement): HTMLElement {
+    const doc = this.elPreviewContent.ownerDocument;
+    const host = doc.createElement('span');
+    host.className = 'mdzip-inline-svg';
+    for (const name of [PREVIEW_IMAGE_SOURCE_ATTRIBUTE, 'title']) {
+      const value = image.getAttribute(name);
+      if (value !== null) host.setAttribute(name, value);
+    }
+    for (const className of Array.from(image.classList)) {
+      if (className !== 'mdzip-image-loading') host.classList.add(className);
+    }
+    const alignClass = rawHtmlImageAlignClass(image);
+    if (alignClass) host.classList.add(alignClass);
+    const alt = image.getAttribute('alt');
+    host.setAttribute('role', 'group');
+    if (alt) host.setAttribute('aria-label', alt);
+    const width = image.getAttribute('width');
+    if (width && /^\d+(\.\d+)?$/.test(width)) host.style.width = `${width}px`;
+    else if (width) host.style.width = width;
+    const shadow = host.attachShadow({ mode: 'open' });
+    const style = doc.createElement('style');
+    style.textContent = INLINE_SVG_SHADOW_CSS + (host.style.width ? 'svg{width:100%}' : '');
+    shadow.append(style, svg.cloneNode(true));
+    this.applyExternalLinkPolicy(shadow);
+    image.replaceWith(host);
+    return host;
+  }
+
   private collectPendingImages(
     roots: readonly HTMLElement[],
     context: MdzipMarkdownRenderContext,
@@ -3323,9 +3470,11 @@ export class MdzipWorkspaceView {
     for (const root of roots) {
       for (const image of Array.from(root.querySelectorAll<HTMLImageElement>('img'))) {
         applyRawHtmlImageSizeAttributes(image);
-        const source = image.getAttribute('src');
+        const held = image.getAttribute(PREVIEW_IMAGE_PENDING_ATTRIBUTE);
+        if (held !== null) image.removeAttribute(PREVIEW_IMAGE_PENDING_ATTRIBUTE);
+        const source = held ?? image.getAttribute('src');
         // Leave external, protocol-relative, data, and fragment URLs untouched.
-        if (!source || /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(source)) {
+        if (!source || NON_ARCHIVE_IMAGE_SOURCE_RE.test(source)) {
           const alignClass = rawHtmlImageAlignClass(image);
           if (alignClass) {
             image.classList.add(alignClass);
@@ -3334,7 +3483,14 @@ export class MdzipWorkspaceView {
         }
         // The src is replaced by a blob: URL; Copy as HTML restores it from here.
         image.setAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE, source);
-        const known = this.assetSession.resolveKnownImage(source, context.currentPath);
+        const inlineSvg = this.inlineSvgLinksEnabled()
+          ? this.assetSession.knownInlineSvg(source, context.currentPath)
+          : null;
+        if (inlineSvg) {
+          this.mountInlineSvg(image, inlineSvg);
+          continue;
+        }
+        const known = inlineSvg === undefined ? undefined : this.assetSession.resolveKnownImage(source, context.currentPath);
         if (known) {
           if (known.width && known.height && !image.hasAttribute('width') && !image.hasAttribute('height')) {
             image.setAttribute('width', String(known.width));
@@ -3412,6 +3568,27 @@ export class MdzipWorkspaceView {
     };
 
     const hydrate = (image: HTMLImageElement, slot: HTMLElement, source: string): void => {
+      if (this.inlineSvgLinksEnabled() && session.knownInlineSvg(source, context.currentPath) !== null) {
+        void session.resolveInlineSvg(source, context.currentPath).then((svg) => {
+          if (generation !== this.previewGeneration || context.signal.aborted) {
+            settle();
+            return;
+          }
+          if (!svg) {
+            hydrateImage(image, slot, source);
+            return;
+          }
+          image.classList.remove('mdzip-image-loading');
+          this.mountInlineSvg(image, svg);
+          this.openImageSlot(slot);
+          settle();
+        });
+        return;
+      }
+      hydrateImage(image, slot, source);
+    };
+
+    const hydrateImage = (image: HTMLImageElement, slot: HTMLElement, source: string): void => {
       void session.resolveImage(source, context.currentPath).then((resolved) => {
         if (generation !== this.previewGeneration || context.signal.aborted) {
           settle();
@@ -4026,7 +4203,7 @@ export class MdzipWorkspaceView {
     const doc = this.elPreviewContent.ownerDocument;
     const wrapper = doc.createElement('div');
     wrapper.className = 'mdzip-chunk';
-    wrapper.innerHTML = html;
+    wrapper.appendChild(this.inertPreviewFragment(html));
     if (beforeNode && beforeNode.parentNode === this.elPreviewContent) {
       this.elPreviewContent.insertBefore(wrapper, beforeNode);
     } else {
@@ -5742,6 +5919,16 @@ export class MdzipWorkspaceView {
       }
     });
 
+    this.elAddFilesInput.addEventListener('change', () => {
+      const files = Array.from(this.elAddFilesInput.files ?? []);
+      const dir = this.pendingAddFilesDir;
+      this.elAddFilesInput.value = '';
+      this.pendingAddFilesDir = null;
+      if (files.length > 0 && dir !== null) {
+        void this.addDroppedFiles(dir, files);
+      }
+    });
+
     this.elReplaceInput.addEventListener('change', () => {
       const file = this.elReplaceInput.files?.[0];
       const path = this.pendingReplacePath;
@@ -5768,7 +5955,10 @@ export class MdzipWorkspaceView {
       this.elPreviewPane.focus({ preventScroll: true });
     });
     this.elPreviewPane.addEventListener('click', (event) => {
-      const link = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[href]');
+      // The event's path, not its target: clicks inside an inline SVG's shadow root are
+      // retargeted to the host, and SVG links are SVGAElements, not HTMLAnchorElements.
+      const link = event.composedPath().find((node): node is HTMLAnchorElement =>
+        (node as Node).nodeType === 1 && (node as Element).localName === 'a' && (node as Element).hasAttribute('href')) ?? null;
       const snapshot = this.workspace?.snapshot();
       if (!link || !snapshot) {
         return;
@@ -8573,12 +8763,15 @@ export class MdzipWorkspaceView {
       }
       return [
         { action: 'new-file', label: 'New .md File' },
-        { action: 'new-folder', label: 'New Folder' }
+        { action: 'new-folder', label: 'New Folder' },
+        null,
+        { action: 'add-files', label: 'Add Files…' }
       ];
     }
 
+    const hostItems = this.fileActionItems(target);
     if (target.isManifest) {
-      return [{ action: 'download', label: 'Download' }];
+      return [...hostItems, ...(hostItems.length ? [null] : []), { action: 'download', label: 'Download' }];
     }
 
     const groups: Array<Array<MdzipNavMenuItem>> = [];
@@ -8611,6 +8804,9 @@ export class MdzipWorkspaceView {
       }
       groups.push(editGroup);
     }
+    if (hostItems.length > 0) {
+      groups.push(hostItems);
+    }
     groups.push([{ action: 'download', label: 'Download' }]);
     if (canMutate && !target.isEntryPoint) {
       groups.push([{
@@ -8620,6 +8816,14 @@ export class MdzipWorkspaceView {
     }
 
     return groups.flatMap((group, index) => index === 0 ? group : [null, ...group]);
+  }
+
+  /** Menu items for the host's {@link MdzipFileAction}s that apply to this file. */
+  private fileActionItems(target: Extract<MdzipNavMenuTarget, { kind: 'file' }>): MdzipNavMenuItem[] {
+    const file = fileActionTarget(target);
+    return (this.options.hostFileActions ?? [])
+      .filter((item) => item.appliesTo?.(file) ?? true)
+      .map((item) => ({ action: `${HOST_FILE_ACTION_PREFIX}${item.id}`, label: item.label }));
   }
 
   private async handleNavMenuAction(action: string): Promise<void> {
@@ -8640,6 +8844,12 @@ export class MdzipWorkspaceView {
         case 'new-folder':
           if (target.kind === 'directory') {
             this.openNameDialog({ mode: 'new-folder', dir: target.path, value: 'new-folder' });
+          }
+          break;
+        case 'add-files':
+          if (target.kind === 'directory') {
+            this.pendingAddFilesDir = target.path;
+            this.elAddFilesInput.click();
           }
           break;
         case 'rename':
@@ -8695,6 +8905,11 @@ export class MdzipWorkspaceView {
           }
           break;
         default:
+          if (action.startsWith(HOST_FILE_ACTION_PREFIX) && target.kind === 'file') {
+            const id = action.slice(HOST_FILE_ACTION_PREFIX.length);
+            const item = (this.options.hostFileActions ?? []).find((candidate) => candidate.id === id);
+            await item?.run(fileActionTarget(target));
+          }
           break;
       }
     } catch (error) {
@@ -8963,7 +9178,8 @@ export class MdzipWorkspaceView {
       }
       const internal = this.dragSourcePath !== null
         || (e.dataTransfer?.types.includes('application/x-mdzip-path') ?? false);
-      const external = e.dataTransfer?.types.includes('Files') ?? false;
+      const external = (e.dataTransfer?.types.includes('Files') ?? false)
+        || (this.options.resolveDroppedUris !== undefined && droppedUriListType(e.dataTransfer) !== null);
       if (!internal && !external) {
         return;
       }
@@ -8998,6 +9214,14 @@ export class MdzipWorkspaceView {
       if (files && files.length > 0) {
         e.preventDefault();
         void this.addDroppedFiles(targetDir, Array.from(files));
+        return;
+      }
+      const uriListType = droppedUriListType(e.dataTransfer);
+      const resolveUris = this.options.resolveDroppedUris;
+      if (uriListType && resolveUris) {
+        e.preventDefault();
+        const uris = parseUriList(e.dataTransfer?.getData(uriListType) ?? '');
+        if (uris.length > 0) void this.addDroppedUris(targetDir, uris, resolveUris);
       }
     });
   }
@@ -9020,6 +9244,22 @@ export class MdzipWorkspaceView {
     try {
       await this.workspace?.renameFile(path, newPath);
       this.render();
+    } catch (error) {
+      this.options.onFailed?.(error);
+    }
+  }
+
+  private async addDroppedUris(
+    targetDir: string,
+    uris: string[],
+    resolveUris: NonNullable<MdzipWorkspaceViewOptions['resolveDroppedUris']>
+  ): Promise<void> {
+    try {
+      const resolved = await resolveUris(uris);
+      // `File` here is an imported icon; take the browser's class from the page's window.
+      const FileClass = this.elPreviewContent.ownerDocument.defaultView?.File ?? globalThis.File;
+      const files = resolved.map(({ name, bytes }) => new FileClass([bytes as BlobPart], name));
+      if (files.length > 0) await this.addDroppedFiles(targetDir, files);
     } catch (error) {
       this.options.onFailed?.(error);
     }
@@ -9758,6 +9998,7 @@ const SHELL_HTML = `
   </div>
 
   <input type="file" data-ref="replace-input" hidden />
+  <input type="file" data-ref="add-files-input" multiple hidden />
 
   <div class="nav-context-menu" data-ref="nav-menu" hidden role="menu"></div>
 

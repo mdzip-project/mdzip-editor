@@ -24,6 +24,11 @@ const view = new MdzipWorkspaceView($('app'), {
   markdownExtensions: [mdzipMermaidExtension()],
   onColorSchemePreferenceChanged: (preference) => log(`onColorSchemePreferenceChanged('${preference}')`),
   onPreviewWidthChanged: (width) => log(`onPreviewWidthChanged('${width}')`),
+  // Logged only: the built-in behavior (open the file, scroll, open the website) still runs.
+  onLinkActivated: (event) => log(`onLinkActivated: ${event.kind} '${event.href}'${event.targetPath ? ` -> ${event.targetPath}` : ''}`),
+  externalLinks: { target: '_blank' },
+  // A host action in the file tree's right-click menu: it only logs the file.
+  hostFileActions: [{ id: 'log-file', label: 'Log This File (bench)', run: (file) => log(`hostFileActions: ${JSON.stringify(file)}`) }],
   onFailed: (error) => log(`onFailed: ${error instanceof Error ? error.message : error}`)
 });
 

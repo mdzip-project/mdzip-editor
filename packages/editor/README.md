@@ -201,7 +201,8 @@ selection, dirty, validation, and snapshot changes. Asset hosts can also call
 
 With `controls: 'standalone-editor'` or `'hosted-editor'` (or `fileActions: true`
 in a custom policy), the navigation pane offers a right-click context menu: new
-`.md` file, new folder, rename/move (edit the full archive path), duplicate,
+`.md` file, new folder, **Add Files…** (a file picker; the files go into that
+folder), rename/move (edit the full archive path), duplicate,
 replace, download, copy markdown link / image embed, set entry point (shown bold
 in the tree), set/remove cover image, and delete with a confirmation prompt
 (orphaned assets delete immediately). The entry-point document and
@@ -209,9 +210,29 @@ in the tree), set/remove cover image, and delete with a confirmation prompt
 read-only contexts.
 
 Drag and drop is supported in all directions: move files between folders, drop
-OS files onto the pane to add them as assets, drag a tree file onto the editor
+OS files onto the pane to add them as assets (a host whose drags carry only file
+URIs, like VS Code's Explorer, can read them through `resolveDroppedUris`), drag a tree file onto the editor
 to insert a markdown link or image embed at the pointer, and drop an OS image
 onto the editor to embed it like a paste.
+
+**Host actions in the file menu.** `hostFileActions` adds the host's own items
+to the right-click menu on files, above Download, for things only the host can
+do. VS Code uses it for **Open in VS Code Editor**, which opens the file in
+whatever VS Code editor handles its type:
+
+```ts
+new MdzipWorkspaceView(container, {
+  hostFileActions: [{
+    id: 'open-elsewhere',
+    label: 'Open in Another Editor',
+    appliesTo: (file) => !file.isMarkdown,  // optional: which files get it
+    run: (file) => openElsewhere(file.path) // file: { path, isMarkdown, isImage, isManifest, isEntryPoint }
+  }]
+});
+```
+
+The items show in read-only workspaces too; the host decides what each one
+allows. The Angular, React and Vue wrappers take the same `hostFileActions`.
 
 The same operations are available programmatically: `removeFile()`,
 `renameFile()` (rewrites markdown references, including a moved document's own
@@ -243,7 +264,7 @@ against the same captured selection.
 
 A host that writes the image file itself (a linked image next to the `.md`) can
 still give the user the same Markdown/HTML, alt text, size and alignment choices
-a `.mdz` paste gets: `await context.promptImageInsert({ bytes, fileName, altText })`
+an `.mdz` paste gets: `await context.promptImageInsert({ bytes, fileName, altText })`
 runs `imageInsertHandler` or the `'ask'` dialog and resolves `null` on cancel
 (write nothing), then `context.formatImageInsert(src, decision)` returns the text
 to pass to `context.insertMarkdown()`. `src` is used as given, so URL-encode it.
@@ -608,6 +629,17 @@ reach the predicate; relative links and `#fragment`s never change. The policy
 also covers links written as raw HTML. It's unset by default, and
 `setExternalLinks(policy)` changes it at runtime without a re-render
 (`undefined` restores each link's own attributes).
+
+**Links inside SVG diagrams.** An SVG shown as an image is a flat picture,
+so its links can't be clicked. When an archive SVG contains links, such as a
+draw.io diagram saved as `.drawio.svg`, the preview shows it inline instead,
+in its own shadow root, and its links behave like any other preview link:
+`onLinkActivated`, links to other files in the archive and `externalLinks` all
+apply. The SVG is cleaned first: no scripts, event handlers or `javascript:`
+links, nothing loaded from outside the archive (other than `data:` images),
+and its styles and ids stay inside the shadow root. It keeps the image's
+`alt` text (as `aria-label`), `width` and `align`. SVGs without links stay
+images. Turn it off with `inlineSvgLinks: false`.
 
 **Deep links to headings.** `await view.scrollToAnchor('some-heading')`
 scrolls the preview to a heading or an explicit `<a id>`/`<a name>`. It accepts

@@ -56,6 +56,7 @@ import type {
   MdzWorkspace,
   MdzWorkspaceAsset,
   MdzipWorkspaceSnapshot,
+  MdzipFileAction,
 } from '@mdzip/editor';
 
 // Identity-insensitive key for the rendering props: extensions and entry
@@ -171,6 +172,13 @@ export const MdzipWorkspace = defineComponent({
      * `initialColorScheme` — changing it recreates the view.
      */
     progressiveTextRendering: Boolean,
+    /**
+     * Shows archive SVGs that contain links inline, so the links can be
+     * clicked (see the view option). Defaults to `true`. Constructor-only.
+     */
+    inlineSvgLinks: { type: Boolean, default: true },
+    /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
+    hostFileActions: Array as PropType<readonly MdzipFileAction[]>,
     navigationMode: {
       type: String as PropType<MdzipNavigationMode>,
       default: 'editor'
@@ -368,6 +376,8 @@ export const MdzipWorkspace = defineComponent({
         previewMaxWidth: props.previewMaxWidth,
         systemColorScheme: props.systemColorScheme,
         progressiveTextRendering: props.progressiveTextRendering,
+        inlineSvgLinks: props.inlineSvgLinks,
+        hostFileActions: props.hostFileActions,
         navigationMode: props.navigationMode,
         navigationButtonActive: props.navigationButtonActive,
         onChanged: (bytes, snapshot) => emit('changed', { bytes, snapshot }),
@@ -448,6 +458,7 @@ export const MdzipWorkspace = defineComponent({
       () => props.initialLayout,
       () => props.initialColorScheme,
       () => props.progressiveTextRendering,
+      () => props.inlineSvgLinks,
       () => props.navigationMode,
       () => props.navigationButtonActive
     ], () => {

@@ -57,6 +57,7 @@ import type {
   MdzipWorkspaceMode,
   MdzipWorkspaceSave,
   MdzipWorkspaceSnapshot,
+  MdzipFileAction,
 } from '@mdzip/editor';
 
 // Identity-insensitive key for the rendering inputs: extensions and entry
@@ -125,6 +126,13 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
    * `initialColorScheme` — changing it recreates the view.
    */
   @Input() progressiveTextRendering?: boolean;
+  /**
+   * Shows archive SVGs that contain links inline, so the links can be
+   * clicked (see the view option). Defaults to `true`. Constructor-only.
+   */
+  @Input() inlineSvgLinks?: boolean;
+  /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
+  @Input() hostFileActions?: readonly MdzipFileAction[];
   @Input() navigationMode: MdzipNavigationMode = 'editor';
   @Input() navigationButtonActive = true;
   /**
@@ -219,7 +227,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (this.view && (changes['initialLayout'] || changes['initialColorScheme'] || changes['progressiveTextRendering']
+    if (this.view && (changes['initialLayout'] || changes['initialColorScheme'] || changes['progressiveTextRendering'] || changes['inlineSvgLinks']
       || changes['navigationMode'] || changes['navigationButtonActive'])) {
       this.createView();
       this.syncView();
@@ -410,6 +418,8 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       previewMaxWidth: this.previewMaxWidth,
       systemColorScheme: this.systemColorScheme,
       progressiveTextRendering: this.progressiveTextRendering,
+      inlineSvgLinks: this.inlineSvgLinks,
+      hostFileActions: this.hostFileActions,
       navigationMode: this.navigationMode,
       navigationButtonActive: this.navigationButtonActive,
       onChanged: (bytes, snapshot) => this.changed.emit({ bytes, snapshot }),

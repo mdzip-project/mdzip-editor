@@ -1,5 +1,6 @@
 import { nfc, samePath, type MdzWorkspaceAsset } from '@mdzip/core-js';
 import { sha256Hex } from './sha256.js';
+import { sanitizeInlineSvg, svgHasLinks } from './svg-inline.js';
 import type { MdzipWorkspaceService } from './workspace.js';
 
 export interface MdzipAssetCacheEntry {
@@ -159,6 +160,9 @@ export class MdzipAssetSession {
   private readonly urls = new Map<string, string>();
   private readonly sizes = new Map<string, { width: number; height: number }>();
   private readonly pending = new Map<string, Promise<string | undefined>>();
+  /** Cleaned inline SVG per asset path; null when the SVG has no links (shown as an <img>). */
+  private readonly inlineSvgs = new Map<string, SVGSVGElement | null>();
+  private readonly pendingInlineSvgs = new Map<string, Promise<SVGSVGElement | null>>();
   private sourceIdPromise: Promise<string> | null = null;
   private destroyed = false;
 
@@ -183,6 +187,51 @@ export class MdzipAssetSession {
     if (!url) return undefined;
     const size = this.sizes.get(key);
     return size ? { url, width: size.width, height: size.height } : { url };
+  }
+
+  /**
+   * The cleaned inline `<svg>` for an SVG image that contains links (clone it
+   * for each use), null when it isn't an SVG or has no links, or undefined
+   * when this session hasn't checked it yet. See {@link resolveInlineSvg}.
+   */
+  public knownInlineSvg(path: string, currentPath: string): SVGSVGElement | null | undefined {
+    const assetPath = resolveAssetPath(path, currentPath, this.assets);
+    const asset = assetPath ? this.assets.find((item) => item.path === assetPath) : undefined;
+    if (!assetPath || !asset || !isSvgAsset(asset)) return null;
+    return this.inlineSvgs.get(assetPath);
+  }
+
+  /**
+   * Reads an SVG image asset and, when it contains links, returns it cleaned
+   * for inline display (see `svg-inline.ts`); null for anything else, which
+   * the preview keeps as an `<img>`. Checked once per asset per session.
+   */
+  public async resolveInlineSvg(path: string, currentPath: string): Promise<SVGSVGElement | null> {
+    if (this.destroyed) return null;
+    const assetPath = resolveAssetPath(path, currentPath, this.assets);
+    const asset = assetPath ? this.assets.find((item) => item.path === assetPath) : undefined;
+    if (!assetPath || !asset || !isSvgAsset(asset)) return null;
+    const known = this.inlineSvgs.get(assetPath);
+    if (known !== undefined) return known;
+    const active = this.pendingInlineSvgs.get(assetPath);
+    if (active) return active;
+    const pending = this.workspace.readPathBytes(asset.path)
+      .then((bytes) => {
+        if (!bytes || this.destroyed) return null;
+        const text = new TextDecoder().decode(bytes);
+        return svgHasLinks(text) ? sanitizeInlineSvg(text) : null;
+      })
+      .catch((error) => {
+        this.options.onFailed?.(error);
+        return null;
+      })
+      .then((svg) => {
+        if (!this.destroyed) this.inlineSvgs.set(assetPath, svg);
+        return svg;
+      })
+      .finally(() => this.pendingInlineSvgs.delete(assetPath));
+    this.pendingInlineSvgs.set(assetPath, pending);
+    return pending;
   }
 
   public async resolve(path: string, currentPath: string): Promise<string | undefined> {
@@ -451,6 +500,10 @@ export function sniffImageSize(
   }
 
   return undefined;
+}
+
+function isSvgAsset(asset: MdzWorkspaceAsset): boolean {
+  return asset.mimeType === 'image/svg+xml' || /\.svg$/i.test(asset.path);
 }
 
 function resolveAssetPath(

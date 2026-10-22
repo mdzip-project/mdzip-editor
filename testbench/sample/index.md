@@ -96,6 +96,21 @@ flowchart LR
   B -->|no| A
 ```
 
+## Links in SVG diagrams
+
+An SVG with links is shown inline, so its links can be clicked (an SVG image is
+a flat picture). Click each box: **Chapter** opens `docs/chapter.md`, **Deep
+section** opens it at that heading, **#toolbar** scrolls to the Toolbar section,
+and **mdzip.org** opens the website in a new tab. Each click is in the log. The
+diagram should sit on the right with this text beside it, like any
+`align="right"` image.
+
+<img src="images/links.svg" alt="Test diagram: chapter, deep section, toolbar and mdzip.org links" width="420" align="right">
+
+For the full set (draw.io's real Project diagram, an SVG without links and a
+hostile SVG that must never show an alert), choose
+`TestFiles/svg-links-test.mdz` with **Choose File**.
+
 ## Deep link into another file
 
 [Chapter, deep section](docs/chapter.md#deep-section) opens the chapter and

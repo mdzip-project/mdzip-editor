@@ -101,6 +101,8 @@ prop (`{ navigation?, changeTraversal?, showUnchanged? }`) to opt any out.
 | `previewMaxWidth` | `MdzipPreviewMaxWidth` | `'default'` | Preview reading-column width: `'narrow'`, `'default'`, `'wide'`, `'full'` or a pixel number; the user can change it from the toolbar's page-width menu |
 | `navigationMode` | `MdzipNavigationMode` | `'editor'` | Package navigation mode |
 | `navigationButtonActive` | `boolean` | `true` | Whether the navigation button is shown |
+| `inlineSvgLinks` | `boolean` | `true` | Shows archive SVGs that contain links inline, so the links can be clicked (draw.io `.drawio.svg` diagrams, for example); other SVGs stay images. Read when the view is created |
+| `hostFileActions` | `readonly MdzipFileAction[]` | — | The host's own items in the file tree's right-click menu on files (`{ id, label, appliesTo?, run }`), e.g. "Open in Another Editor". Read when the view is created |
 | `markdownRenderer` | `MdzipMarkdownRenderer \| null` | `null` | Custom markdown renderer (keep the reference stable) |
 | `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — inline arrays are safe |
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — inline arrays are safe |

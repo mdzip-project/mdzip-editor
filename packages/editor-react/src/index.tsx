@@ -43,6 +43,7 @@ import type {
   MdzipWorkspaceSnapshot,
   MdzWorkspace,
   MdzWorkspaceAsset,
+  MdzipFileAction,
 } from '@mdzip/editor';
 
 /**
@@ -164,6 +165,13 @@ export interface MdzipWorkspaceProps {
    * `initialColorScheme` — changing it recreates the view.
    */
   progressiveTextRendering?: boolean;
+  /**
+   * Shows archive SVGs that contain links inline, so the links can be
+   * clicked (see the view option). Defaults to `true`. Constructor-only.
+   */
+  inlineSvgLinks?: boolean;
+  /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
+  hostFileActions?: readonly MdzipFileAction[];
   navigationMode?: MdzipNavigationMode;
   navigationButtonActive?: boolean;
   onChanged?: (event: MdzipWorkspaceChange) => void;
@@ -295,6 +303,8 @@ function MdzipWorkspace({
   previewMaxWidth,
   systemColorScheme,
   progressiveTextRendering,
+  inlineSvgLinks,
+  hostFileActions,
   navigationMode,
   navigationButtonActive,
   onChanged,
@@ -395,6 +405,10 @@ function MdzipWorkspace({
     controls, toolbarDensity, contentDensity, imageHydrationAnimation, imageInsertMode, previewMaxWidth, systemColorScheme
   };
 
+  // Read when the view is created; a new array each render doesn't rebuild the view.
+  const hostFileActionsRef = useRef(hostFileActions);
+  hostFileActionsRef.current = hostFileActions;
+
   // Latest rendering props, read at view-create and apply time so prop
   // identity changes alone never rebuild the workspace view.
   const renderingRef = useRef({ markdownRenderer, markdownExtensions, entryRenderers, frontMatter, renderEntry });
@@ -461,6 +475,8 @@ function MdzipWorkspace({
       previewMaxWidth: controlsRef.current.previewMaxWidth,
       systemColorScheme: controlsRef.current.systemColorScheme,
       progressiveTextRendering,
+      inlineSvgLinks,
+      hostFileActions: hostFileActionsRef.current,
       navigationMode,
       navigationButtonActive,
       onChanged: (bytes, snapshot) => callbacksRef.current.onChanged?.({ bytes, snapshot }),
@@ -523,6 +539,7 @@ function MdzipWorkspace({
     initialLayout,
     initialColorScheme,
     progressiveTextRendering,
+    inlineSvgLinks,
     navigationMode,
     navigationButtonActive
   ]);

@@ -1,5 +1,5 @@
-Status: idle
-Last:   Released v2.2.0: @mdzip/editor, -ng, -react, -vue on npm and GitHub (2026-10-16); fixes the 2.1.0 large-document slowdown
+Status: ready-to-commit
+Last:   v2.3.0 prepared (2026-10-22): clickable links in SVG diagrams, hostFileActions, Add Files…, resolveDroppedUris, #60, #61, core-js ^2.1.1
 
 ## Host link and anchor APIs (#48, #49, #50) — 1.5.0
 

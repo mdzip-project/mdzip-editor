@@ -417,3 +417,31 @@ test('many entries open and filter without decoding selected content eagerly', a
     view.destroy();
   }
 });
+
+test('text diff gutters take the host colors, not CodeMirror\'s light default (#60)', async () => {
+  const before = await buildNewArchiveBytesWithTitle('# Notes\n\nOne\nTwo\n', 'Diff');
+  const after = await buildNewArchiveBytesWithTitle('# Notes\n\nOne\nTwo changed\n', 'Diff');
+  const container = document.createElement('div');
+  container.style.setProperty('--mdzip-border-color', 'rgb(60, 60, 60)');
+  container.style.setProperty('--mdzip-muted-foreground-color', 'rgb(139, 139, 139)');
+  document.body.appendChild(container);
+  const options = { before: { bytes: before, label: 'Base' }, after: { bytes: after, label: 'Working' }, initialPath: 'index.md' };
+  const view = new MdzipDiffView(container, options);
+  try {
+    await view.open(options);
+    let gutters = [];
+    for (let i = 0; i < 100 && gutters.length < 2; i += 1) {
+      gutters = [...container.querySelectorAll('.mdzip-diff-body .cm-gutters')];
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(gutters.length, 2, 'both sides have a line-number gutter');
+    for (const gutter of gutters) {
+      const style = window.getComputedStyle(gutter);
+      assert.notEqual(style.backgroundColor, 'rgb(245, 245, 245)', 'CodeMirror\'s light #f5f5f5 gutter background is overridden');
+      assert.match(style.backgroundColor, /^(transparent|rgba\(0, 0, 0, 0\))$/);
+    }
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});

@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.3.0] - 2026-10-22
+
+Requires `@mdzip/core-js` 2.1.1 (was 2.0.1). 2.1.1 keeps opening a workspace fast; avoid core-js 2.1.0, which made `openWorkspace()` read every document.
+
+### Added
+- **Add Files…** in the file tree's right-click menu on folders (and on the tree's empty space, for the archive root): pick one or more files to add to that folder, as if they'd been dropped there. Not shown in read-only workspaces.
+- **`resolveDroppedUris`** option: reads files dropped as URIs rather than contents (a `text/uri-list` or `application/vnd.code.uri-list` drag, which is what VS Code's Explorer gives a webview) so they can be added like any dropped file. Without it, such drops are left alone.
+- **Host actions in the file tree's right-click menu**: new option `hostFileActions` (`{ id, label, appliesTo?, run }`), shown on files above Download, in read-only workspaces too. `run` gets the file's path and kind. The VS Code extension uses it for **Open in VS Code Editor**. Also on the Angular, React and Vue wrappers.
+- **Links in SVG diagrams can be clicked.** An archive SVG that contains links, such as a draw.io diagram saved as `.drawio.svg`, is shown inline in its own shadow root instead of as an `<img>` (an SVG image is a flat picture). Its links go through the preview's usual handling: `onLinkActivated`, links to other files in the archive, and the `externalLinks` policy. The SVG is cleaned first: no scripts, event handlers or `javascript:` links; nothing loaded from outside the archive except `data:` images; styles and ids kept inside the shadow root. It keeps the image's `alt` (as `aria-label`), `width` and alignment. draw.io's HTML labels inside `<foreignObject>` are kept, which DOMPurify 3.4 removes by default against mutation XSS: the cleaned SVG is placed as DOM nodes and never parsed again, so that risk doesn't apply. SVGs without links stay images. New option `inlineSvgLinks` (default `true`), also on the Angular, React and Vue wrappers.
+
+### Fixed
+- **The preview no longer asks the host's server for archive images** (#61). The rendered HTML went into the page before each image was pointed at its copy inside the archive, so the browser had already requested a path like `images/photo.png` from the host page's own server. Where the host had a file at that path, its image could show briefly instead of the archive's. The preview is now parsed in an inert `<template>` and archive images keep their path off `src` until the image pass, in both the full and the chunked preview. Web, `data:` and `blob:` images are unchanged.
+- **Diff view line-number gutters follow the theme** (#60). They kept CodeMirror's light grey background and border in a dark theme; they're now transparent, with the host's border and muted text colors, like the main editor's.
+
+### Changed
+- `@mdzip/core-js` ^2.1.1: errors carry a `code`, `validate()` warns about missing images, and archives can record `producer.application`.
+- README: "an `.mdz` paste" (was "a `.mdz`").
+
 ## [2.2.0] - 2026-10-16
 
 Fixes a large-document slowdown introduced in 2.1.0; update from 2.1.0 if you open long documents. Still requires `@mdzip/core-js` 2.0.1.

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="420" height="150" viewBox="0 0 420 150" font-family="Segoe UI, sans-serif" font-size="13">
+  <rect x="0.5" y="0.5" width="419" height="149" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <a href="docs/chapter.md">
+    <rect x="16" y="16" width="120" height="48" rx="6" fill="#ddf4ff" stroke="#54aeff"/>
+    <text x="76" y="45" text-anchor="middle" fill="#0969da">Chapter</text>
+  </a>
+  <a xlink:href="docs/chapter.md#deep-section">
+    <rect x="150" y="16" width="120" height="48" rx="6" fill="#ddf4ff" stroke="#54aeff"/>
+    <text x="210" y="45" text-anchor="middle" fill="#0969da">Deep section</text>
+  </a>
+  <a href="#toolbar">
+    <rect x="284" y="16" width="120" height="48" rx="6" fill="#fff8c5" stroke="#d4a72c"/>
+    <text x="344" y="45" text-anchor="middle" fill="#7d4e00">#toolbar</text>
+  </a>
+  <a href="https://mdzip.org/" target="_blank">
+    <rect x="16" y="86" width="388" height="48" rx="6" fill="#dafbe1" stroke="#4ac26b"/>
+    <text x="210" y="115" text-anchor="middle" fill="#1a7f37">mdzip.org (external, new tab)</text>
+  </a>
+</svg>
