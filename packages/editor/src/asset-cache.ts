@@ -173,6 +173,11 @@ export class MdzipAssetSession {
     private readonly options: MdzipAssetSessionOptions = {}
   ) {}
 
+  /** The archive path an image source refers to, when it names a file in this archive. */
+  public assetPath(path: string, currentPath: string): string | undefined {
+    return resolveAssetPath(path, currentPath, this.assets);
+  }
+
   public resolveKnown(path: string, currentPath: string): string | undefined {
     const assetPath = resolveAssetPath(path, currentPath, this.assets);
     return assetPath ? this.urls.get(assetPath) : undefined;

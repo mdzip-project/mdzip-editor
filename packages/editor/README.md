@@ -641,6 +641,18 @@ and its styles and ids stay inside the shadow root. It keeps the image's
 `alt` text (as `aria-label`), `width` and `align`. SVGs without links stay
 images. Turn it off with `inlineSvgLinks: false`.
 
+**Raw draw.io diagrams.** The preview can't draw a `.drawio` or `.dio` file
+yet (#59). An image pointing at one, such as `![System](diagrams/system.drawio)`,
+shows a card instead of a broken image: the alt text (or file name), the
+file's path, why it isn't drawn, and how to show it (save it from draw.io as an
+editable SVG, `.drawio.svg`, which the preview draws). The host's
+`hostFileActions` that apply to the file appear on the card as buttons, so in
+VS Code **Open in VS Code Editor** opens it in Draw.io Integration. When the
+contents pane is shown (`controls.navigation`), the card also points to the
+same actions on the file's right-click menu there. Copying the
+preview gives the original `<img>` back, and plain-text copies leave the card
+out. `.drawio.svg` and `.drawio.png` files are ordinary images and unaffected.
+
 **Deep links to headings.** `await view.scrollToAnchor('some-heading')`
 scrolls the preview to a heading or an explicit `<a id>`/`<a name>`. It accepts
 the fragment with or without `#` and matches the way a clicked `#fragment`

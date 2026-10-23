@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0] - 2026-10-22
+
+Still requires `@mdzip/core-js` 2.1.1. The Angular, React and Vue wrappers have no changes of their own and require `@mdzip/editor` 2.4.0.
+
+### Added
+- **A card in place of raw draw.io diagrams.** The preview can't draw a `.drawio` or `.dio` file yet (#59), so an image pointing at one showed as a broken image. It now shows a card: the image's alt text (or the file name), the file's path, why it isn't drawn, and how to show it, by saving it from draw.io as an editable SVG (`.drawio.svg`). The host's `hostFileActions` that apply to the file become buttons on the card; in VS Code, **Open in VS Code Editor** opens the diagram in Draw.io Integration. When the contents pane is available, the card also says the same actions are on the file's right-click menu there. Copying the preview as HTML gives the original `<img>` back, and plain-text copies leave the card out. Follows the light and dark themes. `.drawio.svg` and `.drawio.png` stay images.
+
 ## [2.3.0] - 2026-10-22
 
 Requires `@mdzip/core-js` 2.1.1 (was 2.0.1). 2.1.1 keeps opening a workspace fast; avoid core-js 2.1.0, which made `openWorkspace()` read every document.

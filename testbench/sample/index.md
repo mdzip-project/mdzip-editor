@@ -111,6 +111,18 @@ For the full set (draw.io's real Project diagram, an SVG without links and a
 hostile SVG that must never show an alert), choose
 `TestFiles/svg-links-test.mdz` with **Choose File**.
 
+## draw.io diagrams
+
+The preview can't draw a raw `.drawio` file yet, so an image pointing at one
+shows a card instead of a broken image: the diagram's alt text, its path, why
+it isn't drawn and how to show it (save it as a `.drawio.svg`). The bench's
+host file action appears on the card as a **Log This File (bench)** button;
+clicking it logs `diagrams/flow.drawio`. Under it, the card says the same
+action is on the file's right-click menu in the contents pane. Copying this section as HTML gives an
+`<img>` again, without the card's text.
+
+![How an agent and the editor share an archive](diagrams/flow.drawio)
+
 ## Deep link into another file
 
 [Chapter, deep section](docs/chapter.md#deep-section) opens the chapter and

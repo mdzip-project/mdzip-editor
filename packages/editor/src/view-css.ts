@@ -1526,6 +1526,79 @@ export const WORKSPACE_CSS = `
   margin-right: auto;
 }
 
+/* Stands in for an image of a raw .drawio diagram, which the preview can't draw yet. */
+.mdzip-root .preview-content .mdzip-drawio-placeholder {
+  display: flex;
+  gap: 0.85em;
+  align-items: flex-start;
+  max-width: 40em;
+  margin: 0.75em 0;
+  padding: 0.85em 1em;
+  border: 1px dashed var(--mdzip-border-color);
+  border-radius: 6px;
+  background: var(--mdzip-code-background-color);
+  color: var(--mdzip-editor-foreground-color);
+  font-size: 0.92em;
+  line-height: 1.5;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--mdzip-muted-foreground-color);
+  padding-top: 0.1em;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  min-width: 0;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-file {
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-text {
+  margin-top: 0.25em;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-top: 0.5em;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-hint {
+  margin-top: 0.35em;
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 0.92em;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-action {
+  font: inherit;
+  font-size: 0.95em;
+  padding: 0.3em 0.85em;
+  border: 1px solid var(--mdzip-border-color);
+  border-radius: 4px;
+  background: var(--mdzip-editor-background-color);
+  color: var(--mdzip-editor-foreground-color);
+  cursor: pointer;
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-action:hover {
+  background: var(--mdzip-control-hover-background-color);
+}
+
+.mdzip-root .preview-content .mdzip-drawio-placeholder-action:focus-visible {
+  outline: 2px solid var(--mdzip-focus-outline-color);
+  outline-offset: 1px;
+}
+
 /* Progressive image hydration. Each archive image mounts inside a collapsed
    slot so the text stays compact and immediately readable; when the image
    resolves, the slot eases open (0fr -> 1fr) to the height reserved from its

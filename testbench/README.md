@@ -39,6 +39,7 @@ editor has to handle.
 | Keep file on reload | Open `docs/chapter.md`, then **Reload, keep file** | Still on `docs/chapter.md`; **Reload, back to entry point** returns to `index.md` |
 | Rename in place | **Rename in place** | Title shows the new name, same file open; a `.md` name is refused (log says `false`) |
 | Links in SVG diagrams | "Links in SVG diagrams" section; `TestFiles/svg-links-test.mdz` for more | Each box's link works and shows in the log; the diagram sits on the right; plain SVGs stay images; no alert from the hostile SVG |
+| draw.io placeholder | "draw.io diagrams" section | A card (title, path, how to show it) instead of a broken image; its **Log This File (bench)** button logs `diagrams/flow.drawio`, with "Or right-click flow.drawio in the contents pane" below it; follows light and dark |
 | Add Files… | Right-click a folder (or the tree's empty space) | A file picker; the chosen files appear in that folder |
 | Host file actions | Right-click a file in the tree | **Log This File (bench)** sits above Download (also on `manifest.json`) and logs the file's path and kind |
 | Archive images stay local | DevTools Network tab, then reload | No request for `images/sample.png` or `images/links.svg` to the bench's own server |

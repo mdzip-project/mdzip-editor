@@ -1602,6 +1602,11 @@ const PREVIEW_IMAGE_SOURCE_ATTRIBUTE = 'data-mdzip-source';
 const PREVIEW_IMAGE_PENDING_ATTRIBUTE = 'data-mdzip-pending-src';
 // External, protocol-relative, data, blob and fragment URLs: left as they are.
 const NON_ARCHIVE_IMAGE_SOURCE_RE = /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i;
+// A raw draw.io diagram (.drawio, .dio). The preview can't draw these yet (#59),
+// so an image pointing at one shows a placeholder card instead of a broken
+// image. `.drawio.svg` and `.drawio.png` end in .svg/.png and stay images.
+const DRAWIO_PATH_RE = /\.(?:drawio|dio)$/i;
+const DRAWIO_PLACEHOLDER_CLASS = 'mdzip-drawio-placeholder';
 // Preview chrome the editor adds around rendered content: removed, or
 // unwrapped (children kept), when the selection is copied as HTML.
 const PREVIEW_CHROME_REMOVE_SELECTOR = [
@@ -1610,8 +1615,9 @@ const PREVIEW_CHROME_REMOVE_SELECTOR = [
   '[data-mdzip-image-edit-affordance]'
 ].join(',');
 // Subtrees left out of a plain-text copy: the chrome above, plus markup whose
-// text isn't document text (a drawn diagram's SVG carries its stylesheet).
-const PLAIN_TEXT_SKIP_SELECTOR = `${PREVIEW_CHROME_REMOVE_SELECTOR},style,script,template,svg,button`;
+// text isn't document text (a drawn diagram's SVG carries its stylesheet, the
+// draw.io placeholder's explanation is the editor's, not the document's).
+const PLAIN_TEXT_SKIP_SELECTOR = `${PREVIEW_CHROME_REMOVE_SELECTOR},style,script,template,svg,button,.${DRAWIO_PLACEHOLDER_CLASS}`;
 
 /**
  * The text of rendered preview markup for a plain-text copy: the document's
@@ -3457,6 +3463,82 @@ export class MdzipWorkspaceView {
     return host;
   }
 
+  /**
+   * Replaces an image of a raw draw.io diagram (`.drawio`, `.dio`) with a card
+   * saying what it is, why the preview can't draw it yet (#59) and how to show
+   * it anyway, plus a button for each host file action that applies to it
+   * (VS Code's "Open in VS Code Editor" opens it in Draw.io Integration). The
+   * card keeps the image's source and alt text, so copying restores the image.
+   */
+  private mountDrawioPlaceholder(image: HTMLImageElement, path: string): HTMLElement {
+    const doc = this.elPreviewContent.ownerDocument;
+    const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
+      const node = doc.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+    const card = el('span', DRAWIO_PLACEHOLDER_CLASS);
+    card.setAttribute('role', 'note');
+    card.setAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE, image.getAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE) ?? path);
+    const alt = image.getAttribute('alt')?.trim() ?? '';
+    if (alt) card.setAttribute('data-mdzip-alt', alt);
+    const fileName = path.split('/').pop() ?? path;
+
+    const icon = el('span', `${DRAWIO_PLACEHOLDER_CLASS}-icon`);
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = '<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">'
+      + '<rect x="8.5" y="2.5" width="7" height="5" rx="1"/><rect x="2.5" y="16.5" width="7" height="5" rx="1"/>'
+      + '<rect x="14.5" y="16.5" width="7" height="5" rx="1"/><path d="M12 7.5v4.5M6 16.5V12h12v4.5"/></svg>';
+
+    const body = el('span', `${DRAWIO_PLACEHOLDER_CLASS}-body`);
+    body.append(
+      el('strong', `${DRAWIO_PLACEHOLDER_CLASS}-title`, alt || fileName),
+      el('span', `${DRAWIO_PLACEHOLDER_CLASS}-file`, `draw.io diagram · ${path}`)
+    );
+    const why = el('span', `${DRAWIO_PLACEHOLDER_CLASS}-text`);
+    why.append(
+      doc.createTextNode('This preview can\'t draw '),
+      el('code', '', '.drawio'),
+      doc.createTextNode(' files yet. To show the diagram here, save it from draw.io as an editable SVG ('),
+      el('code', '', '.drawio.svg'),
+      doc.createTextNode(') and use that file for the image instead. You can still open this file in draw.io to see and edit it.')
+    );
+    body.append(why);
+
+    const target: MdzipFileActionTarget = { path, isMarkdown: false, isImage: false, isManifest: false, isEntryPoint: false };
+    const actions = (this.options.hostFileActions ?? []).filter((item) => item.appliesTo?.(target) ?? true);
+    if (actions.length) {
+      const row = el('span', `${DRAWIO_PLACEHOLDER_CLASS}-actions`);
+      for (const action of actions) {
+        const button = el('button', `${DRAWIO_PLACEHOLDER_CLASS}-action`, action.label);
+        button.type = 'button';
+        button.addEventListener('click', () => {
+          void Promise.resolve()
+            .then(() => action.run(target))
+            .catch((error) => this.options.onFailed?.(error));
+        });
+        row.append(button);
+      }
+      body.append(row);
+      // The same actions are on the file's right-click menu in the contents
+      // pane, when this host shows one.
+      if (this.controlPolicy.navigation) {
+        const hint = el('span', `${DRAWIO_PLACEHOLDER_CLASS}-hint`);
+        hint.append(
+          doc.createTextNode('Or right-click '),
+          el('code', '', fileName),
+          doc.createTextNode(' in the contents pane.')
+        );
+        body.append(hint);
+      }
+    }
+
+    card.append(icon, body);
+    image.replaceWith(card);
+    return card;
+  }
+
   private collectPendingImages(
     roots: readonly HTMLElement[],
     context: MdzipMarkdownRenderContext,
@@ -3483,6 +3565,11 @@ export class MdzipWorkspaceView {
         }
         // The src is replaced by a blob: URL; Copy as HTML restores it from here.
         image.setAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE, source);
+        const drawioPath = this.assetSession.assetPath(source, context.currentPath);
+        if (drawioPath && DRAWIO_PATH_RE.test(drawioPath)) {
+          this.mountDrawioPlaceholder(image, drawioPath);
+          continue;
+        }
         const inlineSvg = this.inlineSvgLinksEnabled()
           ? this.assetSession.knownInlineSvg(source, context.currentPath)
           : null;
@@ -7504,6 +7591,13 @@ export class MdzipWorkspaceView {
     }
     const container = doc.createElement('div');
     container.appendChild(content);
+    // A draw.io placeholder copies as the image it stands for.
+    for (const card of Array.from(container.querySelectorAll(`.${DRAWIO_PLACEHOLDER_CLASS}`))) {
+      const image = doc.createElement('img');
+      image.setAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE, card.getAttribute(PREVIEW_IMAGE_SOURCE_ATTRIBUTE) ?? '');
+      image.setAttribute('alt', card.getAttribute('data-mdzip-alt') ?? '');
+      card.replaceWith(image);
+    }
     const text = previewPlainText(container);
     for (const element of Array.from(container.querySelectorAll(PREVIEW_CHROME_REMOVE_SELECTOR))) {
       element.remove();
