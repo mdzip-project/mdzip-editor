@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Images used by a second document are no longer flagged as unused.** In an archive with several Markdown files, the contents pane's unused-image check looked only at the entry point, so an image used only by another document was marked unused and offered for deletion. The full check now scans every Markdown file, and the estimate that updates while you type keeps counting the other documents' images. In a multi-document archive, typing before the first full check no longer guesses. A reference like `../images/x.png` from a document in a subfolder now resolves to `images/x.png`.
+
 ## [2.4.0] - 2026-10-22
 
 Still requires `@mdzip/core-js` 2.1.1. The Angular, React and Vue wrappers have no changes of their own and require `@mdzip/editor` 2.4.0.

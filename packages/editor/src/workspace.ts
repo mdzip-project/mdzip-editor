@@ -16,6 +16,7 @@ import {
   findOrphanedAssetPathsInArchive,
   openedArchiveFromWorkspace,
   readBinaryFileFromArchive,
+  readMarkdownDocumentsFromArchive,
   type ArchiveEntry,
   type OpenedArchive
 } from './archive-utils.js';
@@ -181,6 +182,11 @@ export class MdzipWorkspaceService {
   private fileName: string;
   // Orphaned paths derived from the current in-memory text; null means use contentValue.
   private liveOrphanedPaths: string[] | null = null;
+  // The images each Markdown file references, by path, from the last full
+  // orphan check, with the current file kept up to date as it is edited. The
+  // live estimate needs every document: an image used only by another file is
+  // still in use. null until the first full check.
+  private imageRefsByDocument: Map<string, Set<string>> | null = null;
   private workerClient?: MdzArchiveWorkerClient;
 
   private constructor(
@@ -561,6 +567,7 @@ export class MdzipWorkspaceService {
         markdownText: entryBytes ? new TextDecoder('utf-8').decode(entryBytes) : ''
       };
       this.liveOrphanedPaths = null;
+      this.imageRefsByDocument = null;
     }
     this.dirtyValue = true;
     this.emit('edit', ['manifest'], 'manifest.json');
@@ -680,7 +687,12 @@ export class MdzipWorkspaceService {
     const bytes = this.archiveBytes.length > 0
       ? this.archiveBytes
       : await this.serializeWorkspaceBytes();
-    this.liveOrphanedPaths = await findOrphanedAssetPathsInArchive(bytes);
+    const [orphaned, documents] = await Promise.all([
+      findOrphanedAssetPathsInArchive(bytes),
+      readMarkdownDocumentsFromArchive(bytes)
+    ]);
+    this.liveOrphanedPaths = orphaned;
+    this.imageRefsByDocument = new Map(documents.map((doc) => [doc.path, documentImageRefs(doc.path, doc.text)]));
     return true;
   }
 
@@ -856,6 +868,7 @@ export class MdzipWorkspaceService {
     this.currentPathValue = this.contentValue.entryPoint;
     this.currentPathTypeValue = 'markdown';
     this.liveOrphanedPaths = null;
+    this.imageRefsByDocument = null;
     this.clearPendingChanges();
   }
 
@@ -873,6 +886,7 @@ export class MdzipWorkspaceService {
     this.workspaceValue = await openCoreWorkspace(bytes, this.workerClient);
     this.contentValue = await openedArchiveFromWorkspace(this.workspaceValue);
     this.liveOrphanedPaths = null;
+    this.imageRefsByDocument = null;
     this.clearPendingChanges();
 
     if (removedPath && samePath(currentPath, removedPath)) {
@@ -1060,11 +1074,24 @@ export class MdzipWorkspaceService {
     }
   }
 
-  private computeLiveOrphanedPaths(markdownText: string): string[] {
-    const baseDir = this.currentPathValue.includes('/')
-      ? this.currentPathValue.slice(0, this.currentPathValue.lastIndexOf('/') + 1)
-      : '';
-    const referenced = referencedImagePaths(markdownText, baseDir);
+  /**
+   * The images no document references, with the current file's text as just
+   * edited. Every document counts: an image used only by another file is in
+   * use. Returns null (not known yet) for an archive with several Markdown
+   * files before the first full check has recorded what the others reference.
+   */
+  private computeLiveOrphanedPaths(markdownText: string): string[] | null {
+    const currentRefs = documentImageRefs(this.currentPathValue, markdownText);
+    let referenced = currentRefs;
+    if (this.imageRefsByDocument) {
+      this.imageRefsByDocument.set(this.currentPathValue, currentRefs);
+      referenced = new Set<string>();
+      for (const refs of this.imageRefsByDocument.values()) {
+        for (const ref of refs) referenced.add(ref);
+      }
+    } else if (this.contentValue.paths.filter((e) => e.isMarkdown).length > 1) {
+      return null;
+    }
     return this.contentValue.paths
       .filter((e) => e.isImage && !referenced.has(e.path))
       .map((e) => e.path);
@@ -1104,6 +1131,13 @@ function referencedImagePaths(markdown: string, baseDir: string): Set<string> {
     refs.add(decoded.replace(/^\.\//, ''));
     const resolved = decoded.startsWith('/') ? decoded.slice(1) : `${baseDir}${decoded.replace(/^\.\//, '')}`;
     refs.add(resolved);
+    // `../images/x.png` from chapters/02.md is images/x.png.
+    const segments: string[] = [];
+    for (const segment of resolved.split('/')) {
+      if (segment === '..') segments.pop();
+      else if (segment !== '.' && segment !== '') segments.push(segment);
+    }
+    refs.add(segments.join('/'));
   };
 
   for (const raw of MdzArchiveCore.extractImageReferences(markdown)) {
@@ -1111,6 +1145,12 @@ function referencedImagePaths(markdown: string, baseDir: string): Set<string> {
   }
 
   return refs;
+}
+
+// The images a Markdown file at `path` references, resolved against its folder.
+function documentImageRefs(path: string, markdown: string): Set<string> {
+  const baseDir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+  return referencedImagePaths(markdown, baseDir);
 }
 
 function archiveDirName(path: string): string {

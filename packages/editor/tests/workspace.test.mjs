@@ -570,6 +570,40 @@ test('async full-archive orphan scan (via @mdzip/core-js) recognizes raw HTML <i
   assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths, ['images/b.png']);
 });
 
+// An archive with a second document, in a subfolder, that uses its own image.
+async function twoDocumentArchive() {
+  return buildNewArchiveBytesWithTitle('# Doc\n![c](images/c.png)\n', 'Doc', [
+    { archivePath: 'chapters/02.md', fileBytes: new TextEncoder().encode('# Two\n\n![b](../images/b.png "A title")\n') },
+    { archivePath: 'images/a.png', fileBytes: PNG_1X1 },
+    { archivePath: 'images/b.png', fileBytes: PNG_1X1 },
+    { archivePath: 'images/c.png', fileBytes: PNG_1X1 }
+  ]);
+}
+
+test('the full orphan check counts images used by any document, not just the entry point', async () => {
+  const workspace = await MdzipWorkspaceService.open(await twoDocumentArchive(), { mode: 'editable' });
+  await workspace.ensureOrphanedAssetsAnalyzed();
+  assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths, ['images/a.png']);
+});
+
+test('the live estimate while typing keeps counting the other documents\' images', async () => {
+  const workspace = await MdzipWorkspaceService.open(await twoDocumentArchive(), { mode: 'editable' });
+  await workspace.ensureOrphanedAssetsAnalyzed();
+  // The entry point drops its image: c is unused now, b is still used by chapters/02.md.
+  workspace.editText('# Doc\n');
+  assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths.slice().sort(), ['images/a.png', 'images/c.png']);
+  // And back.
+  workspace.editText('# Doc\n![c](images/c.png)\n');
+  assert.deepEqual(workspace.snapshot().content.orphanedAssetPaths, ['images/a.png']);
+});
+
+test('before the first full check, typing in a multi-document archive flags nothing it cannot know', async () => {
+  const workspace = await MdzipWorkspaceService.open(await twoDocumentArchive(), { mode: 'editable' });
+  workspace.editText('# Doc\n');
+  assert.ok(!workspace.snapshot().content.orphanedAssetPaths.includes('images/b.png'),
+    'images/b.png is used by chapters/02.md');
+});
+
 test('latest [bytes] wins when two openArchive calls resolve out of order', async () => {
   // Force the FIRST (superseded) parse to resolve AFTER the second so the stale
   // result, if not guarded by a generation token, would overwrite the latest

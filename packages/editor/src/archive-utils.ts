@@ -32,7 +32,8 @@ export interface NewArchiveAsset {
 
 export async function openMdzArchive(bytes: Uint8Array): Promise<OpenedArchive> {
   return openedArchiveFromWorkspace(await MdzArchiveCore.openWorkspace(bytes, {
-    includeOrphanedAssetAnalysis: true
+    includeOrphanedAssetAnalysis: true,
+    orphanedAssetScanMode: 'all-markdown'
   }));
 }
 
@@ -101,15 +102,28 @@ export async function removeFilesFromArchive(
   return blobToBytes(result.blob);
 }
 
-export async function findOrphanedAssetPathsInArchive(
-  existingBytes: Uint8Array,
-  entryPoint?: string
-): Promise<string[]> {
-  const result = await MdzArchiveCore.findOrphanedAssets(
-    existingBytes,
-    entryPoint ? { entryPoint } : undefined
-  );
+/**
+ * Images that no Markdown file in the archive references. Every document is
+ * scanned, not just the entry point: an image used only by a second document
+ * is in use, and the orphan actions offer to delete what this returns.
+ */
+export async function findOrphanedAssetPathsInArchive(existingBytes: Uint8Array): Promise<string[]> {
+  const result = await MdzArchiveCore.findOrphanedAssets(existingBytes, { scanMode: 'all-markdown' });
   return result.orphanedAssetPaths;
+}
+
+/** Every Markdown file in the archive with its text, for per-document reference scans. */
+export async function readMarkdownDocumentsFromArchive(
+  existingBytes: Uint8Array
+): Promise<Array<{ path: string; text: string }>> {
+  const archive = await openArchiveCached(existingBytes);
+  const documents: Array<{ path: string; text: string }> = [];
+  for (const entry of archive.listEntries()) {
+    if (entry.isMarkdown) {
+      documents.push({ path: entry.path, text: await archive.readText(entry.path) });
+    }
+  }
+  return documents;
 }
 
 // Keyed by the byte buffer's identity: callers that keep reading from the
