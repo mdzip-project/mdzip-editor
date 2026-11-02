@@ -814,6 +814,27 @@ export function tokenIsHeading(token: Token): boolean {
   return token.type === 'heading';
 }
 
+const HTML_CONTAINER_TAGS =
+  'address|article|aside|blockquote|center|details|dialog|dd|div|dl|dt|fieldset|figure|footer|header|li|main|nav|ol|section|table|tbody|td|th|thead|tr|ul';
+const HTML_CONTAINER_OPEN_PATTERN = new RegExp(`<(?:${HTML_CONTAINER_TAGS})\\b[^>]*>`, 'gi');
+const HTML_CONTAINER_CLOSE_PATTERN = new RegExp(`</(?:${HTML_CONTAINER_TAGS})\\s*>`, 'gi');
+
+/**
+ * How many HTML container elements (`<div>`, `<details>`, ...) a raw HTML
+ * block token opens, minus how many it closes. A wrapper such as
+ * `<div align="right">` followed by a blank line, some Markdown, and
+ * `</div>` is three separate top-level tokens; they have to be rendered in
+ * one chunk, or the browser closes the `<div>` at the end of the first chunk
+ * and drops the stray `</div>`, losing the wrapper.
+ */
+export function htmlContainerDepthChange(token: Token): number {
+  if (token.type !== 'html') return 0;
+  const raw = token.raw ?? '';
+  const opened = raw.match(HTML_CONTAINER_OPEN_PATTERN)?.length ?? 0;
+  const closed = raw.match(HTML_CONTAINER_CLOSE_PATTERN)?.length ?? 0;
+  return opened - closed;
+}
+
 /**
  * Groups top-level block tokens from {@link MdzipRenderingService.tokenizeMarkdown}
  * into chunks suitable for incremental rendering — a token-count cap and a
@@ -826,6 +847,12 @@ export function tokenIsHeading(token: Token): boolean {
  * have happily grouped it with neighbors; `shouldStartChunk` overrides it in
  * the other — forcing a boundary before a matching token even when the
  * budget would have merged it with what came before.
+ *
+ * Neither override, nor the budget, splits inside an open HTML container
+ * (see {@link htmlContainerDepthChange}): everything from `<div ...>` to its
+ * `</div>` stays in one chunk. A container that's never closed keeps the rest
+ * of the document in one chunk, which renders correctly, just less
+ * incrementally.
  */
 export function groupTokensIntoChunks(
   tokens: readonly Token[],
@@ -836,8 +863,11 @@ export function groupTokensIntoChunks(
   const chunks: Token[][] = [];
   let current: Token[] = [];
   let currentChars = 0;
+  let htmlDepth = 0;
   for (const token of tokens) {
-    if (options.shouldIsolate?.(token)) {
+    const insideHtml = htmlDepth > 0;
+    const opensHtml = htmlContainerDepthChange(token) > 0;
+    if (!insideHtml && !opensHtml && options.shouldIsolate?.(token)) {
       if (current.length > 0) {
         chunks.push(current);
         current = [];
@@ -846,14 +876,15 @@ export function groupTokensIntoChunks(
       chunks.push([token]);
       continue;
     }
-    if (options.shouldStartChunk?.(token) && current.length > 0) {
+    if (!insideHtml && options.shouldStartChunk?.(token) && current.length > 0) {
       chunks.push(current);
       current = [];
       currentChars = 0;
     }
     current.push(token);
     currentChars += token.raw?.length ?? 0;
-    if (current.length >= tokenCap || currentChars >= charBudget) {
+    htmlDepth = Math.max(0, htmlDepth + htmlContainerDepthChange(token));
+    if (htmlDepth === 0 && (current.length >= tokenCap || currentChars >= charBudget)) {
       chunks.push(current);
       current = [];
       currentChars = 0;

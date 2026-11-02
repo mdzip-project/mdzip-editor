@@ -219,6 +219,43 @@ test('groupTokensIntoChunks isolates a shouldIsolate-matched token into its own 
   }
 });
 
+test('groupTokensIntoChunks keeps an HTML wrapper and the Markdown inside it in one chunk', async () => {
+  // Regression: a chat export wraps outgoing messages in
+  // `<div align="right">`, a blank line, Markdown (including an image), and
+  // `</div>`. Split across chunks, the browser closed the <div> at the end
+  // of the first chunk and the alignment was lost.
+  const markdown = [
+    '## Thu, Oct 29, 2026',
+    '',
+    '<div align="right">',
+    '',
+    '**Me** 9:12 PM',
+    '',
+    'Finished the new hilt.',
+    '',
+    '![An attached image](images/hilt.jpg)',
+    '',
+    '</div>',
+    '',
+    'A reply from someone else.',
+    ''
+  ].join('\n');
+  const service = new MdzipRenderingService(defaultSafeMarkdownRenderer, []);
+  const context = renderContext();
+  const tokens = await service.tokenizeMarkdown(markdown, context);
+  const options = { tokenCap: 1, shouldIsolate: tokenEmbedsImage, shouldStartChunk: tokenIsHeading };
+  const chunks = groupTokensIntoChunks(tokens, options);
+
+  const wrapper = chunks.find((chunk) => chunk.some((token) => /<div align="right">/.test(token.raw ?? '')));
+  assert.ok(wrapper, 'a chunk opens the wrapper');
+  assert.ok(wrapper.some((token) => /<\/div>/.test(token.raw ?? '')), 'the same chunk closes it');
+  assert.ok(wrapper.some(tokenEmbedsImage), 'the image inside the wrapper is not isolated out of it');
+  assert.ok(!wrapper.some((token) => /someone else/.test(token.raw ?? '')), 'chunking resumes after the wrapper closes');
+
+  const rendered = await renderChunkedConcat(service, markdown, context, options);
+  assert.match(rendered, /<div align="right">[\s\S]*Finished the new hilt[\s\S]*An attached image[\s\S]*<\/div>/);
+});
+
 test('tokenEmbedsImage detects Markdown and raw HTML image syntax', () => {
   assert.equal(tokenEmbedsImage({ raw: '![alt text](./photo.png)\n' }), true);
   assert.equal(tokenEmbedsImage({ raw: '<img src="./photo.png" alt="alt text">\n' }), true);
