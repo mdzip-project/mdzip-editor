@@ -172,6 +172,12 @@ export interface MdzipRenderHandle {
   destroy(): void;
 }
 
+/** Which chunk a chunked-preview `transformHtml` call is rendering. */
+export interface MdzipChunkRenderInfo {
+  /** The chunk's position in the document, from 0. */
+  index: number;
+}
+
 /**
  * Composable extension over the default markdown pipeline:
  *
@@ -197,9 +203,18 @@ export interface MdzipMarkdownRenderExtension {
     context: MdzipMarkdownRenderContext
   ): string | Promise<string>;
 
+  /**
+   * `chunk` is set when the preview renders the document in chunks (see
+   * {@link MdzipRenderingService.renderChunk}): this call covers only that
+   * chunk's HTML. Output that belongs once at the top of the document (the
+   * front matter panel, say) goes on `chunk.index === 0`. Editing the
+   * document re-renders only the chunks that changed, so the first chunk
+   * rendered in a pass isn't necessarily chunk 0.
+   */
   transformHtml?(
     html: string,
-    context: MdzipMarkdownRenderContext
+    context: MdzipMarkdownRenderContext,
+    chunk?: MdzipChunkRenderInfo
   ): string | Promise<string>;
 
   mount?(
@@ -736,7 +751,8 @@ export class MdzipRenderingService {
    */
   public renderChunk(
     tokens: readonly Token[],
-    context: MdzipMarkdownRenderContext
+    context: MdzipMarkdownRenderContext,
+    chunk?: MdzipChunkRenderInfo
   ): string | Promise<string> {
     if (this.renderer !== defaultSafeMarkdownRenderer) {
       throw new Error(
@@ -746,7 +762,7 @@ export class MdzipRenderingService {
     let value: string | Promise<string> = marked.parser(tokens as Token[]);
     for (const ext of this.extensions) {
       if (ext.transformHtml) {
-        value = chainRenderStage(value, (html) => ext.transformHtml!(html, context), context.signal);
+        value = chainRenderStage(value, (html) => ext.transformHtml!(html, context, chunk), context.signal);
       }
     }
     const contributions = this.extensions

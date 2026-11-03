@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-11-02
+
+Requires `@mdzip/core-js` 2.2.1. The Angular, React and Vue wrappers have no changes of their own and require `@mdzip/editor` 2.4.2.
+
+### Fixed
+- **Image syntax shown as an example inside an HTML table or `<pre>` is no longer reported as a missing image.** CommonMark shows Markdown inside an HTML block as plain text, but the image checks counted it (from `@mdzip/core-js` 2.2.1, mdzip-core-js#11).
+- **The front matter panel no longer shows up a second time while you type.** Editing a document with front matter redraws only the changed part of the preview, and that part got its own copy of the panel, below whichever heading you were typing under. The panel now stays once at the top. Editing just the front matter now updates the panel too; before, it kept showing the old values until the document was reopened.
+
+### Added
+- `transformHtml` extensions get a third argument, `{ index }`, when the preview renders in chunks, so output meant for the top of the document can go on chunk 0 only (`MdzipChunkRenderInfo`). Also exports `frontMatterBlockText()`.
+
 ## [2.4.1] - 2026-11-02
 
 Still requires `@mdzip/core-js` 2.1.1. The Angular, React and Vue wrappers have no changes of their own and require `@mdzip/editor` 2.4.1.

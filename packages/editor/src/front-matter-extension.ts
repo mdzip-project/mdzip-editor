@@ -119,8 +119,9 @@ function renderPanel(options: MdzipFrontMatterOptions, frontMatter: MdzipFrontMa
  * `transformMarkdown` and `transformHtml` run against the same render
  * context object within one render generation (including once per chunk in
  * the chunked preview path), so the parsed front matter is stashed keyed by
- * that context and consumed by whichever `transformHtml` call comes first —
- * always chunk 0, since chunks render in strict order.
+ * that context and consumed by the `transformHtml` call for the whole
+ * document or, when chunked, for chunk 0 (an edit can re-render later
+ * chunks without chunk 0, and those must not pick the panel up).
  */
 export function mdzipFrontMatterExtension(options: MdzipFrontMatterOptions = {}): MdzipMarkdownRenderExtension {
   const enabled = options.enabled ?? true;
@@ -136,7 +137,12 @@ export function mdzipFrontMatterExtension(options: MdzipFrontMatterOptions = {})
       pending.set(context, parsed);
       return parsed.body;
     },
-    transformHtml(html, context) {
+    transformHtml(html, context, chunk) {
+      // In the chunked preview the panel belongs to chunk 0 only. An edit
+      // re-renders just the changed chunks and keeps chunk 0, panel and all.
+      if (chunk && chunk.index !== 0) {
+        return html;
+      }
       const parsed = pending.get(context);
       if (!parsed) {
         return html;

@@ -137,6 +137,7 @@ import {
   type Token
 } from './rendering.js';
 import { mdzipFrontMatterExtension, type MdzipFrontMatterOptions } from './front-matter-extension.js';
+import { frontMatterBlockText } from './front-matter.js';
 import { WORKSPACE_CSS } from './view-css.js';
 import { INLINE_SVG_SHADOW_CSS } from './svg-inline.js';
 import type { MdzipWorkspaceSnapshot } from './workspace.js';
@@ -3841,6 +3842,20 @@ export class MdzipWorkspaceView {
     });
   }
 
+  /**
+   * Each chunk's reuse key (`chunkSourceKey`). Chunk 0's also covers the
+   * front matter: it's stripped before chunking, so no chunk's own text
+   * includes it, but chunk 0 shows its panel and must re-render when it
+   * changes.
+   */
+  private chunkKeys(chunks: readonly Token[][], markdown: string): string[] {
+    const frontMatter = frontMatterBlockText(markdown);
+    return chunks.map((chunk, index) => {
+      const key = chunkSourceKey(chunk);
+      return index === 0 && frontMatter ? `${frontMatter}\u0002${key}` : key;
+    });
+  }
+
   /** Destroys one chunk record's mounted DOM and handles (but not the record object itself). */
   private teardownChunkRecord(record: MdzipChunkRecord): void {
     for (const handle of record.handles) {
@@ -3895,7 +3910,7 @@ export class MdzipWorkspaceView {
     }
 
     const oldKeys = oldRecords.map((r) => r.key);
-    const newKeys = newChunks.map((c) => chunkSourceKey(c));
+    const newKeys = this.chunkKeys(newChunks, snapshot.currentText);
 
     const maxMatch = Math.min(oldKeys.length, newKeys.length);
     let prefixLen = 0;
@@ -4057,8 +4072,9 @@ export class MdzipWorkspaceView {
       this.fireAssetsHydrated(snapshot, generation);
       return;
     }
-    const records: MdzipChunkRecord[] = chunks.map((chunkTokens) => ({
-      key: chunkSourceKey(chunkTokens),
+    const keys = this.chunkKeys(chunks, snapshot.currentText);
+    const records: MdzipChunkRecord[] = chunks.map((chunkTokens, index) => ({
+      key: keys[index],
       tokens: chunkTokens,
       root: null,
       html: null,
@@ -4217,7 +4233,7 @@ export class MdzipWorkspaceView {
         if (cacheHit !== undefined) {
           html = cacheHit;
         } else {
-          const result = this.renderingService.renderChunk(chunkTokens, context);
+          const result = this.renderingService.renderChunk(chunkTokens, context, { index: chunkIndex });
           html = typeof result === 'string' ? result : await result;
         }
       } catch (error) {
@@ -7939,7 +7955,7 @@ export class MdzipWorkspaceView {
         if (cacheHit !== undefined) {
           chunkHtml = cacheHit;
         } else {
-          const result = this.renderingService.renderChunk(chunks[chunkIndex], context);
+          const result = this.renderingService.renderChunk(chunks[chunkIndex], context, { index: chunkIndex });
           chunkHtml = typeof result === 'string' ? result : await result;
           // Only populate the shared cache if this generation is *still*
           // the live one at the moment this (possibly async) render

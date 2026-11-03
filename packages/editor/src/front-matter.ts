@@ -21,6 +21,24 @@ const OPEN_FENCE_PATTERN = /^---\r?\n/;
 const CLOSE_FENCE_PATTERN = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/;
 
 /**
+ * The leading `---`-fenced block's source text, fences included, or `''`
+ * when there is none. Doesn't parse the YAML: the chunked preview uses it to
+ * notice a front matter edit, which changes no chunk's own text.
+ */
+export function frontMatterBlockText(markdown: string): string {
+  const openMatch = OPEN_FENCE_PATTERN.exec(markdown);
+  if (!openMatch) {
+    return '';
+  }
+  const rest = markdown.slice(openMatch[0].length);
+  const closeMatch = CLOSE_FENCE_PATTERN.exec(rest);
+  if (!closeMatch) {
+    return '';
+  }
+  return markdown.slice(0, openMatch[0].length + closeMatch.index + closeMatch[0].length);
+}
+
+/**
  * Parses a leading YAML front matter block from markdown text. Returns
  * `null` when there is no block at position 0, or when the block's YAML
  * fails to parse or does not resolve to a plain key/value map (e.g. a bare

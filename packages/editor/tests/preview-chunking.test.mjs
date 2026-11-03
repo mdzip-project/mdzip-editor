@@ -664,3 +664,43 @@ test('reconciliation: a second edit landing while the first reconciliation is st
   }
 });
 
+
+// --- Front matter in the chunked preview ---
+
+function frontMatterMarkdown(value) {
+  return `---\naccount: ${value}\n---\n\n# Title\n\n## Section one\n\nFirst section text.\n\n## Section two\n\nSecond section text.\n`;
+}
+
+test('reconciliation: editing a later section keeps one front matter panel, in the first chunk', async () => {
+  const { view, dispose } = await createOpenView({ progressiveTextRendering: false }, frontMatterMarkdown('111'));
+  try {
+    await waitFor(() => assert.match(view.elPreviewContent.textContent, /Second section text/));
+    assert.equal(view.elPreviewContent.querySelectorAll('.mdzip-frontmatter').length, 1);
+
+    const text = view.workspace.snapshot().currentText;
+    view.workspace.editText(text.replace('Second section text.', 'Second section text EDITED.'));
+    await waitFor(() => assert.match(view.elPreviewContent.textContent, /EDITED/));
+
+    const panels = view.elPreviewContent.querySelectorAll('.mdzip-frontmatter');
+    assert.equal(panels.length, 1, 'the panel is not added again to the re-rendered chunk');
+    assert.strictEqual(panels[0].closest('.mdzip-chunk'), view.elPreviewContent.querySelector('.mdzip-chunk'));
+  } finally {
+    dispose();
+  }
+});
+
+test('reconciliation: editing only the front matter updates the panel', async () => {
+  const { view, dispose } = await createOpenView({ progressiveTextRendering: false }, frontMatterMarkdown('111'));
+  try {
+    await waitFor(() => assert.match(view.elPreviewContent.textContent, /Second section text/));
+
+    const text = view.workspace.snapshot().currentText;
+    view.workspace.editText(text.replace('account: 111', 'account: 222'));
+    await waitFor(() => assert.match(view.elPreviewContent.querySelector('.mdzip-frontmatter')?.textContent ?? '', /222/));
+
+    assert.equal(view.elPreviewContent.querySelectorAll('.mdzip-frontmatter').length, 1);
+    assert.doesNotMatch(view.elPreviewContent.textContent, /111/);
+  } finally {
+    dispose();
+  }
+});
