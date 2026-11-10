@@ -1,7 +1,4 @@
-[![MDZip logo][mdzip-logo]][mdzip-url]
-
-[mdzip-logo]: https://raw.githubusercontent.com/mdzip-project/mdzip-editor/main/resources/mdzip-mark.svg
-[mdzip-url]: https://mdzip.org
+<a href="https://mdzip.org"><img src="https://mdzip.org/assets/images/mdzip-mark-square.svg" alt="MDZip logo" width="64" height="64"></a>
 
 # @mdzip/editor-react
 
