@@ -3,7 +3,7 @@ import { MergeView } from '@codemirror/merge';
 import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { MdzArchiveCore } from '@mdzip/core-js';
-import { ChevronDown, ChevronUp, Eye, PanelLeft, RefreshCw, type IconNode } from 'lucide';
+import { ChevronDown, ChevronUp, Eye, Hash, ListFilter, PanelLeft, RefreshCw, type IconNode } from 'lucide';
 import {
   createArchiveInventoryFromArchive,
   diffArchiveInventories,
@@ -11,7 +11,8 @@ import {
   type ArchiveInventoryDiff,
   type ArchiveInventoryDiffEntry
 } from './diff.js';
-import { injectDiffViewStyles } from './diff-view-css.js';
+import { markBlockChanges, renderSideFragment, syncScroll, type RenderedSideSource } from './diff-rendered.js';
+import { injectDiffViewStyles, injectPreviewStyles } from './diff-view-css.js';
 
 export interface MdzipDiffSideInput {
   bytes?: Uint8Array;
@@ -37,7 +38,8 @@ export interface MdzipDiffToolbarAction {
 }
 
 /**
- * Toggles for the library-owned toolbar controls. All default to `true`.
+ * Toggles for the library-owned toolbar controls. All default to `true`
+ * except `showUnchanged`.
  * Host-specific actions are supplied separately via `toolbarActions`.
  */
 export interface MdzipDiffControlsOptions {
@@ -45,8 +47,13 @@ export interface MdzipDiffControlsOptions {
   navigation?: boolean;
   /** Previous/next change traversal buttons. */
   changeTraversal?: boolean;
-  /** Show-unchanged pressed toggle. */
+  /**
+   * Show-unchanged pressed toggle. Off by default: the navigation list
+   * already shows unchanged entries, dimmed.
+   */
   showUnchanged?: boolean;
+  /** Rendered/source toggle for Markdown entries. */
+  rendered?: boolean;
 }
 
 export interface MdzipDiffViewOptions {
@@ -55,9 +62,18 @@ export interface MdzipDiffViewOptions {
   initialPath?: string;
   showUnchanged?: boolean;
   navigationVisible?: boolean;
+  /**
+   * Show Markdown entries rendered, as the workspace preview shows them,
+   * instead of as source. Default `false`. The toolbar toggle changes it.
+   */
+  rendered?: boolean;
+  /** Color scheme for rendered Markdown (code blocks, front matter). Default `'light'`. */
+  colorScheme?: 'light' | 'dark';
   controls?: MdzipDiffControlsOptions;
   toolbarActions?: readonly MdzipDiffToolbarAction[];
   onSelectionChanged?: (event: MdzipDiffSelectionEvent) => void;
+  /** Called when the rendered/source toggle changes, so a host can remember it. */
+  onRenderedChanged?: (rendered: boolean) => void;
   onFailed?: (error: Error) => void;
 }
 
@@ -81,10 +97,14 @@ export class MdzipDiffView {
   private selectedPath: string | null = null;
   private showUnchanged: boolean;
   private navigationVisible: boolean;
+  private rendered: boolean;
+  private colorScheme: 'light' | 'dark';
   private controls: Required<MdzipDiffControlsOptions>;
   private mergeView: MergeView | null = null;
   private editorViews: EditorView[] = [];
   private objectUrls: string[] = [];
+  private renderAbort: AbortController | null = null;
+  private stopScrollSync: (() => void) | null = null;
   private openingOptions: MdzipDiffViewOptions | null = null;
   private openingPromise: Promise<void> | null = null;
   private toolbarActions: readonly MdzipDiffToolbarAction[];
@@ -97,6 +117,9 @@ export class MdzipDiffView {
   private readonly prevChangeButton: HTMLButtonElement;
   private readonly nextChangeButton: HTMLButtonElement;
   private readonly showUnchangedButton: HTMLButtonElement;
+  private readonly viewModeGroup: HTMLElement;
+  private readonly sourceButton: HTMLButtonElement;
+  private readonly renderedButton: HTMLButtonElement;
   private readonly actionHost: HTMLElement;
   private readonly nav: HTMLElement;
   private readonly summary: HTMLElement;
@@ -108,6 +131,8 @@ export class MdzipDiffView {
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? true;
     this.navigationVisible = options.navigationVisible ?? true;
+    this.rendered = options.rendered ?? false;
+    this.colorScheme = options.colorScheme ?? 'light';
     this.controls = resolveControls(options.controls);
     this.toolbarActions = options.toolbarActions ?? [];
     injectDiffViewStyles(container.ownerDocument);
@@ -119,7 +144,11 @@ export class MdzipDiffView {
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="navigation" title="Toggle navigation" aria-label="Toggle navigation"></button>
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="prev-change" title="Previous change" aria-label="Previous change"></button>
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="next-change" title="Next change" aria-label="Next change"></button>
-        <button class="mdzip-diff-toolbar-button" type="button" data-ref="show-unchanged" title="Show unchanged" aria-label="Show unchanged"></button>
+        <button class="mdzip-diff-toolbar-button" type="button" data-ref="show-unchanged" title="Show unchanged files" aria-label="Show unchanged files"></button>
+        <div class="mdzip-diff-toolbar-group" data-ref="view-mode" role="group" aria-label="Markdown view">
+          <button class="mdzip-diff-toolbar-button" type="button" data-ref="source" title="Show Markdown source" aria-label="Show Markdown source"></button>
+          <button class="mdzip-diff-toolbar-button" type="button" data-ref="rendered" title="Show rendered Markdown" aria-label="Show rendered Markdown"></button>
+        </div>
         <div class="mdzip-diff-toolbar-actions" data-ref="actions"></div>
       </div>
       <div class="mdzip-diff-workspace">
@@ -139,6 +168,9 @@ export class MdzipDiffView {
     this.prevChangeButton = this.root.querySelector('[data-ref="prev-change"]') as HTMLButtonElement;
     this.nextChangeButton = this.root.querySelector('[data-ref="next-change"]') as HTMLButtonElement;
     this.showUnchangedButton = this.root.querySelector('[data-ref="show-unchanged"]') as HTMLButtonElement;
+    this.viewModeGroup = this.root.querySelector('[data-ref="view-mode"]') as HTMLElement;
+    this.sourceButton = this.root.querySelector('[data-ref="source"]') as HTMLButtonElement;
+    this.renderedButton = this.root.querySelector('[data-ref="rendered"]') as HTMLButtonElement;
     this.actionHost = this.root.querySelector('[data-ref="actions"]') as HTMLElement;
     this.nav = this.root.querySelector('.mdzip-diff-nav') as HTMLElement;
     this.summary = this.root.querySelector('.mdzip-diff-summary') as HTMLElement;
@@ -151,8 +183,13 @@ export class MdzipDiffView {
     this.prevChangeButton.addEventListener('click', () => { void this.openPreviousChange(); });
     this.nextChangeButton.innerHTML = iconHtml(ChevronDown);
     this.nextChangeButton.addEventListener('click', () => { void this.openNextChange(); });
-    this.showUnchangedButton.innerHTML = iconHtml(Eye);
+    this.showUnchangedButton.innerHTML = iconHtml(ListFilter);
     this.showUnchangedButton.addEventListener('click', () => this.setShowUnchanged(!this.showUnchanged));
+    // Same icons as the editor's view modes: # for Markdown source, the eye for rendered.
+    this.sourceButton.innerHTML = iconHtml(Hash);
+    this.sourceButton.addEventListener('click', () => { void this.setRendered(false); });
+    this.renderedButton.innerHTML = iconHtml(Eye);
+    this.renderedButton.addEventListener('click', () => { void this.setRendered(true); });
     this.renderToolbar();
     void this.open(options);
   }
@@ -179,6 +216,8 @@ export class MdzipDiffView {
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? this.showUnchanged;
     this.navigationVisible = options.navigationVisible ?? this.navigationVisible;
+    this.rendered = options.rendered ?? this.rendered;
+    this.colorScheme = options.colorScheme ?? this.colorScheme;
     if (options.controls) this.controls = resolveControls(options.controls);
     this.toolbarActions = options.toolbarActions ?? this.toolbarActions;
     this.renderToolbar();
@@ -217,6 +256,29 @@ export class MdzipDiffView {
     if (this.showUnchanged === show) return;
     this.showUnchanged = show;
     this.renderNavigation();
+  }
+
+  /**
+   * Shows Markdown entries rendered (both sides as the preview shows them,
+   * with differing blocks marked) or as source. Re-renders the selected
+   * entry when it's Markdown.
+   */
+  public async setRendered(rendered: boolean): Promise<void> {
+    if (this.rendered === rendered) return;
+    this.rendered = rendered;
+    this.updateBuiltInControls();
+    this.options.onRenderedChanged?.(rendered);
+    if (this.selectedPath && this.selectedEntry()?.kind === 'markdown') {
+      await this.renderSelection(this.selectedPath);
+    }
+  }
+
+  public get isRendered(): boolean {
+    return this.rendered;
+  }
+
+  private selectedEntry(): ArchiveInventoryDiffEntry | undefined {
+    return this.diff?.entries.find((entry) => entry.path === this.selectedPath);
   }
 
   /**
@@ -280,6 +342,7 @@ export class MdzipDiffView {
     this.prevChangeButton.hidden = !this.controls.changeTraversal;
     this.nextChangeButton.hidden = !this.controls.changeTraversal;
     this.showUnchangedButton.hidden = !this.controls.showUnchanged;
+    this.viewModeGroup.hidden = !this.controls.rendered;
     this.setNavigationVisible(this.navigationVisible);
     this.updateBuiltInControls();
     this.actionHost.replaceChildren();
@@ -308,6 +371,15 @@ export class MdzipDiffView {
     this.nextChangeButton.disabled = !this.adjacentChange(1);
     this.showUnchangedButton.setAttribute('aria-pressed', String(this.showUnchanged));
     this.showUnchangedButton.classList.toggle('active', this.showUnchanged);
+    this.sourceButton.setAttribute('aria-pressed', String(!this.rendered));
+    this.sourceButton.classList.toggle('active', !this.rendered);
+    this.renderedButton.setAttribute('aria-pressed', String(this.rendered));
+    this.renderedButton.classList.toggle('active', this.rendered);
+    // Only Markdown has a rendered form; the choice is kept for the next Markdown entry.
+    const entry = this.selectedEntry();
+    const notMarkdown = Boolean(entry) && entry?.kind !== 'markdown';
+    this.sourceButton.disabled = notMarkdown;
+    this.renderedButton.disabled = notMarkdown;
   }
 
   private async runToolbarAction(action: MdzipDiffToolbarAction): Promise<void> {
@@ -424,7 +496,12 @@ export class MdzipDiffView {
         const afterText = decodeText(afterBytes);
         if ((beforeBytes === null || beforeText !== null)
           && (afterBytes === null || afterText !== null)) {
-          this.renderText(beforeText, afterText, entry);
+          if (this.rendered && entry.kind === 'markdown') {
+            await this.renderRendered(beforeText, afterText, entry, generation);
+            if (generation !== this.selectionGeneration) return;
+          } else {
+            this.renderText(beforeText, afterText, entry);
+          }
         } else {
           this.renderBinary(beforeBytes, afterBytes, entry);
         }
@@ -463,6 +540,107 @@ export class MdzipDiffView {
       gutter: true,
       diffConfig: { scanLimit: 2000, timeout: 100 }
     });
+  }
+
+  private async renderRendered(
+    before: string | null,
+    after: string | null,
+    entry: ArchiveInventoryDiffEntry,
+    generation: number
+  ): Promise<void> {
+    if (!this.before || !this.after) return;
+    const doc = this.root.ownerDocument;
+    injectPreviewStyles(doc);
+    const abort = new AbortController();
+    this.renderAbort = abort;
+    const [beforeFragment, afterFragment] = await Promise.all([
+      renderSideFragment(doc, this.renderedSource(this.before, before, entry.before?.path), abort.signal),
+      renderSideFragment(doc, this.renderedSource(this.after, after, entry.after?.path), abort.signal)
+    ]);
+    if (generation !== this.selectionGeneration) return;
+
+    const beforePane = this.renderedPane(beforeFragment);
+    const afterPane = this.renderedPane(afterFragment);
+    const pair = this.createPair(beforePane.side, afterPane.side);
+    pair.classList.add('mdzip-diff-rendered-pair');
+    this.body.replaceChildren(pair);
+    if (beforePane.content && afterPane.content) {
+      const matched = markBlockChanges(beforePane.content, afterPane.content);
+      this.stopScrollSync = syncScroll(beforePane.side, afterPane.side, matched);
+      // Open at the first change, not the top; the other side follows.
+      const firstChange = (pane: { side: HTMLElement; content: HTMLElement | null }) => {
+        const block = pane.content?.querySelector<HTMLElement>(':scope > .mdzip-diff-block-added, :scope > .mdzip-diff-block-removed');
+        return block
+          ? { side: pane.side, offset: block.getBoundingClientRect().top - pane.side.getBoundingClientRect().top + pane.side.scrollTop }
+          : null;
+      };
+      const target = [firstChange(beforePane), firstChange(afterPane)]
+        .filter((candidate): candidate is { side: HTMLElement; offset: number } => candidate !== null)
+        .sort((a, b) => a.offset - b.offset)[0];
+      if (target) target.side.scrollTop = Math.max(0, target.offset - 48);
+    }
+  }
+
+  private renderedSource(side: DiffSide, markdown: string | null, path: string | undefined): RenderedSideSource {
+    return {
+      markdown,
+      path,
+      manifest: side.inventory.manifest,
+      colorScheme: this.colorScheme,
+      readBytes: async (entryPath) => {
+        if (!side.archive || !side.inventory.entries.some((item) => item.path === entryPath)) return null;
+        return side.archive.readBytes(entryPath);
+      },
+      hashOf: (entryPath) => side.inventory.entries.find((item) => item.path === entryPath)?.hash,
+      createUrl: (bytes, mime) => {
+        const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }));
+        this.objectUrls.push(url);
+        return url;
+      }
+    };
+  }
+
+  /**
+   * One side of the rendered comparison, inside the workspace preview's own
+   * `.mdzip-root .preview-content` scope so it's styled like the preview.
+   */
+  private renderedPane(fragment: DocumentFragment | null): { side: HTMLElement; content: HTMLElement | null } {
+    const doc = this.root.ownerDocument;
+    const side = doc.createElement('div');
+    side.className = 'mdzip-diff-side mdzip-diff-rendered-side';
+    if (!fragment) {
+      side.classList.add('mdzip-diff-missing');
+      side.textContent = 'File does not exist';
+      return { side, content: null };
+    }
+    const scope = doc.createElement('div');
+    scope.className = `mdzip-root mdzip-diff-preview-scope${this.colorScheme === 'dark' ? ' mdzip-theme-dark' : ''}`;
+    const content = doc.createElement('article');
+    content.className = 'preview-content mdzip-diff-preview';
+    content.append(fragment);
+    scope.append(content);
+    side.append(scope);
+    side.addEventListener('click', (event) => this.handleRenderedClick(event, side));
+    return { side, content };
+  }
+
+  // Links in the rendered comparison don't navigate: the page is a
+  // comparison, not a browser. A `#fragment` link scrolls its own side.
+  private handleRenderedClick(event: MouseEvent, side: HTMLElement): void {
+    const link = (event.target as Element | null)?.closest?.('a[href]');
+    if (!link) return;
+    event.preventDefault();
+    const href = link.getAttribute('href') ?? '';
+    if (!href.startsWith('#')) return;
+    let id = href.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      // Use the raw fragment.
+    }
+    const target = Array.from(side.querySelectorAll<HTMLElement>('[id]'))
+      .find((element) => element.id === id || element.id === `user-content-${id}`);
+    target?.scrollIntoView({ block: 'start' });
   }
 
   private textSide(text: string | null, extensions: readonly Extension[]): HTMLElement {
@@ -565,6 +743,10 @@ export class MdzipDiffView {
   }
 
   private disposeSelection(): void {
+    this.renderAbort?.abort();
+    this.renderAbort = null;
+    this.stopScrollSync?.();
+    this.stopScrollSync = null;
     this.mergeView?.destroy();
     this.mergeView = null;
     for (const editor of this.editorViews) editor.destroy();
@@ -595,7 +777,8 @@ function resolveControls(controls: MdzipDiffControlsOptions | undefined): Requir
   return {
     navigation: controls?.navigation ?? true,
     changeTraversal: controls?.changeTraversal ?? true,
-    showUnchanged: controls?.showUnchanged ?? true
+    showUnchanged: controls?.showUnchanged ?? false,
+    rendered: controls?.rendered ?? true
   };
 }
 

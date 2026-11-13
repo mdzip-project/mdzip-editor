@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **The archive diff view can show Markdown rendered.** The toolbar gets the editor's view-mode pair: **#** shows the Markdown source, and the eye (**Show rendered Markdown**) shows both versions of a Markdown entry the way the preview shows them, with images loaded from each version of the archive. Blocks that only one version has are marked, red for the old version and green for the new, so a changed paragraph shows on both sides; an image counts as changed when its file changes. The two sides scroll together, lined up on the blocks they share, and the view opens at the first change. Other entries show as before, and the pair is disabled for them. Mermaid diagrams and code highlighting aren't rendered in this view yet.
+- `MdzipDiffViewOptions` gets `rendered` (start rendered), `colorScheme` (`'light'` or `'dark'`, for rendered Markdown), `onRenderedChanged` (so a host can remember the choice) and `controls.rendered` (hide the pair). `MdzipDiffView` gets `setRendered()` and `isRendered`.
+
+### Changed
+- **The show-unchanged toolbar button is off by default.** Its eye icon meant "rendered" everywhere else, and the navigation list already shows unchanged entries, dimmed. Hosts that want it set `controls: { showUnchanged: true }`; it now uses a filter icon.
+
+### Fixed
+- **Pressed diff toolbar buttons are easy to tell apart.** A pressed toggle (navigation, source or rendered) now gets a filled background, not just a colour change that some dark themes made invisible. Hosts can set `--mdzip-active-background-color`, `--mdzip-active-foreground-color` and `--mdzip-active-border-color`.
+
 ## [2.4.2] - 2026-11-02
 
 Requires `@mdzip/core-js` 2.2.1. The Angular, React and Vue wrappers have no changes of their own and require `@mdzip/editor` 2.4.2.

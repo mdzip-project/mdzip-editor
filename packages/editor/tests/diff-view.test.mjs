@@ -3,6 +3,7 @@ import test from 'node:test';
 import { JSDOM } from 'jsdom';
 import { buildNewArchiveBytesWithTitle, updateBinaryInArchive } from '../dist/index.js';
 import { MdzipDiffView } from '../dist/diff-view.js';
+import { markBlockChanges, resolveArchivePath } from '../dist/diff-rendered.js';
 
 const PNG_1X1 = Uint8Array.from(Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
@@ -358,11 +359,12 @@ test('show-unchanged toolbar toggle reflects and drives filtering', async () => 
   const before = await withEntries('# Before\n', [['a.md', 'one'], ['b.md', 'same']]);
   const after = await withEntries('# After\n', [['a.md', 'one changed'], ['b.md', 'same']]);
   const container = document.createElement('div');
-  const options = { before: { bytes: before }, after: { bytes: after }, showUnchanged: true };
+  const options = { before: { bytes: before }, after: { bytes: after }, showUnchanged: true, controls: { showUnchanged: true } };
   const view = new MdzipDiffView(container, options);
   try {
     await view.open(options);
     const toggle = container.querySelector('[data-ref="show-unchanged"]');
+    assert.equal(toggle.hidden, false);
     assert.equal(toggle.getAttribute('aria-pressed'), 'true');
     const pathsWhenShown = [...container.querySelectorAll('.mdzip-diff-entry .mdzip-diff-path')]
       .map((node) => node.textContent);
@@ -444,4 +446,140 @@ test('text diff gutters take the host colors, not CodeMirror\'s light default (#
     view.destroy();
     container.remove();
   }
+});
+
+test('rendered toggle shows both sides as the preview, with differing blocks marked', async () => {
+  createdUrls.length = 0;
+  const changedPng = Uint8Array.from(PNG_1X1, (value, index) => index === 40 ? value ^ 1 : value);
+  const before = await withEntries(
+    '---\ntitle: Notes\n---\n\n# Notes\n\nSame paragraph.\n\nOld wording.\n\n<img src="images/logo.png" alt="Logo" width="40" align="right">\n\n![Chart](./images/chart.png)\n',
+    [['images/logo.png', PNG_1X1], ['images/chart.png', PNG_1X1], ['data.txt', 'plain']]
+  );
+  const after = await withEntries(
+    '---\ntitle: Notes\n---\n\n# Notes\n\nSame paragraph.\n\nNew wording.\n\n<img src="images/logo.png" alt="Logo" width="40" align="right">\n\n![Chart](./images/chart.png)\n\nAdded at the end.\n',
+    [['images/logo.png', PNG_1X1], ['images/chart.png', changedPng], ['data.txt', 'plain changed']]
+  );
+  const container = document.createElement('div');
+  document.body.append(container);
+  const toggles = [];
+  const options = {
+    before: { bytes: before, label: 'HEAD' },
+    after: { bytes: after, label: 'Working Tree' },
+    initialPath: 'index.md',
+    onRenderedChanged: (value) => toggles.push(value)
+  };
+  const view = new MdzipDiffView(container, options);
+  try {
+    await view.open(options);
+    // Off by default; the navigation list shows unchanged entries, dimmed.
+    assert.equal(container.querySelector('[data-ref="show-unchanged"]').hidden, true);
+    const button = container.querySelector('[data-ref="rendered"]');
+    const source = container.querySelector('[data-ref="source"]');
+    assert.equal(button.getAttribute('aria-pressed'), 'false');
+    assert.equal(source.getAttribute('aria-pressed'), 'true');
+    assert.equal(container.querySelectorAll('.cm-editor').length, 2);
+
+    button.click();
+    for (let i = 0; i < 100 && !container.querySelector('.mdzip-diff-preview'); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(toggles, [true]);
+    assert.equal(button.getAttribute('aria-pressed'), 'true');
+    assert.equal(source.getAttribute('aria-pressed'), 'false');
+    button.click();
+    assert.deepEqual(toggles, [true], 'pressing the pressed mode again changes nothing');
+    assert.equal(container.querySelectorAll('.cm-editor').length, 0);
+    const [left, right] = [...container.querySelectorAll('.mdzip-root .preview-content.mdzip-diff-preview')];
+    assert.ok(left && right, 'both sides render inside the preview scope');
+    assert.ok(document.querySelector('style[data-mdzip-ws-styles]'), 'preview styles injected');
+
+    // Front matter doesn't show up as body text.
+    assert.doesNotMatch(right.textContent, /title: Notes/);
+
+    const marked = (root, cls) => [...root.children]
+      .filter((child) => child.classList.contains(cls))
+      .map((child) => child.textContent.trim() || child.querySelector('img')?.getAttribute('alt'));
+    assert.deepEqual(marked(left, 'mdzip-diff-block-removed'), ['Old wording.', 'Chart']);
+    assert.deepEqual(marked(right, 'mdzip-diff-block-added'), ['New wording.', 'Chart', 'Added at the end.']);
+    assert.equal(left.querySelector('h1').classList.length, 0, 'unchanged heading is not marked');
+
+    // Archive images load from the archive; raw HTML alignment matches the preview.
+    const logo = right.querySelector('img[alt="Logo"]');
+    assert.match(logo.getAttribute('src'), /^blob:test-/);
+    assert.ok(logo.classList.contains('mdzip-image-right'));
+    assert.equal(logo.style.width, '40px');
+    assert.match(right.querySelector('img[alt="Chart"]').getAttribute('src'), /^blob:test-/);
+
+    // Not Markdown: the toggle is disabled, and the entry shows as text.
+    await view.openPath('data.txt');
+    assert.equal(button.disabled, true);
+    assert.equal(source.disabled, true);
+    assert.equal(container.querySelectorAll('.cm-editor').length, 2);
+
+    await view.openPath('index.md');
+    assert.equal(button.disabled, false);
+    assert.ok(container.querySelector('.mdzip-diff-preview'));
+
+    source.click();
+    for (let i = 0; i < 100 && container.querySelectorAll('.cm-editor').length < 2; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(toggles, [true, false]);
+    assert.equal(source.getAttribute('aria-pressed'), 'true');
+    assert.equal(container.querySelectorAll('.cm-editor').length, 2);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('rendered option opens Markdown rendered, and a one-sided document shows a missing pane', async () => {
+  const before = await withEntries('# Same\n', []);
+  const after = await withEntries('# Same\n', [['docs/new.md', '# New page\n\n![Pic](../images/pic.png)\n'], ['images/pic.png', PNG_1X1]]);
+  const container = document.createElement('div');
+  const options = { before: { bytes: before }, after: { bytes: after }, initialPath: 'docs/new.md', rendered: true, colorScheme: 'dark' };
+  const view = new MdzipDiffView(container, options);
+  try {
+    await view.open(options);
+    assert.equal(view.isRendered, true);
+    assert.match(container.querySelector('.mdzip-diff-missing').textContent, /does not exist/);
+    const scope = container.querySelector('.mdzip-diff-preview-scope');
+    assert.ok(scope.classList.contains('mdzip-theme-dark'));
+    assert.match(scope.querySelector('img[alt="Pic"]').getAttribute('src'), /^blob:test-/, 'path resolves from the document folder');
+  } finally {
+    view.destroy();
+  }
+});
+
+test('markBlockChanges matches blocks across insertions and returns matched pairs in order', () => {
+  const make = (items) => {
+    const root = document.createElement('article');
+    for (const [tag, text] of items) {
+      const element = document.createElement(tag);
+      element.textContent = text;
+      root.append(element);
+    }
+    return root;
+  };
+  const before = make([['h1', 'Title'], ['p', 'A'], ['p', 'B'], ['p', 'C'], ['p', 'End']]);
+  const after = make([['h1', 'Title'], ['p', 'A'], ['p', 'Inserted'], ['p', 'C'], ['p', 'End']]);
+  const pairs = markBlockChanges(before, after);
+  assert.deepEqual(pairs.map(([left, right]) => [left.textContent, right.textContent]),
+    [['Title', 'Title'], ['A', 'A'], ['C', 'C'], ['End', 'End']]);
+  assert.deepEqual([...before.querySelectorAll('.mdzip-diff-block-removed')].map((e) => e.textContent), ['B']);
+  assert.deepEqual([...after.querySelectorAll('.mdzip-diff-block-added')].map((e) => e.textContent), ['Inserted']);
+
+  // Same text in a different element type counts as a change.
+  const headingBefore = make([['p', 'Heading']]);
+  const headingAfter = make([['h2', 'Heading']]);
+  markBlockChanges(headingBefore, headingAfter);
+  assert.equal(headingAfter.firstElementChild.classList.contains('mdzip-diff-block-added'), true);
+});
+
+test('resolveArchivePath resolves against the document folder and refuses to leave the archive', () => {
+  assert.equal(resolveArchivePath('index.md', 'images/a.png'), 'images/a.png');
+  assert.equal(resolveArchivePath('index.md', './images/a.png'), 'images/a.png');
+  assert.equal(resolveArchivePath('docs/page.md', '../images/a%20b.png'), 'images/a b.png');
+  assert.equal(resolveArchivePath('docs/page.md', '/images/a.png?x=1#y'), 'images/a.png');
+  assert.equal(resolveArchivePath('index.md', '../outside.png'), null);
 });
