@@ -551,6 +551,65 @@ states, image previews with metadata, and binary metadata. Entry content is
 loaded only when selected. Call `destroy()` to release editors, listeners, and
 image object URLs.
 
+### Plain Markdown files
+
+A side can be a plain `.md` document instead of an archive. Pass its text as
+`markdown`, and, for images in the rendered view, a `readResource` function
+that reads the files it links to:
+
+```ts
+const diff = new MdzipDiffView(container, {
+  before: { markdown: headText, label: 'HEAD', readResource: readImageAtHead },
+  after: { markdown: workingText, label: 'Working tree', fileName: 'notes.md', readResource: readImageOnDisk },
+  rendered: true
+});
+```
+
+`readResource` receives the image source normalized relative to the
+document's folder (`images/a.png`, `../shared/a.png`; a root-relative source
+keeps its leading `/`) and resolves the bytes, or `null` when there's no such
+file. Give each side its own reader, so a comparison with an older version
+shows that version's images. Without one, images show as missing.
+
+Set `editable: true` on a Markdown side (typically the working copy) to let
+the user edit it in the source view; `onMarkdownChange(text)` receives the
+full text after each edit, and the comparison updates as they type. The
+rendered view stays read-only but shows the edited text. Saving is up to the
+host.
+
+The comparison has a single entry, named after `fileName` (or `document.md`),
+and the navigation pane starts hidden unless `navigationVisible` says
+otherwise. One side may be plain Markdown and the other an archive: the
+document then lines up with the archive's main document.
+
+## Resolving Merge Conflicts
+
+When two branches change the same part of a document, a Git merge leaves conflict markers in its text. For an `.mdz`, the `mdz merge` driver ([mdzip-cli](https://github.com/mdzip-project/mdzip-cli)) merges the archive file by file: it puts the markers inside the documents, keeps both versions of an image both sides replaced (`chart.png` and `chart.theirs.png`), and decides a few things itself (a file one side deleted and the other changed is kept; a manifest field both changed keeps the current value). `MdzipMergeView` resolves what it left, in the layout of the Visual Studio and VS Code merge editors:
+
+```ts
+import { MdzipMergeView } from '@mdzip/editor/merge-view';
+
+const view = new MdzipMergeView(container, {
+  bytes: mergedArchiveBytes,              // or { markdown: text, fileName: 'notes.md', readResource }
+  // Optional: the versions Git holds during the merge (index stages 1, 2, 3).
+  versions: { base: { bytes: baseBytes }, ours: { bytes: oursBytes }, theirs: { bytes: theirsBytes } },
+  oursLabel: 'main',                      // branch names, shown under Current and Incoming
+  theirsLabel: 'topic',
+  colorScheme: 'dark',
+  toolbarDensity: 'dense',
+  onChange: ({ path, text, bytes, remaining }) => save(bytes ?? text),
+  onComplete: ({ remaining }) => markResolved() // shows a Complete Merge button
+});
+```
+
+- **A tree of the archive's files** with a marker on each: ● text conflicts (with a count), ◐ a choice to make (an image both sides replaced), ↺ a choice the merge made that's worth reviewing, ✓ merged. Unchanged files are hidden unless you ask for them. A plain Markdown document has no tree.
+- **A text file** shows Incoming (theirs) on the left and Current (ours) on the right, each with its changes from the original marked, over the result. Each change has a checkbox: one-sided changes start ticked, conflicts unticked. Ticking a side takes its text into the result; ticking both sides of a conflict keeps both, in the order you ticked them, and unticking both brings the conflict back. **Take All Incoming** / **Take All Current** in each pane's heading tick every change on that side. In the source view the result is editable (the boxes follow what you type), and each conflict has **Accept Incoming**, **Accept Current**, **Accept Both** and **Use Original** links above it. The three panes scroll together; in the source view they're lined up line for line (blank filler where one pane has fewer lines for a change, a dashed line where it has none), with word wrap off so the lines stay level. In the rendered view, matching headings stay level and the stretches between them scroll in step. The result's heading counts the conflicts remaining in the file, and the toolbar counts those left overall ("2 of 5 conflicts") and steps through them across files. The rendered view shows all three as the preview, with unresolved conflicts in the result showing the current version, marked, and a bar that accepts the current conflict.
+- **An image both sides replaced** shows incoming, current and the original, with **Take Incoming** (which removes the `.theirs` copy) and **Keep Current**. **A file one side deleted** has **Keep it** and **Delete it**. **Manifest fields** both sides changed are listed with **Take Incoming** / **Take Current**.
+- With `versions`, the tree shows every change (added, deleted, changed in current, incoming or both) and spots renames, as `mdz merge` does, and each text file shows its one-sided changes with checkboxes too; without them, the view works from the conflict markers and `.theirs` copies alone.
+- `onChange` fires after each change with the entry's new text and, for an archive, the whole archive's new bytes (typing in the result is reported once it pauses). `onResolved` fires when nothing is left, and **Complete Merge** (shown when you pass `onComplete`) reports every pending change, then calls `onComplete` with what's still unresolved, so the host can ask before completing anyway. `files` lists each file's state and summary, `conflicts` what's left; `resolve(index, resolution)`, `chooseChange(path, index, sides)` (a file's changes, as the checkboxes set them), `resolveFile(path, 'keep' | 'delete')` and `chooseManifestField(key, side)` resolve from code; `getText(path)` and `getArchiveBytes()` return the current result.
+
+The parsing is also available on its own from the main entry: `findMergeConflicts(text)` returns each block (with `ours`, `base` or null, `theirs`, labels and position), and `resolveMergeConflict(text, index, 'ours' | 'theirs' | 'both' | 'base' | { text })` returns the text with that block replaced. Markers longer than seven characters (Git's `conflict-marker-size`) and CRLF line endings are handled; an unfinished block is left alone.
+
 ## Preview Lifecycle Signals
 
 To reveal or animate read-only preview content without scraping internal DOM,

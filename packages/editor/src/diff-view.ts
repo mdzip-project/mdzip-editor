@@ -1,9 +1,10 @@
 import { markdown } from '@codemirror/lang-markdown';
-import { MergeView } from '@codemirror/merge';
-import { EditorState, type Extension } from '@codemirror/state';
-import { EditorView, lineNumbers } from '@codemirror/view';
+import { MergeView, getChunks } from '@codemirror/merge';
+import { Annotation, EditorState, type Extension } from '@codemirror/state';
+import { search, searchKeymap } from '@codemirror/search';
+import { EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { MdzArchiveCore } from '@mdzip/core-js';
-import { ChevronDown, ChevronUp, Eye, Hash, ListFilter, PanelLeft, RefreshCw, type IconNode } from 'lucide';
+import { ChevronDown, ChevronUp, Eye, Hash, ListFilter, PanelLeft, RefreshCw, Save, SquarePen, type IconNode } from 'lucide';
 import {
   createArchiveInventoryFromArchive,
   diffArchiveInventories,
@@ -13,9 +14,34 @@ import {
 } from './diff.js';
 import { markBlockChanges, renderSideFragment, syncScroll, type RenderedSideSource } from './diff-rendered.js';
 import { injectDiffViewStyles, injectPreviewStyles } from './diff-view-css.js';
+import { sha256Hex } from './sha256.js';
 
 export interface MdzipDiffSideInput {
+  /** The `.mdz` archive for this side. */
   bytes?: Uint8Array;
+  /**
+   * A plain Markdown document (an `.md` file) for this side instead of an
+   * archive. Takes precedence over `bytes`. The comparison then has one
+   * entry: the document, named after the other side's entry point when that
+   * side is an archive, otherwise after `fileName` (or `document.md`).
+   */
+  markdown?: string;
+  /**
+   * For a `markdown` side: reads a file the document links to, so the
+   * rendered view can show its images. Receives the image source normalized
+   * relative to the document's folder (`images/a.png`, `../shared/a.png`;
+   * root-relative sources keep their leading `/`). Resolve null when the
+   * file doesn't exist. Without it, images show as missing.
+   */
+  readResource?: (path: string) => Promise<Uint8Array | null>;
+  /**
+   * For a `markdown` side: let the user edit it in the source view (the
+   * rendered view stays read-only). Each edit calls `onMarkdownChange` with
+   * the full text; the comparison updates as they type.
+   */
+  editable?: boolean;
+  /** Called with the side's full text after each edit of an `editable` side. */
+  onMarkdownChange?: (markdown: string) => void;
   label?: string;
   fileName?: string;
   missingMessage?: string;
@@ -26,7 +52,7 @@ export interface MdzipDiffSelectionEvent {
   entry: ArchiveInventoryDiffEntry;
 }
 
-export type MdzipDiffToolbarIcon = 'refresh';
+export type MdzipDiffToolbarIcon = 'refresh' | 'save';
 
 export interface MdzipDiffToolbarAction {
   id: string;
@@ -43,9 +69,15 @@ export interface MdzipDiffToolbarAction {
  * Host-specific actions are supplied separately via `toolbarActions`.
  */
 export interface MdzipDiffControlsOptions {
-  /** Navigation pane visibility toggle. */
+  /**
+   * Navigation pane visibility toggle. Default on, except for a plain
+   * Markdown comparison, which has one document.
+   */
   navigation?: boolean;
-  /** Previous/next change traversal buttons. */
+  /**
+   * Previous/next change buttons: they step through the changes in the
+   * selected entry, then on to the next or previous changed entry.
+   */
   changeTraversal?: boolean;
   /**
    * Show-unchanged pressed toggle. Off by default: the navigation list
@@ -69,6 +101,11 @@ export interface MdzipDiffViewOptions {
   rendered?: boolean;
   /** Color scheme for rendered Markdown (code blocks, front matter). Default `'light'`. */
   colorScheme?: 'light' | 'dark';
+  /**
+   * Toolbar button size, matching the workspace editor's `toolbarDensity`
+   * (`'dense'` is VS Code's). Default `'comfortable'`.
+   */
+  toolbarDensity?: 'comfortable' | 'compact' | 'dense';
   controls?: MdzipDiffControlsOptions;
   toolbarActions?: readonly MdzipDiffToolbarAction[];
   onSelectionChanged?: (event: MdzipDiffSelectionEvent) => void;
@@ -83,9 +120,15 @@ interface DiffSide {
   inventory: ArchiveInventory;
   state: 'ready' | 'missing' | 'empty' | 'invalid' | 'unsupported-version';
   error?: Error;
+  /** Set for a plain Markdown side (`input.markdown`). */
+  markdown?: { text: string; bytes: Uint8Array; hash: string };
 }
 
+/** Marks a change the host pushed in with updateMarkdown(), so it isn't reported back as an edit. */
+const hostUpdate = Annotation.define<boolean>();
+
 const EMPTY_INVENTORY: ArchiveInventory = { entries: [], entryPoint: '', manifest: null };
+const DEFAULT_MARKDOWN_PATH = 'document.md';
 
 export class MdzipDiffView {
   private options: MdzipDiffViewOptions;
@@ -104,6 +147,10 @@ export class MdzipDiffView {
   private editorViews: EditorView[] = [];
   private objectUrls: string[] = [];
   private renderAbort: AbortController | null = null;
+  /** The change in the selected entry that previous/next last moved to; -1 before the first. */
+  private changeCursor = -1;
+  /** Rendered view: the changed blocks, in reading order, with the pane each scrolls. */
+  private renderedChanges: Array<{ side: HTMLElement; block: HTMLElement }> = [];
   private stopScrollSync: (() => void) | null = null;
   private openingOptions: MdzipDiffViewOptions | null = null;
   private openingPromise: Promise<void> | null = null;
@@ -116,6 +163,8 @@ export class MdzipDiffView {
   private readonly navButton: HTMLButtonElement;
   private readonly prevChangeButton: HTMLButtonElement;
   private readonly nextChangeButton: HTMLButtonElement;
+  private readonly changeCountLabel: HTMLElement;
+  private density: 'comfortable' | 'compact' | 'dense';
   private readonly showUnchangedButton: HTMLButtonElement;
   private readonly viewModeGroup: HTMLElement;
   private readonly sourceButton: HTMLButtonElement;
@@ -130,20 +179,23 @@ export class MdzipDiffView {
   public constructor(container: HTMLElement, options: MdzipDiffViewOptions) {
     this.options = options;
     this.showUnchanged = options.showUnchanged ?? true;
-    this.navigationVisible = options.navigationVisible ?? true;
+    // A plain-Markdown comparison has a single entry, so the list adds nothing.
+    this.navigationVisible = options.navigationVisible ?? !isMarkdownOnly(options);
     this.rendered = options.rendered ?? false;
     this.colorScheme = options.colorScheme ?? 'light';
-    this.controls = resolveControls(options.controls);
+    this.controls = resolveControls(options.controls, isMarkdownOnly(options));
     this.toolbarActions = options.toolbarActions ?? [];
     injectDiffViewStyles(container.ownerDocument);
     container.replaceChildren();
     this.root = container.ownerDocument.createElement('div');
-    this.root.className = 'mdzip-diff-root';
+    this.density = options.toolbarDensity ?? 'comfortable';
+    this.applyRootClass();
     this.root.innerHTML = `
       <div class="mdzip-diff-toolbar" role="toolbar" aria-label="Comparison controls">
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="navigation" title="Toggle navigation" aria-label="Toggle navigation"></button>
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="prev-change" title="Previous change" aria-label="Previous change"></button>
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="next-change" title="Next change" aria-label="Next change"></button>
+        <span class="mdzip-diff-change-count" data-ref="change-count" aria-live="polite" hidden></span>
         <button class="mdzip-diff-toolbar-button" type="button" data-ref="show-unchanged" title="Show unchanged files" aria-label="Show unchanged files"></button>
         <div class="mdzip-diff-toolbar-group" data-ref="view-mode" role="group" aria-label="Markdown view">
           <button class="mdzip-diff-toolbar-button" type="button" data-ref="source" title="Show Markdown source" aria-label="Show Markdown source"></button>
@@ -167,6 +219,7 @@ export class MdzipDiffView {
     this.navButton = this.root.querySelector('[data-ref="navigation"]') as HTMLButtonElement;
     this.prevChangeButton = this.root.querySelector('[data-ref="prev-change"]') as HTMLButtonElement;
     this.nextChangeButton = this.root.querySelector('[data-ref="next-change"]') as HTMLButtonElement;
+    this.changeCountLabel = this.root.querySelector('[data-ref="change-count"]') as HTMLElement;
     this.showUnchangedButton = this.root.querySelector('[data-ref="show-unchanged"]') as HTMLButtonElement;
     this.viewModeGroup = this.root.querySelector('[data-ref="view-mode"]') as HTMLElement;
     this.sourceButton = this.root.querySelector('[data-ref="source"]') as HTMLButtonElement;
@@ -185,8 +238,8 @@ export class MdzipDiffView {
     this.nextChangeButton.addEventListener('click', () => { void this.openNextChange(); });
     this.showUnchangedButton.innerHTML = iconHtml(ListFilter);
     this.showUnchangedButton.addEventListener('click', () => this.setShowUnchanged(!this.showUnchanged));
-    // Same icons as the editor's view modes: # for Markdown source, the eye for rendered.
-    this.sourceButton.innerHTML = iconHtml(Hash);
+    // Same icons as the editor's view modes: the pen for editable source (# when
+    // it's read-only), the eye for rendered. Set in renderToolbar.
     this.sourceButton.addEventListener('click', () => { void this.setRendered(false); });
     this.renderedButton.innerHTML = iconHtml(Eye);
     this.renderedButton.addEventListener('click', () => { void this.setRendered(true); });
@@ -218,7 +271,9 @@ export class MdzipDiffView {
     this.navigationVisible = options.navigationVisible ?? this.navigationVisible;
     this.rendered = options.rendered ?? this.rendered;
     this.colorScheme = options.colorScheme ?? this.colorScheme;
-    if (options.controls) this.controls = resolveControls(options.controls);
+    this.density = options.toolbarDensity ?? this.density;
+    this.applyRootClass();
+    if (options.controls) this.controls = resolveControls(options.controls, isMarkdownOnly(options));
     this.toolbarActions = options.toolbarActions ?? this.toolbarActions;
     this.renderToolbar();
     this.selectedPath = null;
@@ -231,6 +286,7 @@ export class MdzipDiffView {
       this.openSide(options.after)
     ]);
     if (generation !== this.generation) return;
+    assignMarkdownEntries(before, after);
     this.before = before;
     this.after = after;
     this.diff = diffArchiveInventories(before.inventory, after.inventory);
@@ -273,6 +329,39 @@ export class MdzipDiffView {
     }
   }
 
+  /**
+   * Replaces a plain-Markdown side's text, for a change made somewhere else
+   * (another editor, undo, revert). The source view updates in place, keeping
+   * the cursor and scroll position, and doesn't call `onMarkdownChange`; the
+   * rendered view re-renders. A side that had no text (missing) needs
+   * `open()` instead.
+   */
+  public async updateMarkdown(which: 'before' | 'after', text: string): Promise<void> {
+    const side = which === 'before' ? this.before : this.after;
+    if (!side?.markdown || side.markdown.text === text) return;
+    side.markdown = { ...side.markdown, text, bytes: new TextEncoder().encode(text) };
+    const entry = this.selectedEntry();
+    if (!entry || !this.selectedPath || entry.path !== side.inventory.entryPoint) return;
+    if (this.mergeView) {
+      const editor = which === 'before' ? this.mergeView.a : this.mergeView.b;
+      const current = editor.state.doc.toString();
+      let start = 0;
+      while (start < current.length && start < text.length && current[start] === text[start]) start += 1;
+      let endCurrent = current.length;
+      let endText = text.length;
+      while (endCurrent > start && endText > start && current[endCurrent - 1] === text[endText - 1]) {
+        endCurrent -= 1;
+        endText -= 1;
+      }
+      editor.dispatch({
+        changes: { from: start, to: endCurrent, insert: text.slice(start, endText) },
+        annotations: hostUpdate.of(true)
+      });
+      return;
+    }
+    await this.renderSelection(this.selectedPath);
+  }
+
   public get isRendered(): boolean {
     return this.rendered;
   }
@@ -282,21 +371,61 @@ export class MdzipDiffView {
   }
 
   /**
-   * Selects the previous entry whose status is not `unchanged`. Resolves
-   * `false` (without changing selection) when already at the first change.
+   * Moves to the previous change: within the selected entry first (a changed
+   * chunk of text, or a changed block in the rendered view), then to the
+   * last change of the previous changed entry. Resolves `false` when already
+   * at the first change.
    */
   public async openPreviousChange(): Promise<boolean> {
+    if (this.moveWithinEntry(-1)) return true;
     const target = this.adjacentChange(-1);
-    return target ? this.openPath(target.path) : false;
+    if (!target) return false;
+    await this.openPath(target.path);
+    const count = this.entryChangeCount();
+    if (count > 0) this.goToEntryChange(count - 1);
+    return true;
   }
 
   /**
-   * Selects the next entry whose status is not `unchanged`. Resolves `false`
-   * (without changing selection) when already at the last change.
+   * Moves to the next change: within the selected entry first, then to the
+   * next changed entry (which opens at its first change). Resolves `false`
+   * when already at the last change.
    */
   public async openNextChange(): Promise<boolean> {
+    if (this.moveWithinEntry(1)) return true;
     const target = this.adjacentChange(1);
     return target ? this.openPath(target.path) : false;
+  }
+
+  /** How many changes the selected entry shows (text chunks, or changed rendered blocks). */
+  private entryChangeCount(): number {
+    if (this.mergeView) return getChunks(this.mergeView.b.state)?.chunks.length ?? 0;
+    return this.renderedChanges.length;
+  }
+
+  private moveWithinEntry(direction: 1 | -1): boolean {
+    const next = this.changeCursor + direction;
+    if (next < 0 || next >= this.entryChangeCount()) return false;
+    this.goToEntryChange(next);
+    return true;
+  }
+
+  /** Scrolls the selected entry to one of its changes, leaving a little context above it. */
+  private goToEntryChange(index: number): void {
+    if (this.mergeView) {
+      const chunk = getChunks(this.mergeView.b.state)?.chunks[index];
+      if (!chunk) return;
+      this.mergeView.b.dispatch({
+        selection: { anchor: chunk.fromB },
+        effects: EditorView.scrollIntoView(chunk.fromB, { y: 'start', yMargin: 48 })
+      });
+    } else {
+      const target = this.renderedChanges[index];
+      if (!target) return;
+      target.side.scrollTop = Math.max(0, offsetWithin(target.side, target.block) - 48);
+    }
+    this.changeCursor = index;
+    this.updateBuiltInControls();
   }
 
   private adjacentChange(direction: 1 | -1): ArchiveInventoryDiffEntry | null {
@@ -343,6 +472,15 @@ export class MdzipDiffView {
     this.nextChangeButton.hidden = !this.controls.changeTraversal;
     this.showUnchangedButton.hidden = !this.controls.showUnchanged;
     this.viewModeGroup.hidden = !this.controls.rendered;
+    const editable = [this.options.before, this.options.after]
+      .some((side) => side?.markdown !== undefined && side.editable === true);
+    const sourceLabel = editable ? 'Edit Markdown source' : 'Show Markdown source';
+    if (this.sourceButton.dataset.icon !== (editable ? 'edit' : 'source')) {
+      this.sourceButton.dataset.icon = editable ? 'edit' : 'source';
+      this.sourceButton.innerHTML = iconHtml(editable ? SquarePen : Hash);
+    }
+    this.sourceButton.title = sourceLabel;
+    this.sourceButton.setAttribute('aria-label', sourceLabel);
     this.setNavigationVisible(this.navigationVisible);
     this.updateBuiltInControls();
     this.actionHost.replaceChildren();
@@ -358,6 +496,7 @@ export class MdzipDiffView {
       }
       button.disabled = action.disabled === true || this.pendingToolbarAction === action.id;
       if (action.icon === 'refresh') button.innerHTML = iconHtml(RefreshCw);
+      else if (action.icon === 'save') button.innerHTML = iconHtml(Save);
       else button.textContent = action.label;
       button.addEventListener('click', () => void this.runToolbarAction(action));
       this.actionHost.append(button);
@@ -366,9 +505,21 @@ export class MdzipDiffView {
   }
 
   /** Syncs the pressed/disabled state of the built-in change + filter controls. */
+  private applyRootClass(): void {
+    this.root.className = `mdzip-diff-root mdzip-diff-density-${this.density} mdzip-diff-scheme-${this.colorScheme}`;
+  }
+
   private updateBuiltInControls(): void {
-    this.prevChangeButton.disabled = !this.adjacentChange(-1);
-    this.nextChangeButton.disabled = !this.adjacentChange(1);
+    const count = this.entryChangeCount();
+    this.prevChangeButton.disabled = this.changeCursor <= 0 && !this.adjacentChange(-1);
+    this.nextChangeButton.disabled = this.changeCursor >= count - 1 && !this.adjacentChange(1);
+    // Where you are among the selected entry's changes, so disabled arrows read as
+    // "nothing further" rather than broken.
+    const selected = this.selectedEntry();
+    this.changeCountLabel.hidden = !this.controls.changeTraversal || !selected;
+    this.changeCountLabel.textContent = count === 0
+      ? 'No changes'
+      : `${Math.max(1, this.changeCursor + 1)} of ${count}`;
     this.showUnchangedButton.setAttribute('aria-pressed', String(this.showUnchanged));
     this.showUnchangedButton.classList.toggle('active', this.showUnchanged);
     this.sourceButton.setAttribute('aria-pressed', String(!this.rendered));
@@ -397,6 +548,17 @@ export class MdzipDiffView {
   }
 
   private async openSide(input: MdzipDiffSideInput): Promise<DiffSide> {
+    if (input.markdown !== undefined) {
+      const bytes = new TextEncoder().encode(input.markdown);
+      return {
+        input,
+        archive: null,
+        // The entry is added by assignMarkdownEntries once both sides are open.
+        inventory: EMPTY_INVENTORY,
+        state: 'ready',
+        markdown: { text: input.markdown, bytes, hash: await sha256Hex(bytes) }
+      };
+    }
     if (!input.bytes) return { input, archive: null, inventory: EMPTY_INVENTORY, state: 'missing' };
     if (input.bytes.length === 0) return { input, archive: null, inventory: EMPTY_INVENTORY, state: 'empty' };
     try {
@@ -506,6 +668,7 @@ export class MdzipDiffView {
           this.renderBinary(beforeBytes, afterBytes, entry);
         }
       }
+      this.updateBuiltInControls();
       this.options.onSelectionChanged?.({ path, entry });
     } catch (cause) {
       if (generation !== this.selectionGeneration) return;
@@ -517,29 +680,56 @@ export class MdzipDiffView {
 
   private renderText(before: string | null, after: string | null, entry: ArchiveInventoryDiffEntry): void {
     this.body.replaceChildren();
-    const extensions: Extension[] = [
-      lineNumbers(),
-      EditorState.readOnly.of(true),
-      EditorView.editable.of(false),
-      EditorView.lineWrapping
-    ];
-    if (entry.kind === 'markdown') extensions.push(markdown());
+    // Ctrl+F / Cmd+F searches the side that has focus, as in the editor's source view.
+    // Only the lines near the scroll position are in the page, so the browser's own
+    // find can't see the rest; CodeMirror's search covers the whole text.
+    const base: Extension[] = [lineNumbers(), EditorView.lineWrapping, search({ top: true }), keymap.of(searchKeymap)];
+    if (entry.kind === 'markdown') base.push(markdown());
+    const extensionsFor = (side: DiffSide | null): Extension[] => {
+      if (side && this.isEditable(side, entry)) {
+        return [...base, EditorView.updateListener.of((update) => {
+          if (!update.docChanged) return;
+          const fromHost = update.transactions.some((transaction) => transaction.annotation(hostUpdate));
+          if (!fromHost) this.markdownEdited(side, update.state.doc.toString());
+        })];
+      }
+      return [...base, EditorState.readOnly.of(true), EditorView.editable.of(false)];
+    };
+    const beforeExtensions = extensionsFor(this.before);
+    const afterExtensions = extensionsFor(this.after);
     if (before === null || after === null) {
       this.body.append(this.createPair(
-        this.textSide(before, extensions),
-        this.textSide(after, extensions)
+        this.textSide(before, beforeExtensions),
+        this.textSide(after, afterExtensions)
       ));
       return;
     }
     this.mergeView = new MergeView({
-      a: { doc: before, extensions },
-      b: { doc: after, extensions },
+      a: { doc: before, extensions: beforeExtensions },
+      b: { doc: after, extensions: afterExtensions },
       parent: this.body,
       root: this.root.ownerDocument,
       highlightChanges: true,
       gutter: true,
       diffConfig: { scanLimit: 2000, timeout: 100 }
     });
+    // Open at the first change, as the rendered view does.
+    if (this.entryChangeCount() > 0) this.goToEntryChange(0);
+  }
+
+  /** An editable plain-Markdown side, showing its one document. */
+  private isEditable(side: DiffSide, entry: ArchiveInventoryDiffEntry): boolean {
+    return Boolean(side.markdown && side.input.editable && entry.path === side.inventory.entryPoint);
+  }
+
+  /**
+   * Keeps the side's text current, so the rendered view and a re-selection
+   * show the edits, and tells the host.
+   */
+  private markdownEdited(side: DiffSide, text: string): void {
+    if (!side.markdown) return;
+    side.markdown = { ...side.markdown, text, bytes: new TextEncoder().encode(text) };
+    side.input.onMarkdownChange?.(text);
   }
 
   private async renderRendered(
@@ -567,21 +757,47 @@ export class MdzipDiffView {
     if (beforePane.content && afterPane.content) {
       const matched = markBlockChanges(beforePane.content, afterPane.content);
       this.stopScrollSync = syncScroll(beforePane.side, afterPane.side, matched);
+      // The changes in reading order: what the new version added or edited,
+      // plus what the old one lost outright (an edit already shows on the new side).
+      // Changed blocks are top-level blocks, or items inside an edited list or quote.
+      const blocks = (pane: { side: HTMLElement; content: HTMLElement | null }, selector: string) =>
+        Array.from(pane.content?.querySelectorAll<HTMLElement>(selector) ?? [])
+          .map((block) => ({ side: pane.side, block, offset: offsetWithin(pane.side, block) }));
+      this.renderedChanges = [
+        ...blocks(afterPane, '.mdzip-diff-block-added'),
+        ...blocks(beforePane, '.mdzip-diff-block-removed:not(.mdzip-diff-block-modified)')
+      ].sort((a, b) => a.offset - b.offset).map(({ side, block }) => ({ side, block }));
       // Open at the first change, not the top; the other side follows.
-      const firstChange = (pane: { side: HTMLElement; content: HTMLElement | null }) => {
-        const block = pane.content?.querySelector<HTMLElement>(':scope > .mdzip-diff-block-added, :scope > .mdzip-diff-block-removed');
-        return block
-          ? { side: pane.side, offset: block.getBoundingClientRect().top - pane.side.getBoundingClientRect().top + pane.side.scrollTop }
-          : null;
-      };
-      const target = [firstChange(beforePane), firstChange(afterPane)]
-        .filter((candidate): candidate is { side: HTMLElement; offset: number } => candidate !== null)
-        .sort((a, b) => a.offset - b.offset)[0];
-      if (target) target.side.scrollTop = Math.max(0, target.offset - 48);
+      if (this.renderedChanges.length > 0) this.goToEntryChange(0);
     }
   }
 
   private renderedSource(side: DiffSide, markdown: string | null, path: string | undefined): RenderedSideSource {
+    const createUrl = (bytes: Uint8Array, mime: string): string => {
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }));
+      this.objectUrls.push(url);
+      return url;
+    };
+    if (side.markdown) {
+      // Images live next to the .md file, so the host reads them. Hashes are
+      // taken as they're read, so a changed image marks its block.
+      const hashes = new Map<string, string>();
+      const readResource = side.input.readResource;
+      return {
+        markdown,
+        path,
+        manifest: null,
+        colorScheme: this.colorScheme,
+        sourceFormat: 'markdown',
+        readBytes: async (linkedPath) => {
+          const bytes = readResource ? await readResource(linkedPath) : null;
+          if (bytes) hashes.set(linkedPath, await sha256Hex(bytes));
+          return bytes;
+        },
+        hashOf: (linkedPath) => hashes.get(linkedPath),
+        createUrl
+      };
+    }
     return {
       markdown,
       path,
@@ -592,11 +808,7 @@ export class MdzipDiffView {
         return side.archive.readBytes(entryPath);
       },
       hashOf: (entryPath) => side.inventory.entries.find((item) => item.path === entryPath)?.hash,
-      createUrl: (bytes, mime) => {
-        const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }));
-        this.objectUrls.push(url);
-        return url;
-      }
+      createUrl
     };
   }
 
@@ -743,6 +955,8 @@ export class MdzipDiffView {
   }
 
   private disposeSelection(): void {
+    this.changeCursor = -1;
+    this.renderedChanges = [];
     this.renderAbort?.abort();
     this.renderAbort = null;
     this.stopScrollSync?.();
@@ -773,13 +987,21 @@ export class MdzipDiffView {
   }
 }
 
-function resolveControls(controls: MdzipDiffControlsOptions | undefined): Required<MdzipDiffControlsOptions> {
+function resolveControls(
+  controls: MdzipDiffControlsOptions | undefined,
+  markdownOnly: boolean
+): Required<MdzipDiffControlsOptions> {
   return {
-    navigation: controls?.navigation ?? true,
+    navigation: controls?.navigation ?? !markdownOnly,
     changeTraversal: controls?.changeTraversal ?? true,
     showUnchanged: controls?.showUnchanged ?? false,
     rendered: controls?.rendered ?? true
   };
+}
+
+/** An element's offset from the top of a scrolling pane's content. */
+function offsetWithin(pane: HTMLElement, element: HTMLElement): number {
+  return element.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
 }
 
 function chooseInitialPath(
@@ -797,7 +1019,44 @@ function chooseInitialPath(
 }
 
 async function readEntry(side: DiffSide, path: string | undefined): Promise<Uint8Array | null> {
-  return path && side.archive ? side.archive.readBytes(path) : null;
+  if (!path) return null;
+  if (side.markdown) return path === side.inventory.entryPoint ? side.markdown.bytes : null;
+  return side.archive ? side.archive.readBytes(path) : null;
+}
+
+/** True when every side given is plain Markdown (a missing side counts too), and at least one is. */
+function isMarkdownOnly(options: MdzipDiffViewOptions): boolean {
+  const sides = [options.before, options.after];
+  return sides.some((side) => side.markdown !== undefined)
+    && sides.every((side) => side.markdown !== undefined || !side.bytes);
+}
+
+/**
+ * Gives each plain-Markdown side its single entry. The name is shared so the
+ * two sides compare as one document: the archive's entry point when the other
+ * side is an archive (comparing `notes.md` with `notes.mdz` lines it up with
+ * the main document), otherwise the `.md` file name.
+ */
+function assignMarkdownEntries(before: DiffSide, after: DiffSide): void {
+  if (!before.markdown && !after.markdown) return;
+  const archiveSide = [after, before].find((side) => side.archive && side.inventory.entryPoint);
+  const path = archiveSide?.inventory.entryPoint
+    ?? markdownFileName(after.input.fileName)
+    ?? markdownFileName(before.input.fileName)
+    ?? DEFAULT_MARKDOWN_PATH;
+  for (const side of [before, after]) {
+    if (!side.markdown) continue;
+    side.inventory = {
+      entries: [{ path, kind: 'markdown', size: side.markdown.bytes.length, hash: side.markdown.hash }],
+      entryPoint: path,
+      manifest: null
+    };
+  }
+}
+
+function markdownFileName(fileName: string | undefined): string | undefined {
+  const base = fileName?.split(/[\\/]/).pop();
+  return base && /\.(md|markdown)$/i.test(base) ? base : undefined;
 }
 
 function decodeText(bytes: Uint8Array | null): string | null {

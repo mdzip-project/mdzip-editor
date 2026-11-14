@@ -1,6 +1,6 @@
 {
   "name": "@mdzip/editor",
-  "version": "2.4.2",
+  "version": "2.5.0",
   "description": "Framework-independent MDZip workspace editor.",
   "license": "Apache-2.0",
   "repository": {
@@ -27,6 +27,10 @@
     "./diff-view": {
       "types": "./dist/diff-view.d.ts",
       "import": "./dist/diff-view.js"
+    },
+    "./merge-view": {
+      "types": "./dist/merge-view.d.ts",
+      "import": "./dist/merge-view.js"
     },
     "./mermaid": {
       "types": "./dist/mermaid.d.ts",

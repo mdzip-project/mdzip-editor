@@ -29,6 +29,12 @@ export interface RenderedSideSource {
   hashOf(path: string): string | undefined;
   /** Turns image bytes into a URL the page can load (an object URL). */
   createUrl(bytes: Uint8Array, mime: string): string;
+  /**
+   * `'markdown'` for a plain `.md` document: images are files next to it
+   * (resolved with {@link resolveLinkedPath}), not archive entries.
+   * Default `'mdz'`.
+   */
+  sourceFormat?: 'mdz' | 'markdown';
 }
 
 /**
@@ -42,9 +48,10 @@ export async function renderSideFragment(
   signal: AbortSignal
 ): Promise<DocumentFragment | null> {
   if (source.markdown === null) return null;
+  const plainMarkdown = source.sourceFormat === 'markdown';
   const html = await renderingService.renderMarkdown(source.markdown, {
     currentPath: source.path ?? '',
-    sourceFormat: 'mdz',
+    sourceFormat: plainMarkdown ? 'markdown' : 'mdz',
     colorScheme: source.colorScheme,
     mode: 'read-only',
     manifest: source.manifest,
@@ -63,14 +70,18 @@ export async function renderSideFragment(
       return;
     }
     image.removeAttribute('src');
-    const archivePath = resolveArchivePath(source.path ?? '', raw);
+    const archivePath = plainMarkdown
+      ? resolveLinkedPath(raw)
+      : resolveArchivePath(source.path ?? '', raw);
     const bytes = archivePath ? await source.readBytes(archivePath).catch(() => null) : null;
     image.setAttribute(DIFF_ASSET_ATTRIBUTE, `${archivePath ?? raw}@${archivePath ? source.hashOf(archivePath) ?? '' : ''}`);
     if (bytes) {
       image.src = source.createUrl(bytes, imageMimeType(archivePath ?? raw));
     } else {
       image.classList.add('mdzip-diff-image-missing');
-      image.title = `Not in this version of the archive: ${raw}`;
+      image.title = plainMarkdown
+        ? `Image not available: ${raw}`
+        : `Not in this version of the archive: ${raw}`;
     }
   }));
   return template.content;
@@ -140,7 +151,205 @@ export function markBlockChanges(before: Element, after: Element): Array<[HTMLEl
     if (!matchedB.has(index)) b[index].classList.add('mdzip-diff-block-added');
   }
   pairs.push(...tail);
+  markModifiedBlocks(a, b, pairs);
   return pairs;
+}
+
+/** Below this share of common words, two changed blocks count as a removal and an addition. */
+const MIN_BLOCK_SIMILARITY = 0.3;
+/** Above this many token pairs, a block keeps its whole-block marking. */
+const MAX_WORD_MATCH_CELLS = 400_000;
+
+/**
+ * Between each pair of matched blocks, pairs the removed and added blocks
+ * that are edits of each other (same element, similar words), in order, and
+ * marks just the words that changed. The pair gets `mdzip-diff-block-modified`
+ * so its whole-block tint can stay light.
+ */
+function markModifiedBlocks(
+  a: HTMLElement[],
+  b: HTMLElement[],
+  pairs: ReadonlyArray<readonly [HTMLElement, HTMLElement]>
+): void {
+  const indexA = new Map(a.map((element, index) => [element, index]));
+  const indexB = new Map(b.map((element, index) => [element, index]));
+  const anchors = pairs
+    .map(([left, right]) => [indexA.get(left) ?? -1, indexB.get(right) ?? -1] as const)
+    .sort((x, y) => x[0] - y[0]);
+  let previousA = -1;
+  let previousB = -1;
+  for (const [nextA, nextB] of [...anchors, [a.length, b.length] as const]) {
+    const removed = a.slice(previousA + 1, nextA).filter((el) => el.classList.contains('mdzip-diff-block-removed'));
+    const added = b.slice(previousB + 1, nextB).filter((el) => el.classList.contains('mdzip-diff-block-added'));
+    let j = 0;
+    for (const left of removed) {
+      for (let k = j; k < added.length; k += 1) {
+        const right = added[k];
+        if (left.tagName === right.tagName && blockSimilarity(left, right) >= MIN_BLOCK_SIMILARITY) {
+          if (CONTAINER_TAGS.has(left.tagName) && markContainerChanges(left, right)) {
+            // Its items carry the marks; the list or quote itself is just their container.
+          } else if (markWordChanges(left, right)) {
+            left.classList.add('mdzip-diff-block-modified');
+            right.classList.add('mdzip-diff-block-modified');
+          }
+          j = k + 1;
+          break;
+        }
+      }
+    }
+    previousA = nextA;
+    previousB = nextB;
+  }
+}
+
+/** Blocks whose children are compared one by one when they're edited: list items, quoted paragraphs. */
+const CONTAINER_TAGS = new Set(['UL', 'OL', 'BLOCKQUOTE']);
+
+/**
+ * An edited list or quote: matches its items the way the top-level blocks
+ * are matched, so only the items that changed are marked, not the whole
+ * list. The pair gets `mdzip-diff-block-container` in place of its own
+ * added/removed marks. False (nothing changed) when the items all match,
+ * e.g. only the list's numbering changed; the caller then marks it whole.
+ */
+function markContainerChanges(left: HTMLElement, right: HTMLElement): boolean {
+  if (left.children.length === 0 || right.children.length === 0) return false;
+  markBlockChanges(left, right);
+  const marked = (element: HTMLElement) =>
+    element.querySelector(':scope > .mdzip-diff-block-added, :scope > .mdzip-diff-block-removed') !== null;
+  if (!marked(left) && !marked(right)) return false;
+  left.classList.replace('mdzip-diff-block-removed', 'mdzip-diff-block-container');
+  right.classList.replace('mdzip-diff-block-added', 'mdzip-diff-block-container');
+  return true;
+}
+
+/** A word: letters and digits, kept whole across inner `.`, `-` and `'` (`2.4.2`, `awaiting-test`, `don't`). */
+const WORD_RE = /[\p{L}\p{N}_]+(?:[.\-'’][\p{L}\p{N}_]+)*/gu;
+/** Whitespace runs, words, and single other characters. */
+const TOKEN_RE = /\s+|[\p{L}\p{N}_]+(?:[.\-'’][\p{L}\p{N}_]+)*|[^\s\p{L}\p{N}_]/gu;
+
+function wordsOf(element: Element): string[] {
+  return (element.textContent ?? '').match(WORD_RE) ?? [];
+}
+
+/** Dice coefficient over the two blocks' words. */
+function blockSimilarity(left: Element, right: Element): number {
+  const wordsA = wordsOf(left);
+  const wordsB = wordsOf(right);
+  if (wordsA.length === 0 || wordsB.length === 0) return 0;
+  const counts = new Map<string, number>();
+  for (const word of wordsA) counts.set(word, (counts.get(word) ?? 0) + 1);
+  let common = 0;
+  for (const word of wordsB) {
+    const count = counts.get(word) ?? 0;
+    if (count > 0) {
+      common += 1;
+      counts.set(word, count - 1);
+    }
+  }
+  return (2 * common) / (wordsA.length + wordsB.length);
+}
+
+interface WordToken {
+  text: string;
+  node: Text;
+  start: number;
+  end: number;
+  space: boolean;
+}
+
+/** Words, single punctuation marks and whitespace runs, with the text node each sits in. */
+function tokenize(element: Element): WordToken[] {
+  const tokens: WordToken[] = [];
+  const walker = element.ownerDocument.createTreeWalker(element, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+    for (const match of node.data.matchAll(TOKEN_RE)) {
+      const start = match.index ?? 0;
+      tokens.push({ text: match[0], node, start, end: start + match[0].length, space: /^\s+$/.test(match[0]) });
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Wraps the words only one block has in `mdzip-diff-word-removed` /
+ * `mdzip-diff-word-added`. Returns false (and changes nothing) when there's
+ * nothing word-level to show, such as a changed image or link target, or
+ * when the blocks are too large to compare.
+ */
+function markWordChanges(left: Element, right: Element): boolean {
+  const tokensA = tokenize(left);
+  const tokensB = tokenize(right);
+  const wordsA = tokensA.filter((token) => !token.space);
+  const wordsB = tokensB.filter((token) => !token.space);
+  const n = wordsA.length;
+  const m = wordsB.length;
+  if (n === 0 || m === 0 || n * m > MAX_WORD_MATCH_CELLS) return false;
+
+  const lengths: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i -= 1) {
+    for (let j = m - 1; j >= 0; j -= 1) {
+      lengths[i][j] = wordsA[i].text === wordsB[j].text
+        ? lengths[i + 1][j + 1] + 1
+        : Math.max(lengths[i + 1][j], lengths[i][j + 1]);
+    }
+  }
+  const keptA = new Set<WordToken>();
+  const keptB = new Set<WordToken>();
+  for (let i = 0, j = 0; i < n && j < m;) {
+    if (wordsA[i].text === wordsB[j].text) {
+      keptA.add(wordsA[i]);
+      keptB.add(wordsB[j]);
+      i += 1;
+      j += 1;
+    } else if (lengths[i + 1][j] >= lengths[i][j + 1]) {
+      i += 1;
+    } else {
+      j += 1;
+    }
+  }
+  if (keptA.size === n && keptB.size === m) return false;
+  wrapChangedTokens(tokensA, keptA, 'mdzip-diff-word-removed');
+  wrapChangedTokens(tokensB, keptB, 'mdzip-diff-word-added');
+  return true;
+}
+
+function wrapChangedTokens(tokens: WordToken[], kept: Set<WordToken>, className: string): void {
+  // A changed word is marked; so is the space between two changed words, so a
+  // changed phrase reads as one run.
+  const marked = tokens.map((token) => !token.space && !kept.has(token));
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (!tokens[index].space) continue;
+    let before = index - 1;
+    while (before >= 0 && tokens[before].space) before -= 1;
+    let after = index + 1;
+    while (after < tokens.length && tokens[after].space) after += 1;
+    marked[index] = before >= 0 && after < tokens.length && marked[before] && marked[after];
+  }
+
+  // Runs of marked tokens within one text node, wrapped from the end of the
+  // node back so earlier offsets stay valid.
+  const runs: Array<{ node: Text; start: number; end: number }> = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (!marked[index]) continue;
+    const token = tokens[index];
+    const last = runs[runs.length - 1];
+    if (last && last.node === token.node && last.end === token.start && marked[index - 1]) {
+      last.end = token.end;
+    } else {
+      runs.push({ node: token.node, start: token.start, end: token.end });
+    }
+  }
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    const { node, start, end } = runs[index];
+    const doc = node.ownerDocument;
+    const range = doc.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, end);
+    const span = doc.createElement('span');
+    span.className = className;
+    range.surroundContents(span);
+  }
 }
 
 /**
@@ -215,6 +424,36 @@ export function resolveArchivePath(documentPath: string, source: string): string
     }
   }
   return parts.length ? parts.join('/') : null;
+}
+
+/**
+ * Normalizes an image source in a plain `.md` document, relative to the
+ * document's own folder. Unlike {@link resolveArchivePath} it may leave that
+ * folder: leading `../` segments are kept, and a root-relative source keeps
+ * its leading `/`, so the host can resolve it against its own root.
+ * Returns null for an empty source.
+ */
+export function resolveLinkedPath(source: string): string | null {
+  let clean = source.replace(/^<|>$/g, '').split(/[?#]/)[0] ?? '';
+  try {
+    clean = decodeURIComponent(clean);
+  } catch {
+    // Keep the raw text when the escapes are malformed.
+  }
+  const rooted = clean.startsWith('/');
+  const parts: string[] = [];
+  for (const part of clean.split('/')) {
+    if (!part || part === '.') continue;
+    if (part === '..' && parts.length > 0 && parts[parts.length - 1] !== '..') {
+      parts.pop();
+    } else if (part === '..' && rooted) {
+      continue;
+    } else {
+      parts.push(part);
+    }
+  }
+  if (parts.length === 0) return null;
+  return `${rooted ? '/' : ''}${parts.join('/')}`;
 }
 
 function blockKey(element: Element): string {
