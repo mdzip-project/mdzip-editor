@@ -185,8 +185,9 @@ doesn't scale with zoom, and leaves no menu item checked; so does setting the
 ## Outline Panel
 
 The outline panel is a table of contents built from the document's headings,
-beside the preview. It marks the section being read and jumps to a section on
-click. The toolbar's outline button (next to Find) shows and hides it; it
+beside the preview. It marks the section being read, and a click scrolls
+smoothly to that section (it jumps instead when the system asks for reduced
+motion). The toolbar's outline button (next to Find) shows and hides it; it
 appears while the preview of a Markdown document is visible, in View or Split
 layout. Under progressive rendering it lists every heading, including ones in
 chunks that haven't been drawn yet, and a click draws the chunks up to the
@@ -850,7 +851,9 @@ does. You can call it at any time, including straight after `open()` or from
 `onPreviewRendered`. It waits for the current document to mount and, under
 progressive rendering, mounts the chunks up to the target first. It resolves
 `true` when it scrolled and `false` when nothing matched. `''` and `'top'`
-scroll to the top. `getAvailableAnchors()` lists the reachable anchors in
+scroll to the top. `{ smooth: true }` glides there over a fraction of a second,
+as an outline click does, instead of jumping (except under
+`prefers-reduced-motion`). `getAvailableAnchors()` lists the reachable anchors in
 document order, including headings in chunks that haven't mounted yet.
 
 ```ts

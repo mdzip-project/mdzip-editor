@@ -1147,6 +1147,12 @@ export interface MdzipWorkspaceViewOptions {
   onJsonValidityChanged?: (validity: MdzipJsonValidity | null, path: string | null) => void;
 }
 
+/** Options for {@link MdzipWorkspaceView.scrollToAnchor}. */
+export interface MdzipScrollToAnchorOptions {
+  /** Scroll smoothly instead of jumping (skipped under `prefers-reduced-motion`). Default false. */
+  smooth?: boolean;
+}
+
 export interface MdzipOutlineViewOptions {
   /** Open the panel at start. Default `false`. */
   visible?: boolean;
@@ -2310,6 +2316,8 @@ export class MdzipWorkspaceView {
   // (images loading or easing open, a diagram rendering) and push it out of
   // view. This holds the target at the pane's top edge until the user
   // scrolls either pane or the preview re-renders.
+  // requestAnimationFrame handle of a smooth scroll to an anchor (see glidePreviewTo).
+  private previewGlide: number | null = null;
   private anchorPin: ResizeObserver | null = null;
   // Each link's own target/rel from before the external-link policy touched
   // it, so a policy change can restore them before re-applying.
@@ -6397,8 +6405,11 @@ export class MdzipWorkspaceView {
    * anchor (`''` and `'top'` scroll to the top and resolve `true`), and
    * `false` when nothing matches, an entry renderer owns the pane, or the
    * view is destroyed first.
+   *
+   * `{ smooth: true }` glides there instead of jumping, as an outline click
+   * does; it jumps anyway when the user asked for reduced motion.
    */
-  public async scrollToAnchor(anchor: string): Promise<boolean> {
+  public async scrollToAnchor(anchor: string, options: MdzipScrollToAnchorOptions = {}): Promise<boolean> {
     const fragment = anchor.startsWith('#') ? anchor.slice(1) : anchor;
     // onPreviewRendered runs inside the first chunk batch's completion,
     // before the lazy-continuation sentinel is armed — same race as
@@ -6419,13 +6430,13 @@ export class MdzipWorkspaceView {
         return false;
       }
       if (generation !== this.previewGeneration) {
-        return this.scrollToAnchor(anchor);
+        return this.scrollToAnchor(anchor, options);
       }
     }
     if (this.entryState) {
       return false;
     }
-    const found = await this.scrollPreviewToAnchor(fragment);
+    const found = await this.scrollPreviewToAnchor(fragment, options.smooth === true && !this.prefersReducedMotion());
     return found || !fragment || fragment.toLowerCase() === 'top';
   }
 
@@ -6481,7 +6492,7 @@ export class MdzipWorkspaceView {
         findElement: (heading) => this.findOutlineElement(heading),
         onNavigate: (heading, event) => {
           event.preventDefault();
-          void this.scrollToAnchor(heading.id);
+          void this.scrollToAnchor(heading.id, { smooth: true });
         }
       });
       this.outlineGeneration = this.previewMountedGeneration;
@@ -6633,7 +6644,15 @@ export class MdzipWorkspaceView {
    * a chunk that hasn't been mounted yet, so this mounts everything up to and
    * including that chunk first. Returns whether an anchor was found.
    */
-  private async scrollPreviewToAnchor(rawFragment: string): Promise<boolean> {
+  private prefersReducedMotion(): boolean {
+    try {
+      return this.elRoot.ownerDocument.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  private async scrollPreviewToAnchor(rawFragment: string, smooth = false): Promise<boolean> {
     let fragment = rawFragment;
     try {
       fragment = decodeURIComponent(rawFragment);
@@ -6662,18 +6681,74 @@ export class MdzipWorkspaceView {
     if (!target) {
       // `#` and `#top` mean the top of the document, as in a browser.
       if (!fragment || fragment.toLowerCase() === 'top') {
-        pane.scrollTop = 0;
+        this.releaseAnchorPin();
+        if (smooth) {
+          this.glidePreviewTo(() => 0);
+        } else {
+          pane.scrollTop = 0;
+        }
       }
       return false;
     }
-    this.scrollPaneToElement(target);
+    // Pin first: pinning releases any earlier pin, and with it a glide.
     this.pinPreviewAnchor(target);
+    if (smooth) {
+      this.glidePreviewTo(() => this.paneTopOf(target));
+    } else {
+      this.scrollPaneToElement(target);
+    }
     return true;
   }
 
-  private scrollPaneToElement(target: Element): void {
+  private paneTopOf(target: Element): number {
     const pane = this.elPreviewPane;
-    pane.scrollTop += target.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+    return pane.scrollTop + target.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+  }
+
+  private scrollPaneToElement(target: Element): void {
+    this.elPreviewPane.scrollTop = this.paneTopOf(target);
+  }
+
+  /**
+   * Scrolls the preview to `targetTop()` over a few hundred milliseconds.
+   * The target is measured again every frame, so images loading above it
+   * while it moves bend the path instead of restarting it (the browser's
+   * own smooth scroll restarts on every change and stutters). A wheel,
+   * touch or click in the pane stops it, as it releases the anchor pin.
+   */
+  private glidePreviewTo(targetTop: () => number): void {
+    this.cancelPreviewGlide();
+    const pane = this.elPreviewPane;
+    const start = pane.scrollTop;
+    const distance = Math.abs(targetTop() - start);
+    if (distance < 2) {
+      pane.scrollTop = targetTop();
+      return;
+    }
+    // Longer for longer trips, within limits that still feel quick.
+    const duration = Math.min(700, 250 + distance * 0.12);
+    const startTime = performance.now();
+    // performance.now(), not the frame's timestamp: the two can count from
+    // different origins (another window's requestAnimationFrame, jsdom).
+    const step = () => {
+      const now = performance.now();
+      if (this.destroyed) {
+        this.previewGlide = null;
+        return;
+      }
+      const t = Math.min(1, Math.max(0, (now - startTime) / duration));
+      const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      pane.scrollTop = start + (targetTop() - start) * eased;
+      this.previewGlide = t < 1 ? requestAnimationFrame(step) : null;
+    };
+    this.previewGlide = requestAnimationFrame(step);
+  }
+
+  private cancelPreviewGlide(): void {
+    if (this.previewGlide !== null) {
+      cancelAnimationFrame(this.previewGlide);
+      this.previewGlide = null;
+    }
   }
 
   /** See `anchorPin`. */
@@ -6688,13 +6763,17 @@ export class MdzipWorkspaceView {
         this.releaseAnchorPin();
         return;
       }
-      this.scrollPaneToElement(target);
+      if (this.previewGlide === null) {
+        // While gliding, each frame measures the target again anyway.
+        this.scrollPaneToElement(target);
+      }
     });
     observer.observe(this.elPreviewContent);
     this.anchorPin = observer;
   }
 
   private releaseAnchorPin(): void {
+    this.cancelPreviewGlide();
     this.anchorPin?.disconnect();
     this.anchorPin = null;
   }

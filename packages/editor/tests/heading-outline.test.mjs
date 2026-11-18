@@ -66,7 +66,9 @@ function fakeLayout() {
   const tops = new Map();
   const original = window.HTMLElement.prototype.getBoundingClientRect;
   window.HTMLElement.prototype.getBoundingClientRect = function rect() {
-    const top = tops.has(this) ? tops.get(this) : tops.has(this.id) ? tops.get(this.id) : 0;
+    const value = tops.has(this) ? tops.get(this) : tops.has(this.id) ? tops.get(this.id) : 0;
+    // A function gives a position that follows the scroll, as real layout does.
+    const top = typeof value === 'function' ? value() : value;
     return { top, bottom: top + 20, left: 0, right: 0, width: 0, height: 20 };
   };
   return {
@@ -330,7 +332,7 @@ test('the outline follows edits to the document', async () => {
   }
 });
 
-test('with progressive rendering the outline lists unmounted headings, and a click mounts and scrolls to one', async () => {
+test('with progressive rendering the outline lists unmounted headings, and a click mounts and glides to one', async () => {
   let source = '# Top\n\n';
   for (let i = 0; i < 800; i += 1) {
     source += `Paragraph number ${i} with a little padding text so each block has real weight.\n\n`;
@@ -342,19 +344,21 @@ test('with progressive rendering the outline lists unmounted headings, and a cli
   });
   const layout = fakeLayout();
   let scrollTop = 0;
-  Object.defineProperty(previewPane, 'scrollTop', { configurable: true, get: () => scrollTop, set: (v) => { scrollTop = v; } });
+  const visited = [];
+  Object.defineProperty(previewPane, 'scrollTop', { configurable: true, get: () => scrollTop, set: (v) => { scrollTop = v; visited.push(v); } });
   try {
     const state = view.chunkedRenderState;
     assert.ok(state && state.cursor < state.records.length, 'sanity: the tail is unmounted');
     assert.deepEqual(texts(), ['Top', 'Last Section']);
 
-    layout.set('user-content-last-section', 9000);
+    layout.set('user-content-last-section', () => 9000 - scrollTop);
     const link = [...pane.querySelectorAll('a')].find((a) => a.textContent === 'Last Section');
     link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
     await waitFor(() => {
       assert.ok(previewContent.querySelector('#user-content-last-section'), 'target chunk got mounted');
-      assert.equal(scrollTop, 9000);
+      assert.equal(Math.round(scrollTop), 9000);
     });
+    assert.ok(visited.some((top) => top > 100 && top < 8900), 'it scrolls through the way there, not in one jump');
     assert.ok(link.classList.contains('is-current'));
   } finally {
     layout.restore();
