@@ -90,11 +90,21 @@ async function render(markdown) {
   leaks.length = 0;
   const container = document.createElement('div');
   document.body.appendChild(container);
-  const view = new MdzipWorkspaceView(container, { controls: 'viewer', initialLayout: 'preview', initialColorScheme: 'light' });
+  let mounted;
+  const previewMounted = new Promise((resolve) => { mounted = resolve; });
+  const view = new MdzipWorkspaceView(container, {
+    controls: 'viewer', initialLayout: 'preview', initialColorScheme: 'light',
+    onPreviewRendered: () => mounted()
+  });
   await view.open(await archive(markdown), { mode: 'read-only', fileName: 'images.mdz' });
   const preview = container.querySelector('[data-ref="preview-content"]');
+  // The preview mounts in parts (the first image can be in the DOM before the
+  // rest of the document), so wait until it's mounted rather than a fixed
+  // time, which a busy machine outruns; then for the image pass to finish.
+  // (whenRendered() would also wait for the images to load, which jsdom never does.)
+  await previewMounted;
   await waitFor(() => assert.ok(preview.querySelector('img')));
-  await wait(50);
+  await waitFor(() => assert.equal(preview.querySelector('img[data-mdzip-pending-src]'), null));
   return { preview, cleanup: () => { view.destroy(); container.remove(); } };
 }
 
