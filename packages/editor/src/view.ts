@@ -5266,7 +5266,10 @@ export class MdzipWorkspaceView {
     this.renderMetadata(snapshot);
 
     this.elSaveBtn.disabled = snapshot.mode === 'read-only' || !snapshot.dirty;
-    this.elSplitBtn.disabled = !this.controlPolicy.layout.split || !canShowSource;
+    // Split only means something for Markdown: for JSON and other text the
+    // preview would repeat the editor's text (see shownLayout).
+    this.elSplitBtn.disabled = !this.controlPolicy.layout.split || !canShowSource
+      || snapshot.currentPathType !== 'markdown';
     this.elSourceBtn.disabled = !this.controlPolicy.layout.source || !canShowSource;
     this.renderFormattingControls();
 
@@ -5282,11 +5285,12 @@ export class MdzipWorkspaceView {
     }
 
     this.elPreviewBtn.classList.toggle('active', this.layout === 'preview');
-    this.elSplitBtn.classList.toggle('active', this.layout === 'split');
-    this.elSourceBtn.classList.toggle('active', this.layout === 'source');
+    const shownLayout = this.shownLayout(snapshot);
+    this.elSplitBtn.classList.toggle('active', shownLayout === 'split');
+    this.elSourceBtn.classList.toggle('active', shownLayout === 'source');
     this.elPreviewBtn.setAttribute('aria-pressed', String(this.layout === 'preview'));
-    this.elSplitBtn.setAttribute('aria-pressed', String(this.layout === 'split'));
-    this.elSourceBtn.setAttribute('aria-pressed', String(this.layout === 'source'));
+    this.elSplitBtn.setAttribute('aria-pressed', String(shownLayout === 'split'));
+    this.elSourceBtn.setAttribute('aria-pressed', String(shownLayout === 'source'));
     if (snapshot.sourceFormat === 'markdown') {
       this.elNavBtn.innerHTML = CONVERT_TO_MDZ_ICON_HTML;
       this.elNavBtn.classList.remove('active');
@@ -5403,13 +5407,15 @@ export class MdzipWorkspaceView {
     this.updatePreview(snapshot, entryClaimed);
 
     const pt = snapshot.currentPathType;
-    const showEdit = !entryClaimed && (pt === 'markdown' || pt === 'text') && this.layout !== 'preview';
-    const showPreview = !entryClaimed && (pt === 'image' || pt === 'binary' || pt === 'text'
-      || (pt === 'markdown' && this.layout !== 'source'));
+    const shown = this.shownLayout(snapshot);
+    const showEdit = !entryClaimed && (pt === 'markdown' || pt === 'text') && shown !== 'preview';
+    // A text file's preview is its text as-is: shown in View, not beside the editor.
+    const showPreview = !entryClaimed && (pt === 'image' || pt === 'binary'
+      || ((pt === 'markdown' || pt === 'text') && shown !== 'source'));
     this.elEditPane.classList.toggle('active', showEdit);
     this.elPreviewPane.classList.toggle('active', showPreview);
     this.elEntryPane.classList.toggle('active', entryClaimed);
-    this.elPaneStack.classList.toggle('split-mode', this.layout === 'split' && !entryClaimed);
+    this.elPaneStack.classList.toggle('split-mode', shown === 'split' && !entryClaimed);
     this.elPaneStack.classList.toggle('entry-claimed', entryClaimed);
     this.syncOutlinePane(this.outlineVisible && !entryClaimed && pt === 'markdown' && this.layout !== 'source');
 
@@ -9698,6 +9704,13 @@ export class MdzipWorkspaceView {
     } catch (error) {
       this.options.onFailed?.(error);
     }
+  }
+
+  // The layout as drawn for the open file. Split shows the editor alone for
+  // non-Markdown text (JSON, CSS, …), whose preview would only repeat the
+  // text; this.layout keeps the choice, so Markdown files open split again.
+  private shownLayout(snapshot: MdzipWorkspaceSnapshot): MdzipWorkspaceLayout {
+    return this.layout === 'split' && snapshot.currentPathType === 'text' ? 'source' : this.layout;
   }
 
   private validLayoutForSnapshot(
