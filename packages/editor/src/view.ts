@@ -67,7 +67,7 @@ import {
   SquarePen,
   Strikethrough,
   Braces,
-  Space,
+  Text,
   TableOfContents,
   Sun,
   TextSelect,
@@ -199,7 +199,7 @@ const SPLIT_ICON_HTML = lucideIcon(Columns2, TOOLBAR_ICON_CLASS);
 const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
 const SEARCH_ICON_HTML = lucideIcon(Search, TOOLBAR_ICON_CLASS);
 const OUTLINE_ICON_HTML = lucideIcon(TableOfContents, TOOLBAR_ICON_CLASS);
-const WHITESPACE_ICON_HTML = lucideIcon(Space, TOOLBAR_ICON_CLASS);
+const WHITESPACE_ICON_HTML = lucideIcon(Pilcrow, TOOLBAR_ICON_CLASS);
 const FORMAT_JSON_ICON_HTML = lucideIcon(Braces, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
 const DARK_THEME_ICON_HTML = lucideIcon(Moon, TOOLBAR_ICON_CLASS);
@@ -256,7 +256,8 @@ const MENU_IMAGE_ICON_HTML = lucideIcon(ImagePlus, MENU_ICON_CLASS);
 const MENU_LINK_ICON_HTML = lucideIcon(Link, MENU_ICON_CLASS);
 const MENU_CLEAR_FORMAT_ICON_HTML = lucideIcon(Eraser, MENU_ICON_CLASS);
 const MENU_HEADING_PARENT_ICON_HTML = lucideIcon(Heading1, MENU_ICON_CLASS);
-const MENU_PARAGRAPH_ICON_HTML = lucideIcon(Pilcrow, MENU_ICON_CLASS);
+// Lines of plain text: ¶ is the Show whitespace button's icon.
+const MENU_PARAGRAPH_ICON_HTML = lucideIcon(Text, MENU_ICON_CLASS);
 const MENU_CHEVRON_ICON_HTML = lucideIcon(ChevronRight, 'nav-menu-chevron');
 const MENU_HEADING_ICON_HTML: Record<MdzipHeadingLevel, string> = {
   1: lucideIcon(Heading1, MENU_ICON_CLASS),
@@ -642,7 +643,7 @@ export interface MdzipControlPolicy {
   contextMenu?: boolean | MdzipContextMenuControlPolicy;
   lineNumbers?: boolean;
   /**
-   * The toolbar button (␣) that shows spaces as faint dots and tabs as
+   * The toolbar button (¶) that shows spaces as faint dots and tabs as
    * arrows in the source editor. On in the editor and viewer presets; the
    * marks themselves start hidden unless `showWhitespace` is set.
    */
@@ -6416,7 +6417,7 @@ export class MdzipWorkspaceView {
     return this.whitespaceVisible;
   }
 
-  /** Shows or hides spaces and tabs in the source editor, as the ␣ toolbar button does (without calling `onWhitespaceVisibilityChanged`). */
+  /** Shows or hides spaces and tabs in the source editor, as the ¶ toolbar button does (without calling `onWhitespaceVisibilityChanged`). */
   public setWhitespaceVisible(visible: boolean): void {
     if (this.whitespaceVisible === visible) {
       return;

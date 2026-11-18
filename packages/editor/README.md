@@ -111,7 +111,7 @@ Call `setControls(nextControls)` to update the policy after construction
 without rebuilding the workspace view. `lineNumbers` changes are applied to the
 existing CodeMirror editor, preserving the current document and selection.
 
-The **Show whitespace** button (␣, at the end of the formatting buttons;
+The **Show whitespace** button (¶, at the end of the formatting buttons;
 `controls.whitespace`, on except
 in `preview`) shows spaces as faint dots and tabs as arrows in the source
 editor; it appears while the editor is visible. The marks start hidden unless
