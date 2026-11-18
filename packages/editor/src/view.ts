@@ -130,8 +130,10 @@ import {
   formatMdzipJsonText,
   isMdzipJsonPath,
   isMdzipRootManifestPath,
+  setMdzipJsonMember,
   type MdzipJsonValidity
 } from './json-validation.js';
+import { MdzipManifestForm } from './manifest-form.js';
 import {
   createMdzipHeadingOutline,
   type MdzipHeadingOutline,
@@ -915,6 +917,13 @@ export interface MdzipWorkspaceViewOptions {
    */
   showSpellingSuggestionsHint?: boolean;
   initialLayout?: MdzipWorkspaceLayout;
+  /**
+   * How `manifest.json` opens: `'form'` (the default) shows the document's
+   * properties as a form (the View layout), `'json'` the JSON editor (Edit).
+   * The manifest remembers its own layout, apart from the other files', so
+   * switching between it and a document keeps each one's choice.
+   */
+  manifestView?: 'form' | 'json';
   /**
    * Starting color scheme. `'system'` (the default) follows the operating
    * system's light/dark setting and updates when it changes, or the host's
@@ -2368,6 +2377,12 @@ export class MdzipWorkspaceView {
   private whitespaceVisible = false;
   // Which parts of the edit toolbar the last render showed (renderFormattingControls).
   private formattingShown = false;
+  // The manifest keeps its own layout (form by default); the other files'
+  // layout waits in documentLayout while it's open.
+  private manifestLayout: MdzipWorkspaceLayout = 'preview';
+  private documentLayout: MdzipWorkspaceLayout = 'preview';
+  private layoutIsManifest = false;
+  private manifestForm: MdzipManifestForm | null = null;
   private whitespaceControlShown = false;
   private formatJsonShown = false;
   private readonly elWhitespaceBtn: HTMLButtonElement;
@@ -2472,6 +2487,7 @@ export class MdzipWorkspaceView {
     this.outlineOptions = typeof options.outline === 'object' ? options.outline : {};
     this.outlineVisible = typeof options.outline === 'object' ? options.outline.visible ?? false : options.outline ?? false;
     this.whitespaceVisible = options.showWhitespace ?? false;
+    this.manifestLayout = options.manifestView === 'json' ? 'source' : 'preview';
     this.markdownRenderer = options.markdownRenderer;
     this.markdownExtensions = options.markdownExtensions ?? [];
     this.frontMatterOptions = options.frontMatter ?? {};
@@ -3390,7 +3406,12 @@ export class MdzipWorkspaceView {
           this.firePreviewRendered(snapshot, generation);
           this.fireAssetsHydrated(snapshot, generation);
         }).catch((error) => this.options.onFailed?.(error));
+      } else if (this.isManifestFormPath(snapshot)) {
+        this.mountManifestForm(snapshot);
+        this.firePreviewRendered(snapshot, generation);
+        this.fireAssetsHydrated(snapshot, generation);
       } else {
+        this.manifestForm = null;
         this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
         this.firePreviewRendered(snapshot, generation);
         this.fireAssetsHydrated(snapshot, generation);
@@ -5244,6 +5265,7 @@ export class MdzipWorkspaceView {
       return;
     }
 
+    this.swapManifestLayout(snapshot);
     this.layout = this.validLayoutForSnapshot(this.layout, snapshot);
     const entryClaimed = this.syncEntryRenderer(snapshot);
     const canEdit = !entryClaimed
@@ -5335,7 +5357,7 @@ export class MdzipWorkspaceView {
     // Split only means something for Markdown: for JSON and other text the
     // preview would repeat the editor's text (see shownLayout).
     this.elSplitBtn.disabled = !this.controlPolicy.layout.split || !canShowSource
-      || snapshot.currentPathType !== 'markdown';
+      || (snapshot.currentPathType !== 'markdown' && !this.isManifestFormPath(snapshot));
     this.elSourceBtn.disabled = !this.controlPolicy.layout.source || !canShowSource;
     this.renderFormattingControls();
 
@@ -6888,10 +6910,12 @@ export class MdzipWorkspaceView {
     if (snapshot && !isMdzipRootManifestPath(snapshot.currentPath)) {
       await this.openPath('manifest.json');
     }
-    if (this.layout === 'preview') {
-      await this.setLayout('split');
-    }
     this.setJsonValidity(validity, 'manifest.json');
+    if (this.layout !== 'source' && this.manifestForm) {
+      // The form shows each problem under its field.
+      this.manifestForm.flash();
+      return;
+    }
     this.elJsonStatus.classList.remove('flash');
     void this.elJsonStatus.offsetWidth;
     this.elJsonStatus.classList.add('flash');
@@ -9860,7 +9884,86 @@ export class MdzipWorkspaceView {
   // non-Markdown text (JSON, CSS, …), whose preview would only repeat the
   // text; this.layout keeps the choice, so Markdown files open split again.
   private shownLayout(snapshot: MdzipWorkspaceSnapshot): MdzipWorkspaceLayout {
-    return this.layout === 'split' && snapshot.currentPathType === 'text' ? 'source' : this.layout;
+    return this.layout === 'split' && snapshot.currentPathType === 'text' && !this.isManifestFormPath(snapshot)
+      ? 'source'
+      : this.layout;
+  }
+
+  // The archive's own manifest.json, which View shows as a form.
+  private isManifestFormPath(snapshot: MdzipWorkspaceSnapshot): boolean {
+    return snapshot.sourceFormat === 'mdz'
+      && snapshot.currentPathType === 'text'
+      && isMdzipRootManifestPath(snapshot.currentPath);
+  }
+
+  // Moving into or out of manifest.json swaps in that side's remembered
+  // layout, so the form (View) and a document's Split don't override each other.
+  private swapManifestLayout(snapshot: MdzipWorkspaceSnapshot): void {
+    const isManifest = this.isManifestFormPath(snapshot);
+    if (isManifest === this.layoutIsManifest) {
+      return;
+    }
+    this.layoutIsManifest = isManifest;
+    if (isManifest) {
+      this.documentLayout = this.layout;
+      this.layout = this.manifestLayout;
+    } else {
+      this.manifestLayout = this.layout;
+      this.layout = this.documentLayout;
+    }
+    if (this.layout !== 'preview' && !this.cmEditor) {
+      // The editor is created on demand; draw again once it exists.
+      void this.ensureCmEditor().then(() => this.render());
+    }
+  }
+
+  private mountManifestForm(snapshot: MdzipWorkspaceSnapshot): void {
+    const workspace = this.workspace;
+    if (!workspace) {
+      return;
+    }
+    if (!this.manifestForm || !this.elPreviewContent.contains(this.manifestForm.root)) {
+      this.manifestForm = new MdzipManifestForm(this.elRoot.ownerDocument, {
+        editable: snapshot.mode !== 'read-only',
+        markdownPaths: snapshot.content.paths.filter((entry) => entry.isMarkdown).map((entry) => entry.path),
+        onChange: (path, value) => this.setManifestValue(path, value),
+        onEditJson: () => {
+          // In Split the JSON is already beside the form: just go to it.
+          const show = this.layout === 'split' ? Promise.resolve() : this.setLayout('source');
+          void show.then(() => this.cmEditor?.focus());
+        }
+      });
+      this.elPreviewContent.replaceChildren(this.manifestForm.root);
+    }
+    const validity = workspace.validateJsonText(snapshot.currentPath, snapshot.currentText);
+    this.manifestForm.update(validity);
+    this.setJsonValidity(validity, snapshot.currentPath);
+  }
+
+  // A change made in the form: one value set in the JSON text, through the
+  // editor when there is one (so Ctrl+Z undoes it), else the workspace.
+  private setManifestValue(path: readonly string[], value: unknown): void {
+    const workspace = this.workspace;
+    if (!workspace) {
+      return;
+    }
+    const current = this.cmEditor && this.layout !== 'preview'
+      ? this.cmEditor.state.doc.toString()
+      : workspace.snapshot().currentText;
+    const next = setMdzipJsonMember(current, path, value);
+    if (next === null || next === current) {
+      return;
+    }
+    const editor = this.cmEditor;
+    if (editor && editor.state.doc.toString() === current) {
+      editor.dispatch({ changes: { from: 0, to: current.length, insert: next }, userEvent: 'input.form' });
+    } else {
+      try {
+        workspace.editText(next);
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+    }
   }
 
   private validLayoutForSnapshot(
@@ -9874,7 +9977,7 @@ export class MdzipWorkspaceView {
   }
 
   private syncScrollFromPreview(): void {
-    if (this.syncing || !this.cmEditor || this.layout !== 'split') {
+    if (this.syncing || !this.cmEditor || this.layout !== 'split' || this.layoutIsManifest) {
       return;
     }
     if (performance.now() - this.lastPreviewGestureTime > MdzipWorkspaceView.SCROLL_SYNC_GESTURE_WINDOW_MS) {
@@ -9911,7 +10014,7 @@ export class MdzipWorkspaceView {
   }
 
   private syncScrollToPreview(): void {
-    if (this.syncing || !this.cmEditor || this.layout !== 'split') {
+    if (this.syncing || !this.cmEditor || this.layout !== 'split' || this.layoutIsManifest) {
       return;
     }
     if (performance.now() - this.lastEditorGestureTime > MdzipWorkspaceView.SCROLL_SYNC_GESTURE_WINDOW_MS) {

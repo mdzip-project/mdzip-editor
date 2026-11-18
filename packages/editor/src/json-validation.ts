@@ -14,6 +14,12 @@ export interface MdzipJsonProblem {
   to: number;
   /** The manifest field it's about (`spec.version`, `title`, …), when there is one. */
   field?: string;
+  /**
+   * The kind of problem: `'syntax'` (not JSON, or the manifest isn't an
+   * object), `'duplicate'` (a property name used twice), or `'field'` (a
+   * field's value). The manifest form can't show the text in the first two cases.
+   */
+  code?: 'syntax' | 'duplicate' | 'field';
 }
 
 export interface MdzipJsonValidity {
@@ -248,12 +254,13 @@ export function validateMdzipJsonText(text: string): MdzipJsonValidity {
     parsed = parseJsonWithPositions(text);
   } catch (error) {
     if (error instanceof JsonSyntaxError) {
-      return result('json', [{ severity: 'error', message: error.message, from: error.from, to: error.to }]);
+      return result('json', [{ severity: 'error', code: 'syntax', message: error.message, from: error.from, to: error.to }]);
     }
     throw error;
   }
   const problems: MdzipJsonProblem[] = parsed.duplicates.map((d) => ({
     severity: 'warning',
+    code: 'duplicate',
     message: `"${d.key}" appears more than once in this object; readers use the last one.`,
     from: d.from,
     to: d.to
@@ -266,6 +273,21 @@ const SPEC_FIELDS = new Set([
   'spec', 'mode', 'entryPoint', 'title', 'description', 'author', 'language', 'keywords',
   'license', 'version', 'created', 'modified', 'cover', 'producer'
 ]);
+
+// What each descriptive field should look like, for its error message.
+const DESCRIPTIVE_FIELD_HELP: Record<string, string> = {
+  title: 'title must be text, and not empty.',
+  description: 'description must be text, in quotes.',
+  language: 'language must be text, a language tag like "en" or "fr-CA".',
+  license: 'license must be text, like "MIT", "CC-BY-4.0" or a link.',
+  version: 'version must be text, like "1.0.0".',
+  keywords: 'keywords must be a list of text values, like ["birds", "field notes"].',
+  author: 'author must be an object, like {"name": "Sam Lee"}.',
+  producer: 'producer must be an object, like {"application": {"name": "…"}}.',
+  created: 'created must be a date and time like "2026-01-31T09:00:00Z", or an object with "when".',
+  modified: 'modified must be a date and time like "2026-01-31T09:00:00Z", or an object with "when".',
+  cover: 'cover must be the path of a file in the archive, like "images/cover.png".'
+};
 
 const MARKDOWN_PATH = /\.(?:md|markdown)$/i;
 
@@ -301,6 +323,7 @@ export function validateMdzipManifestText(text: string, options: MdzipManifestVa
     if (error instanceof JsonSyntaxError) {
       return result('manifest', [{
         severity: 'error',
+        code: 'syntax',
         message: `Not valid JSON, so consumers can't read the manifest: ${error.message}`,
         from: error.from,
         to: error.to
@@ -310,7 +333,7 @@ export function validateMdzipManifestText(text: string, options: MdzipManifestVa
   }
   const { root } = parsed;
   if (root.type !== 'object') {
-    return result('manifest', [{ severity: 'error', message: 'The manifest must be a JSON object ({ … }).', from: root.from, to: root.to }]);
+    return result('manifest', [{ severity: 'error', code: 'syntax', message: 'The manifest must be a JSON object ({ … }).', from: root.from, to: root.to }]);
   }
   const value = JSON.parse(text) as Record<string, unknown>;
   const problems: MdzipJsonProblem[] = [];
@@ -322,12 +345,13 @@ export function validateMdzipManifestText(text: string, options: MdzipManifestVa
     return target ? { from: target.keyFrom, to: target.value.to } : { from: root.from, to: Math.min(root.from + 1, root.to) };
   };
   const add = (severity: MdzipJsonProblemSeverity, field: string, message: string): void => {
-    problems.push({ severity, message, field, ...at(field) });
+    problems.push({ severity, code: 'field', message, field, ...at(field) });
   };
 
   for (const duplicate of parsed.duplicates) {
     problems.push({
       severity: 'error',
+      code: 'duplicate',
       message: `"${duplicate.key}" appears more than once. A manifest must not repeat a property name; remove one.`,
       from: duplicate.from,
       to: duplicate.to,
@@ -360,7 +384,7 @@ export function validateMdzipManifestText(text: string, options: MdzipManifestVa
   // Descriptive fields: wrong values are ignored by consumers, and producers must not write them.
   const descriptive = Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'spec' && key !== 'mode' && key !== 'entryPoint'));
   for (const field of checkManifest(descriptive)) {
-    add('error', field, `${field} has a value consumers would ignore (wrong type or format, see Section 6.2 of the spec). Fix or remove it to save.`);
+    add('error', field, `${DESCRIPTIVE_FIELD_HELP[field] ?? `${field} has the wrong type or format (see Section 6.2 of the spec).`} Consumers would ignore it; fix or remove it to save.`);
   }
   const cover = value.cover;
   if (paths && typeof cover === 'string' && !problems.some((p) => p.field === 'cover') && !paths.includes(stripDotSlash(cover))) {
@@ -385,6 +409,81 @@ export function validateMdzipManifestText(text: string, options: MdzipManifestVa
     value,
     customFields: Object.keys(value).filter((key) => !SPEC_FIELDS.has(key))
   });
+}
+
+/**
+ * Sets one value in JSON text, leaving the rest of the text as it is: other
+ * keys, their order and formatting, numbers and strings. `path` names the
+ * member, `['title']` or `['author', 'name']`; objects on the way are added
+ * when missing (or replace a value that isn't an object). The new member
+ * goes after the object's last one, indented like its siblings. `undefined`
+ * removes the member (and its comma). With a repeated key, the last one is
+ * the one changed, as JSON readers use it.
+ *
+ * Returns `null` when the text isn't valid JSON or isn't an object.
+ */
+export function setMdzipJsonMember(text: string, path: readonly string[], value: unknown): string | null {
+  let parsed: ParsedJson;
+  try {
+    parsed = parseJsonWithPositions(text);
+  } catch (error) {
+    if (error instanceof JsonSyntaxError) return null;
+    throw error;
+  }
+  if (parsed.root.type !== 'object' || path.length === 0) return null;
+
+  const lineIndent = (at: number): string => {
+    const lineStart = text.lastIndexOf('\n', at - 1) + 1;
+    return /^[ \t]*/.exec(text.slice(lineStart))![0];
+  };
+  const serialize = (v: unknown, indent: string): string =>
+    JSON.stringify(v, null, 2).replace(/\n/g, `\n${indent}`);
+  const splice = (from: number, to: number, insert: string): string => text.slice(0, from) + insert + text.slice(to);
+
+  // Walk down to the deepest existing object on the path.
+  let node = parsed.root;
+  let depth = 0;
+  for (; depth < path.length - 1; depth += 1) {
+    const next = member(node, path[depth]!);
+    if (!next) break;
+    if (next.value.type !== 'object') {
+      // Replace a non-object on the way (e.g. `"author": "Kim"`) with the new object.
+      if (value === undefined) return text;
+      const nested = path.slice(depth + 1).reduceRight<unknown>((inner, key) => ({ [key]: inner }), value);
+      return splice(next.value.from, next.value.to, serialize(nested, lineIndent(next.keyFrom)));
+    }
+    node = next.value;
+  }
+
+  const key = path[depth]!;
+  const existing = depth === path.length - 1 ? member(node, key) : undefined;
+  const members = node.members ?? [];
+
+  if (value === undefined) {
+    if (!existing) return text;
+    const index = members.lastIndexOf(existing);
+    if (members.length === 1) return splice(node.from + 1, node.to - 1, '');
+    if (index > 0) return splice(members[index - 1]!.value.to, existing.value.to, '');
+    return splice(existing.keyFrom, members[1]!.keyFrom, '');
+  }
+
+  if (existing) {
+    return splice(existing.value.from, existing.value.to, serialize(value, lineIndent(existing.keyFrom)));
+  }
+
+  // Add the member, with any missing objects below it.
+  const newValue = path.slice(depth + 1).reduceRight<unknown>((inner, k) => ({ [k]: inner }), value);
+  if (members.length > 0) {
+    const last = members[members.length - 1]!;
+    const between = text.slice(members.length > 1 ? members[members.length - 2]!.value.to : node.from + 1, last.keyFrom);
+    const multiline = between.includes('\n');
+    const indent = multiline ? lineIndent(last.keyFrom) : '';
+    const separator = multiline ? `,\n${indent}` : ', ';
+    return splice(last.value.to, last.value.to, `${separator}${JSON.stringify(key)}: ${serialize(newValue, indent)}`);
+  }
+  const outer = lineIndent(node.from);
+  const inner = `${outer}  `;
+  return splice(node.from + 1, node.to - 1, `\n${inner}${JSON.stringify(key)}: ${serialize(newValue, inner)}\n${outer}`);
 }
 
 /**

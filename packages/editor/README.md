@@ -268,7 +268,21 @@ the comma before }: JSON has no trailing commas."), and a status line under
 the editor sums it up. Other JSON files are saved exactly as typed, even when
 they don't parse.
 
-The archive's `manifest.json` is editable too, and checked against the spec:
+The archive's `manifest.json` opens as a form, **Document properties**, in
+the View layout: Title, Description, Author, Keywords, Language, License and
+Document version, with the entry point and mode under **Advanced** and the
+dates, spec version and producer as read-only details. Edit shows the JSON,
+and Split shows both, each following the other as you type. The JSON text is
+the one source of truth: a change in the form sets only that value in the
+text (`setMdzipJsonMember()`), so key order, formatting and fields the form
+doesn't show are kept, and Ctrl+Z in the JSON editor undoes it. Clearing a
+field removes the property. A field's problem shows under it; while the text
+isn't valid JSON, the form shows a notice with **Fix in JSON** instead. The
+manifest remembers its own layout, so opening it doesn't change how your
+documents are shown. `manifestView: 'json'` opens it in the JSON editor
+instead of the form.
+
+`manifest.json` is checked against the spec in both views:
 
 | Problem | |
 | --- | --- |

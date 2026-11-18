@@ -1872,6 +1872,205 @@ export const WORKSPACE_CSS = `
   word-break: break-word;
 }
 
+/* The manifest as a form (View layout of manifest.json). */
+.mdzip-root .mdzip-manifest-form {
+  max-width: 640px;
+  margin: 0 auto;
+  font-size: calc(15px * var(--mdz-zoom, 1));
+  line-height: 1.45;
+  color: var(--mdzip-editor-foreground-color);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* In Split the JSON is already beside the form. */
+.mdzip-root .pane-stack.split-mode .mdzip-manifest-form .mmf-header .mmf-link {
+  display: none;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-title {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 1.4em;
+  font-weight: 600;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-summary {
+  margin: 6px 0 18px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 0.9em;
+  color: var(--mdzip-muted-foreground-color);
+  background: var(--mdzip-secondary-background-color, transparent);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-summary[data-status="warnings"] {
+  color: var(--mdzip-warning-color, #8a5a00);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-summary[data-status="invalid"] {
+  color: var(--mdzip-error-color, #b03030);
+  background: var(--mdzip-error-background-color, rgba(220, 70, 70, 0.08));
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-summary.flash {
+  animation: mdzip-json-status-flash 0.9s ease-out;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-notice {
+  padding: 12px 14px;
+  border: 1px solid var(--mdzip-error-border-color, var(--mdzip-border-color));
+  border-radius: 6px;
+  background: var(--mdzip-error-background-color, rgba(220, 70, 70, 0.08));
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-notice p {
+  margin: 0 0 10px;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-section {
+  margin: 0 0 22px;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-section-title,
+.mdzip-root .mdzip-manifest-form .mmf-advanced > summary {
+  margin: 0 0 10px;
+  padding: 0 0 4px;
+  border-bottom: 1px solid var(--mdzip-border-color);
+  font-size: 0.8em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--mdzip-muted-foreground-color);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-advanced > summary {
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-field {
+  margin: 0 0 14px;
+}
+
+.mdzip-root .mdzip-manifest-form label {
+  display: block;
+  margin: 0 0 4px;
+  font-weight: 500;
+}
+
+.mdzip-root .mdzip-manifest-form input,
+.mdzip-root .mdzip-manifest-form textarea,
+.mdzip-root .mdzip-manifest-form select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--mdzip-widget-border-color, var(--mdzip-border-color));
+  border-radius: 5px;
+  background: var(--mdzip-widget-background-color, var(--mdzip-editor-background-color));
+  color: var(--mdzip-editor-foreground-color);
+  font: inherit;
+}
+
+.mdzip-root .mdzip-manifest-form textarea {
+  resize: vertical;
+  min-height: 4.5em;
+}
+
+.mdzip-root .mdzip-manifest-form input:focus-visible,
+.mdzip-root .mdzip-manifest-form textarea:focus-visible,
+.mdzip-root .mdzip-manifest-form select:focus-visible {
+  outline: 2px solid var(--mdzip-focus-outline-color, var(--mdzip-link-color));
+  outline-offset: 0;
+  border-color: transparent;
+}
+
+.mdzip-root .mdzip-manifest-form [aria-invalid="true"] {
+  border-color: var(--mdzip-error-color, #b03030);
+}
+
+.mdzip-root .mdzip-manifest-form :disabled {
+  opacity: 0.75;
+  cursor: default;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-hint {
+  margin: 4px 0 0;
+  font-size: 0.85em;
+  color: var(--mdzip-muted-foreground-color);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-error {
+  margin: 4px 0 0;
+  font-size: 0.85em;
+  color: var(--mdzip-error-color, #b03030);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-error[data-severity="warning"] {
+  color: var(--mdzip-warning-color, #8a5a00);
+}
+
+.mdzip-root.mdzip-theme-dark .mdzip-manifest-form .mmf-error[data-severity="warning"],
+.mdzip-root.mdzip-theme-dark .mdzip-manifest-form .mmf-summary[data-status="warnings"] {
+  color: var(--mdzip-warning-color, #e0b050);
+}
+
+.mdzip-root.mdzip-theme-dark .mdzip-manifest-form .mmf-error,
+.mdzip-root.mdzip-theme-dark .mdzip-manifest-form .mmf-summary[data-status="invalid"] {
+  color: var(--mdzip-error-color, #f08080);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-details {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0 0 10px;
+  font-size: 0.9em;
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-details dt {
+  color: var(--mdzip-muted-foreground-color);
+}
+
+.mdzip-root .mdzip-manifest-form .mmf-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mdzip-root .mdzip-manifest-form button {
+  padding: 5px 12px;
+  border: 1px solid var(--mdzip-widget-border-color, var(--mdzip-border-color));
+  border-radius: 5px;
+  background: var(--mdzip-control-background-color, transparent);
+  color: var(--mdzip-control-foreground-color, inherit);
+  font: inherit;
+  cursor: pointer;
+}
+
+.mdzip-root .mdzip-manifest-form button:hover {
+  background: var(--mdzip-control-hover-background-color);
+}
+
+.mdzip-root .mdzip-manifest-form button.mmf-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mdzip-link-color);
+  font-size: 0.9em;
+}
+
+.mdzip-root .mdzip-manifest-form button.mmf-link:hover {
+  background: none;
+  text-decoration: underline;
+}
+
 .mdzip-root .plain-text-preview {
   margin: 0;
   white-space: pre-wrap;
