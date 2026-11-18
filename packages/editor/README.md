@@ -43,6 +43,13 @@ await view.open(markdownBytes, {
 });
 ```
 
+In the split layout the editor and preview scroll together, block by block:
+each heading, paragraph, list, code block, table or image in the preview stays
+level with its Markdown, so a tall image or table doesn't pull the two apart.
+The preview marks its blocks with `data-mdzip-block` for this; copies of the
+preview leave the marks out. With a custom `markdownRenderer` the panes scroll
+in proportion instead.
+
 CodeMirror is not initialized until a source or split layout is used. Consumers
 that only need archive, rendering, and preview helpers can import from
 `@mdzip/editor/preview`; that entry point excludes `MdzipWorkspaceView` and its

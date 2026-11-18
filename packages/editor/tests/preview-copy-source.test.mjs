@@ -121,6 +121,8 @@ test('Copy HTML writes the rendered markup as plain text, with archive-relative 
     assert.match(html, /<strong>bold<\/strong>/);
     assert.match(html, /<img[^>]+src="images\/logo\.png"/, 'image keeps its archive path, not a blob: URL');
     assert.doesNotMatch(html, /blob:|mdzip-chunk-sentinel/);
+    assert.ok(previewPane.querySelector('h1[data-mdzip-block]'), 'the preview marks its blocks for the split view');
+    assert.doesNotMatch(html, /mdzip-block/, 'the copy leaves the marks out');
     await waitFor(() => assert.equal(view.elCopyToast.textContent, 'HTML copied to clipboard as text'));
   } finally {
     clipboard.restore();
@@ -235,7 +237,8 @@ test('Copy as HTML copies the selection inside its enclosing elements', async ()
     openContextMenu(previewPane);
     clickMenuAction(menu, 'preview-copy-selection-html');
     await waitFor(() => assert.equal(clipboard.written.length, 1));
-    assert.equal(clipboard.written[0], '<ul><li>second <strong>bold</strong></li></ul>', 'part of a list item keeps its list');
+    assert.ok(previewContent.querySelector('ul[data-mdzip-block]'), 'the list is marked in the preview');
+    assert.equal(clipboard.written[0], '<ul><li>second <strong>bold</strong></li></ul>', 'part of a list item keeps its list, without the mark');
     await waitFor(() => assert.equal(view.elCopyToast.textContent, 'HTML copied to clipboard as text'));
   } finally {
     clipboard.restore();

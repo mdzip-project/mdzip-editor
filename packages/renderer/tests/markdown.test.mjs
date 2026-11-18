@@ -9,7 +9,11 @@ import {
   parseMdzipTokens,
   finishMdzipHtml,
   useMdzipDomWindow,
-  collectMdzipHeadings
+  collectMdzipHeadings,
+  sanitizeMdzipHtml,
+  stripMdzipBlockMarks,
+  applyMdzipBlockMarks,
+  MDZIP_BLOCK_ATTRIBUTE
 } from '../dist/index.js';
 
 const idsIn = (html) => [...html.matchAll(/<h[1-6] id="([^"]+)"/g)].map((match) => match[1]);
@@ -113,4 +117,29 @@ test('collectMdzipHeadings lists headings with ids, levels and plain text', () =
     { id: 'quoted', text: 'Quoted', level: 3 },
     { id: 'install-mdz-1', text: 'Install mdz', level: 2 }
   ]);
+});
+
+test('markBlocks comments, then applyMdzipBlockMarks marks the first element of each top-level token with its index', () => {
+  const source = '# Title\n\nA paragraph\nover two lines.\n\n- one\n- two\n\n> quote\n\n```js\nx\n```\n\n| a |\n| - |\n| 1 |\n\n---\n\n<!-- note -->\n\n<div>raw</div>\n';
+  const tokens = tokenizeMdzipMarkdown(source);
+  const commented = parseMdzipTokens(tokens, { markBlocks: true });
+  assert.match(commented, /<!--mdzip-block:0--><h1 id="[^"]*title">/, 'comments leave the elements as they were, for transformHtml');
+  assert.equal(stripMdzipBlockMarks(commented), parseMdzipTokens(tokens));
+  const html = applyMdzipBlockMarks(commented);
+  assert.equal(MDZIP_BLOCK_ATTRIBUTE, 'data-mdzip-block');
+  const marked = [...html.matchAll(/<([a-z0-9]+) data-mdzip-block="(\d+)"/g)].map((m) => [m[1], tokens[Number(m[2])].type]);
+  assert.deepEqual(marked, [
+    ['h1', 'heading'], ['p', 'paragraph'], ['ul', 'list'], ['blockquote', 'blockquote'],
+    ['pre', 'code'], ['div', 'table'], ['hr', 'hr'], ['div', 'html']
+  ]);
+  assert.doesNotMatch(html, /mdzip-block:/, 'no marker comment is left behind');
+  assert.match(html, /<li>one<\/li>/, 'nested elements are not marked');
+  assert.equal(stripMdzipBlockMarks(html), parseMdzipTokens(tokens), 'stripped, the HTML is as without marks');
+});
+
+test('the sanitizer drops block marks unless they are allowed', () => {
+  useMdzipDomWindow(new JSDOM('').window);
+  const html = applyMdzipBlockMarks(parseMdzipTokens(tokenizeMdzipMarkdown('# A\n\nB\n'), { markBlocks: true }));
+  assert.doesNotMatch(sanitizeMdzipHtml(html, []), /data-mdzip-block/);
+  assert.match(sanitizeMdzipHtml(html, [{ addAttr: [MDZIP_BLOCK_ATTRIBUTE] }]), /<h1 (data-mdzip-block="0" id="a"|id="a" data-mdzip-block="0")>/);
 });

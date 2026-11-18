@@ -486,8 +486,56 @@ export function tokenizeMdzipMarkdown(markdown: string): TokensList {
  * sanitized nor finished: pass it through {@link sanitizeMdzipHtml} (or,
  * for trusted input, {@link finishMdzipHtml}) before use.
  */
-export function parseMdzipTokens(tokens: readonly Token[]): string {
-  return marked.parser(tokens as Token[]);
+export function parseMdzipTokens(tokens: readonly Token[], options: MdzipParseOptions = {}): string {
+  if (!options.markBlocks) {
+    return marked.parser(tokens as Token[]);
+  }
+  // A comment before each top-level token's output. One parse, as without marks.
+  const withMarks: Token[] = [];
+  tokens.forEach((token, index) => {
+    withMarks.push({ type: 'html', block: true, pre: false, raw: '', text: `<!--${BLOCK_MARK}${index}-->` } as Token, token);
+  });
+  return marked.parser(withMarks);
+}
+
+/**
+ * The attribute {@link applyMdzipBlockMarks} puts on the first element each
+ * top-level token rendered to: the token's index in the list given to
+ * {@link parseMdzipTokens}. Allow it when sanitizing (`addAttr`) to keep it.
+ */
+export const MDZIP_BLOCK_ATTRIBUTE = 'data-mdzip-block';
+const BLOCK_MARK = 'mdzip-block:';
+const BLOCK_MARK_BEFORE_TAG = /<!--mdzip-block:(\d+)-->(\s*)<([a-zA-Z][a-zA-Z0-9-]*)/g;
+const BLOCK_MARK_LEFT = /<!--mdzip-block:\d+-->/g;
+const BLOCK_ATTRIBUTE = /\sdata-mdzip-block="\d+"/g;
+
+export interface MdzipParseOptions {
+  /**
+   * Put a `<!--mdzip-block:<index>-->` comment before each top-level token's
+   * output, so the rendered blocks can be matched back to their tokens, and
+   * through the tokens' `raw` text to source lines (the editor's split-view
+   * scroll sync). The marks are comments so that code transforming the HTML
+   * next sees the elements as they'd be without them; then
+   * {@link applyMdzipBlockMarks} turns each into a `data-mdzip-block`
+   * attribute on the element after it.
+   */
+  markBlocks?: boolean;
+}
+
+/**
+ * Turns the comments {@link parseMdzipTokens} `markBlocks` leaves into
+ * `data-mdzip-block="<index>"` on the element that follows each, and drops
+ * those with no element after them (a blank line, a raw HTML comment).
+ */
+export function applyMdzipBlockMarks(html: string): string {
+  return html
+    .replace(BLOCK_MARK_BEFORE_TAG, (_match, index: string, space: string, tag: string) => `${space}<${tag} ${MDZIP_BLOCK_ATTRIBUTE}="${index}"`)
+    .replace(BLOCK_MARK_LEFT, '');
+}
+
+/** Removes block marks, comments or attributes, from HTML that leaves the page (a copy, an export). */
+export function stripMdzipBlockMarks(html: string): string {
+  return html.replace(BLOCK_ATTRIBUTE, '').replace(BLOCK_MARK_LEFT, '');
 }
 
 const EXTERNAL_OR_ANCHOR = /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i;

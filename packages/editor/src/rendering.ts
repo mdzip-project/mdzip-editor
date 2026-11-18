@@ -1,5 +1,7 @@
 import {
+  applyMdzipBlockMarks,
   collectMdzipHeadingIds,
+  MDZIP_BLOCK_ATTRIBUTE,
   parseMdzipTokens,
   renderMdzipMarkdown,
   sanitizeMdzipHtml as sanitizeWithRendererPolicy,
@@ -103,6 +105,14 @@ export interface MdzipRenderHandle {
 export interface MdzipChunkRenderInfo {
   /** The chunk's position in the document, from 0. */
   index: number;
+  /**
+   * Mark each top-level block with `data-mdzip-block="<token index in the
+   * chunk>"`, which the editor's split view uses to line its panes up.
+   * `transformHtml` sees each mark as a `<!--mdzip-block:N-->` comment
+   * before the block; it becomes the attribute afterwards. Strip the marks
+   * (`stripMdzipBlockMarks`) from HTML that leaves the page.
+   */
+  markBlocks?: boolean;
 }
 
 /**
@@ -427,7 +437,7 @@ export class MdzipRenderingService {
         'renderChunk() only supports the default marked-based renderer; a custom renderer has no token structure to render from.'
       );
     }
-    let value: string | Promise<string> = parseMdzipTokens(tokens);
+    let value: string | Promise<string> = parseMdzipTokens(tokens, { markBlocks: chunk?.markBlocks === true });
     for (const ext of this.extensions) {
       if (ext.transformHtml) {
         value = chainRenderStage(value, (html) => ext.transformHtml!(html, context, chunk), context.signal);
@@ -436,6 +446,11 @@ export class MdzipRenderingService {
     const contributions = this.extensions
       .map((ext) => ext.sanitize)
       .filter((contribution): contribution is MdzipSanitizeContribution => contribution !== undefined);
+    if (chunk?.markBlocks) {
+      // After transformHtml, which sees the marks as comments only.
+      value = chainRenderStage(value, (html) => applyMdzipBlockMarks(html), context.signal);
+      contributions.push({ addAttr: [MDZIP_BLOCK_ATTRIBUTE] });
+    }
     return chainRenderStage(value, (html) => sanitizeMdzipHtml(html, contributions), context.signal);
   }
 }

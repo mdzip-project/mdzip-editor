@@ -134,6 +134,8 @@ import {
   type MdzipJsonValidity
 } from './json-validation.js';
 import { MdzipManifestForm } from './manifest-form.js';
+import { mapScrollPosition, type ScrollAnchor } from './scroll-anchors.js';
+import { MDZIP_BLOCK_ATTRIBUTE, stripMdzipBlockMarks } from '@mdzip/renderer';
 import {
   createMdzipHeadingOutline,
   type MdzipHeadingOutline,
@@ -2249,6 +2251,13 @@ export class MdzipWorkspaceView {
   // syncScrollFromPreview/syncScrollToPreview).
   private lastSyncedEditorScrollTop: number | null = null;
   private lastSyncedPreviewScrollTop: number | null = null;
+  // See splitScrollBlocks().
+  private splitBlockCache: {
+    doc: unknown;
+    records: unknown;
+    cursor: number;
+    blocks: { offsets: number[]; elements: Element[] } | null;
+  } | null = null;
   // Timestamp of the most recent updatePreview() call (edit-driven or
   // otherwise). A content change that alters a mounted element's rendered
   // height (a chunk reconcile re-rendering a mermaid diagram, an image
@@ -4403,7 +4412,7 @@ export class MdzipWorkspaceView {
         if (cacheHit !== undefined) {
           html = cacheHit;
         } else {
-          const result = this.renderingService.renderChunk(chunkTokens, context, { index: chunkIndex });
+          const result = this.renderingService.renderChunk(chunkTokens, context, { index: chunkIndex, markBlocks: true });
           html = typeof result === 'string' ? result : await result;
         }
       } catch (error) {
@@ -8161,6 +8170,9 @@ export class MdzipWorkspaceView {
       card.replaceWith(image);
     }
     const text = previewPlainText(container);
+    for (const element of Array.from(container.querySelectorAll(`[${MDZIP_BLOCK_ATTRIBUTE}]`))) {
+      element.removeAttribute(MDZIP_BLOCK_ATTRIBUTE);
+    }
     for (const element of Array.from(container.querySelectorAll(PREVIEW_CHROME_REMOVE_SELECTOR))) {
       element.remove();
     }
@@ -8501,7 +8513,8 @@ export class MdzipWorkspaceView {
         if (cacheHit !== undefined) {
           chunkHtml = cacheHit;
         } else {
-          const result = this.renderingService.renderChunk(chunks[chunkIndex], context, { index: chunkIndex });
+          // Marked like the preview's chunks: the two share chunkHtmlCache.
+          const result = this.renderingService.renderChunk(chunks[chunkIndex], context, { index: chunkIndex, markBlocks: true });
           chunkHtml = typeof result === 'string' ? result : await result;
           // Only populate the shared cache if this generation is *still*
           // the live one at the moment this (possibly async) render
@@ -8535,7 +8548,8 @@ export class MdzipWorkspaceView {
         else setTimeout(resolve, 0);
       });
     }
-    return html;
+    // The split view's block marks are for this page only.
+    return stripMdzipBlockMarks(html);
   }
 
   /**
@@ -10080,12 +10094,17 @@ export class MdzipWorkspaceView {
       return;
     }
     this.syncing = true;
-    const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
-    const scrollRatio = previewHeight > 0 ? currentTop / previewHeight : 0;
     const cmScroller = this.cmEditor.dom.querySelector('.cm-scroller');
     if (cmScroller) {
-      const editorHeight = cmScroller.scrollHeight - cmScroller.clientHeight;
-      const target = scrollRatio * editorHeight;
+      const anchors = this.splitScrollAnchors('preview', currentTop);
+      let target: number;
+      if (anchors) {
+        target = mapScrollPosition(currentTop, anchors.map(([editor, preview]) => [preview, editor] as const), this.elPreviewPane, cmScroller);
+      } else {
+        const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
+        const scrollRatio = previewHeight > 0 ? currentTop / previewHeight : 0;
+        target = scrollRatio * (cmScroller.scrollHeight - cmScroller.clientHeight);
+      }
       this.lastSyncedEditorScrollTop = target;
       cmScroller.scrollTop = target;
     }
@@ -10149,12 +10168,138 @@ export class MdzipWorkspaceView {
       return;
     }
     this.syncing = true;
-    const scrollRatio = editorHeight > 0 ? currentTop / editorHeight : 0;
-    const previewHeight = this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight;
-    const target = scrollRatio * previewHeight;
+    const anchors = this.splitScrollAnchors('editor', currentTop);
+    let target: number;
+    if (anchors) {
+      target = mapScrollPosition(currentTop, anchors, cmScroller, this.elPreviewPane);
+    } else {
+      const scrollRatio = editorHeight > 0 ? currentTop / editorHeight : 0;
+      target = scrollRatio * (this.elPreviewPane.scrollHeight - this.elPreviewPane.clientHeight);
+    }
     this.lastSyncedPreviewScrollTop = target;
     this.elPreviewPane.scrollTop = target;
     this.syncing = false;
+  }
+
+  /**
+   * The two pairs of [offset in the editor, offset in the preview] for the
+   * same content around `scrollTop` of one pane (#13), for
+   * `mapScrollPosition` to interpolate between: the mounted top-level
+   * blocks the renderer marked (`data-mdzip-block`), each at its token's
+   * first source line. The panes stay together past a tall image, table or
+   * code block, where one ratio for the whole document drifts. Null when
+   * nothing is marked (a custom renderer) or the preview isn't laid out:
+   * the sync falls back to that ratio.
+   *
+   * Only the two blocks around the position are measured, found by binary
+   * search (both panes keep blocks in document order), so a scroll costs
+   * the same in a document of any length.
+   */
+  private splitScrollAnchors(from: 'editor' | 'preview', scrollTop: number): ScrollAnchor[] | null {
+    const editor = this.cmEditor;
+    const blocks = this.splitScrollBlocks();
+    if (!editor || !blocks || !this.elPreviewContent.offsetHeight) {
+      return null;
+    }
+    const scroller = editor.scrollDOM;
+    const pane = this.elPreviewPane;
+    const previewOrigin = pane.scrollTop - pane.getBoundingClientRect().top;
+    const editorOrigin = editor.documentTop - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    const editorTop = (i: number) => editor.lineBlockAt(Math.min(blocks.offsets[i], editor.state.doc.length)).top + editorOrigin;
+    const previewTop = (i: number) => blocks.elements[i].getBoundingClientRect().top + previewOrigin;
+    const top = from === 'editor' ? editorTop : previewTop;
+    // The last block at or above scrollTop (-1: above the first).
+    let low = 0;
+    let high = blocks.offsets.length - 1;
+    let at = -1;
+    while (low <= high) {
+      const mid = (low + high) >> 1;
+      if (top(mid) <= scrollTop) {
+        at = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    const anchors: ScrollAnchor[] = [];
+    for (const i of [at, at + 1]) {
+      if (i >= 0 && i < blocks.offsets.length) {
+        anchors.push([editorTop(i), previewTop(i)]);
+      }
+    }
+    return anchors;
+  }
+
+  /**
+   * The preview's mounted, marked blocks in order, each with its token's
+   * offset in the editor's text. Offsets come from each token's `raw` text,
+   * found in order in the editor's current text rather than counted from
+   * the tokens: front matter is stripped before tokenizing, and the preview
+   * can be a render behind the editor while typing (a block not found is
+   * left out). Kept until the text or the mounted chunks change; no layout
+   * is read here.
+   */
+  private splitScrollBlocks(): { offsets: number[]; elements: Element[] } | null {
+    const editor = this.cmEditor;
+    const state = this.chunkedRenderState;
+    if (!editor || !state) {
+      return null;
+    }
+    const cached = this.splitBlockCache;
+    if (cached && cached.doc === editor.state.doc && cached.records === state.records && cached.cursor === state.cursor) {
+      return cached.blocks;
+    }
+    const text = editor.state.doc.toString();
+    const offsets: number[] = [];
+    const elements: Element[] = [];
+    let cursor = 0;
+    let located = false;
+    for (const record of state.records) {
+      const tokenOffsets: number[] = [];
+      for (const token of record.tokens) {
+        const raw = token.raw;
+        let at = -1;
+        if (raw) {
+          if (text.startsWith(raw, cursor)) {
+            at = cursor;
+          } else if (!located) {
+            // The first block can come after front matter of any length.
+            at = text.indexOf(raw, cursor);
+          } else {
+            // Later, only look a little ahead: a block edited since the
+            // preview rendered isn't in the text, and mustn't cost a scan
+            // of the rest of the document.
+            const found = text.slice(cursor, cursor + raw.length + 4096).indexOf(raw);
+            at = found < 0 ? -1 : cursor + found;
+          }
+        }
+        tokenOffsets.push(at);
+        if (at >= 0) {
+          located = true;
+          cursor = at + raw.length;
+        }
+      }
+      if (!record.root) {
+        continue;
+      }
+      // At any depth: the preview wraps some blocks after mounting (a code
+      // block in its header box). Not inside another block, though: only
+      // raw HTML written that way could put one there.
+      for (const element of Array.from(record.root.querySelectorAll(`[${MDZIP_BLOCK_ATTRIBUTE}]`))) {
+        if (element.parentElement?.closest(`[${MDZIP_BLOCK_ATTRIBUTE}]`)) {
+          continue;
+        }
+        const index = Number(element.getAttribute(MDZIP_BLOCK_ATTRIBUTE) ?? NaN);
+        const offset = Number.isInteger(index) ? tokenOffsets[index] ?? -1 : -1;
+        if (offset >= 0) {
+          offsets.push(offset);
+          elements.push(element);
+        }
+      }
+    }
+    const blocks = offsets.length ? { offsets, elements } : null;
+    this.splitBlockCache = { doc: editor.state.doc, records: state.records, cursor: state.cursor, blocks };
+    return blocks;
   }
 
   /**

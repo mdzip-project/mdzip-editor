@@ -90,6 +90,12 @@ const html = sanitizeMdzipHtml(parseMdzipTokens(tokens.slice(0, 20)));
 
 HTML from `parseMdzipTokens()` isn't finished until it goes through `sanitizeMdzipHtml()`, or `finishMdzipHtml()` for trusted input: those turn the renderer's markers into task-list checkboxes and heading ids.
 
+To match rendered blocks back to their tokens (to line up a source pane with the preview, say), pass `{ markBlocks: true }`. Each top-level token's output is then preceded by a `<!--mdzip-block:N-->` comment, N being its index in the list, which leaves the elements as they were for any HTML transform that runs next. `applyMdzipBlockMarks()` then turns each comment into `data-mdzip-block="N"` on the element after it; allow that attribute when sanitizing (`addAttr: [MDZIP_BLOCK_ATTRIBUTE]`). Each token's `raw` text gives its place in the source. `stripMdzipBlockMarks()` removes the marks from HTML that leaves the page.
+
+```js
+const html = sanitizeMdzipHtml(applyMdzipBlockMarks(parseMdzipTokens(tokens, { markBlocks: true })), [{ addAttr: [MDZIP_BLOCK_ATTRIBUTE] }]);
+```
+
 ## An .mdz as a static page
 
 ```js
