@@ -111,6 +111,13 @@ Call `setControls(nextControls)` to update the policy after construction
 without rebuilding the workspace view. `lineNumbers` changes are applied to the
 existing CodeMirror editor, preserving the current document and selection.
 
+`whitespace: true` shows spaces as faint dots and tabs as arrows in the source
+editor (off in every preset). It can be switched live the same way:
+
+```ts
+view.setControls({ preset: 'standalone-editor', whitespace: true });
+```
+
 ## Density and Spacing
 
 Hosts can opt into smaller built-in UI without targeting private classes:

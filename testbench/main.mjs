@@ -86,6 +86,11 @@ const applyHostTheme = () => {
   log(`setSystemColorScheme(${source ? `{ colorScheme: '${source.colorScheme}', label: 'Host theme' }` : 'null'})`);
 };
 $('host-theme').addEventListener('change', applyHostTheme);
+$('whitespace').addEventListener('change', () => {
+  const whitespace = $('whitespace').checked;
+  view.setControls({ preset: 'standalone-editor', whitespace });
+  log(`setControls({ preset: 'standalone-editor', whitespace: ${whitespace} })`);
+});
 $('host-scheme').addEventListener('change', () => { if ($('host-theme').checked) applyHostTheme(); });
 
 const response = await fetch('dist/sample.mdz');

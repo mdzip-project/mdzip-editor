@@ -320,3 +320,28 @@ test('a text file in the preview is colored by its extension', async () => {
   const plain = renderPlainTextPreview('notes.txt', 'x < y');
   assert.equal(plain, '<pre class="plain-text-preview"><code>x &lt; y</code></pre>');
 });
+
+test('controls.whitespace shows spaces and tabs in the editor, off by default', async () => {
+  const { resolveMdzipControlPolicy } = await import('../dist/index.js');
+  for (const preset of ['preview', 'viewer', 'standalone-editor', 'hosted-editor']) {
+    assert.equal(resolveMdzipControlPolicy(preset).whitespace, false, preset);
+  }
+  assert.equal(resolveMdzipControlPolicy({ preset: 'standalone-editor', whitespace: true }).whitespace, true);
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, { initialLayout: 'source', initialColorScheme: 'light' });
+  try {
+    await view.open(await buildNewArchiveBytesWithTitle('a  b\tc\n', 'Spaces'), { mode: 'editable' });
+    const marks = () => container.querySelectorAll('.cm-highlightSpace, .cm-highlightTab').length;
+    assert.equal(marks(), 0);
+    view.setControls({ preset: 'standalone-editor', whitespace: true });
+    assert.ok(container.querySelector('.cm-highlightSpace'), 'spaces are marked');
+    assert.ok(container.querySelector('.cm-highlightTab'), 'tabs are marked');
+    view.setControls({ preset: 'standalone-editor', whitespace: false });
+    assert.equal(marks(), 0);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});

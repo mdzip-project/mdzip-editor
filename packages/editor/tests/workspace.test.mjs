@@ -1346,6 +1346,7 @@ test('resolves control policy presets for common host scenarios', () => {
     },
     contextMenu: { editor: true, preview: true },
     lineNumbers: true,
+    whitespace: false,
     save: false,
     zoom: true,
     previewWidth: true,

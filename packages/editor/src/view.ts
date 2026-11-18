@@ -13,6 +13,7 @@ import {
   WidgetType,
   dropCursor,
   keymap,
+  highlightWhitespace,
   lineNumbers,
   type DecorationSet,
   type ViewUpdate
@@ -634,6 +635,11 @@ export interface MdzipControlPolicy {
   /** Right-click context menus for the source editor and rendered preview. */
   contextMenu?: boolean | MdzipContextMenuControlPolicy;
   lineNumbers?: boolean;
+  /**
+   * Show spaces (as faint dots) and tabs (as arrows) in the source editor.
+   * Off in every preset; switch it live with `setControls()`.
+   */
+  whitespace?: boolean;
   save?: boolean;
   zoom?: boolean;
   /** The page-width menu (Narrow, Default, Wide, Full width). */
@@ -696,6 +702,7 @@ export interface MdzipResolvedControlPolicy {
   formatting: MdzipResolvedFormattingControlPolicy;
   contextMenu: MdzipResolvedContextMenuControlPolicy;
   lineNumbers: boolean;
+  whitespace: boolean;
   save: boolean;
   zoom: boolean;
   previewWidth: boolean;
@@ -1184,6 +1191,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     formatting: { ...NO_FORMATTING_CONTROLS },
     contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: false,
+    whitespace: false,
     save: false,
     zoom: false,
     previewWidth: false,
@@ -1203,6 +1211,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     formatting: { ...NO_FORMATTING_CONTROLS },
     contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
+    whitespace: false,
     save: false,
     zoom: true,
     previewWidth: true,
@@ -1222,6 +1231,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     formatting: { ...ALL_FORMATTING_CONTROLS },
     contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
+    whitespace: false,
     save: true,
     zoom: true,
     previewWidth: true,
@@ -1241,6 +1251,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     formatting: { ...ALL_FORMATTING_CONTROLS },
     contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
+    whitespace: false,
     save: false,
     zoom: true,
     previewWidth: true,
@@ -1393,6 +1404,24 @@ function normalizeContentDensity(value: MdzipContentDensity | undefined): MdzipC
 }
 
 const mdzipEditorTheme = EditorView.theme({
+  // Shown whitespace (controls.whitespace): small dots and arrows in the
+  // muted text color, so they stay in the background in light and dark.
+  '.cm-highlightSpace': {
+    backgroundImage: 'radial-gradient(circle at 50% 55%, var(--mdzip-muted-foreground-color, #999) 11%, transparent 13%)',
+    opacity: '0.7'
+  },
+  '.cm-highlightTab': {
+    backgroundImage: 'none',
+    position: 'relative',
+    opacity: '0.7'
+  },
+  '.cm-highlightTab::before': {
+    content: '"→"',
+    position: 'absolute',
+    left: '0',
+    color: 'var(--mdzip-muted-foreground-color, #999)',
+    pointerEvents: 'none'
+  },
   '&': {
     height: '100%',
     fontSize: 'calc(16px * var(--mdz-zoom, 1))',
@@ -2176,6 +2205,7 @@ export class MdzipWorkspaceView {
   private cmEditor: EditorView | null = null;
   private readonly readOnlyCompartment = new Compartment();
   private readonly lineNumbersCompartment = new Compartment();
+  private readonly whitespaceCompartment = new Compartment();
   private readonly searchCompartment = new Compartment();
   private readonly languageCompartment = new Compartment();
   private cmLanguage: 'markdown' | 'json' = 'markdown';
@@ -2969,6 +2999,7 @@ export class MdzipWorkspaceView {
   public setControls(controls: MdzipControlPreset | MdzipControlPolicy | undefined): void {
     const next = resolveMdzipControlPolicy(controls);
     const lineNumbersChanged = next.lineNumbers !== this.controlPolicy.lineNumbers;
+    const whitespaceChanged = next.whitespace !== this.controlPolicy.whitespace;
     const searchChanged = next.search !== this.controlPolicy.search;
     // codeBlockTools chrome is only attached when the preview HTML actually
     // re-mounts (mountPreviewHtml/mountProgressivePreview), which updatePreview()
@@ -2984,6 +3015,11 @@ export class MdzipWorkspaceView {
         effects: this.lineNumbersCompartment.reconfigure(
           next.lineNumbers ? lineNumbers() : []
         )
+      });
+    }
+    if (whitespaceChanged && this.cmEditor) {
+      this.cmEditor.dispatch({
+        effects: this.whitespaceCompartment.reconfigure(next.whitespace ? highlightWhitespace() : [])
       });
     }
     if (searchChanged && this.cmEditor) {
@@ -5018,6 +5054,7 @@ export class MdzipWorkspaceView {
       doc: initialText,
       extensions: [
         this.lineNumbersCompartment.of(this.controlPolicy.lineNumbers ? lineNumbers() : []),
+        this.whitespaceCompartment.of(this.controlPolicy.whitespace ? highlightWhitespace() : []),
         this.searchCompartment.of(this.controlPolicy.search ? [search({ top: true }), keymap.of(searchKeymap)] : []),
         history(),
         keymap.of([
