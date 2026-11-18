@@ -1696,6 +1696,21 @@ test('renameFile moves an asset and rewrites markdown references', async () => {
   );
 });
 
+test('renameFile on the cover image updates manifest.cover', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# Hello\n', 'Demo', [
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+  assert.equal(await workspace.setCoverImage('images/logo.png'), true);
+
+  assert.equal(await workspace.renameFile('images/logo.png', 'assets/brand.png'), true);
+  assert.equal(workspace.snapshot().content.manifest.cover, 'assets/brand.png');
+
+  const saved = await workspace.saveToBytes();
+  const manifest = JSON.parse(await readTextFileFromArchive(saved, 'manifest.json'));
+  assert.equal(manifest.cover, 'assets/brand.png');
+});
+
 test('renameFile rejects collisions, manifest, and invalid paths', async () => {
   const bytes = await buildNewArchiveBytesWithTitle('# Hello\n', 'Demo', [
     { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }

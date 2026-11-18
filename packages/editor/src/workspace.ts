@@ -629,6 +629,13 @@ export class MdzipWorkspaceService {
         { entryPoint: normalized }
       );
     }
+    const cover = this.workspaceValue.manifest?.cover;
+    if (typeof cover === 'string' && samePath(cover, target.path)) {
+      this.workspaceValue.manifest = MdzPackagerCore.updateManifest(
+        this.workspaceValue.manifest,
+        { cover: normalized }
+      );
+    }
 
     if (samePath(this.currentPathValue, target.path)) {
       this.currentPathValue = normalized;
