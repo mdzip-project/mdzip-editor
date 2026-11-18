@@ -1,8 +1,9 @@
+import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
 import { linter, type Diagnostic } from '@codemirror/lint';
-import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
+import { HighlightStyle, bracketMatching, foldGutter, foldKeymap, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { closeSearchPanel, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState, Prec, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import {
@@ -65,6 +66,7 @@ import {
   SquareCode,
   SquarePen,
   Strikethrough,
+  Braces,
   Space,
   TableOfContents,
   Sun,
@@ -125,6 +127,7 @@ import {
 import { collectMdzipHeadings } from '@mdzip/renderer';
 import {
   describeMdzipJsonValidity,
+  formatMdzipJsonText,
   isMdzipJsonPath,
   isMdzipRootManifestPath,
   type MdzipJsonValidity
@@ -197,6 +200,7 @@ const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
 const SEARCH_ICON_HTML = lucideIcon(Search, TOOLBAR_ICON_CLASS);
 const OUTLINE_ICON_HTML = lucideIcon(TableOfContents, TOOLBAR_ICON_CLASS);
 const WHITESPACE_ICON_HTML = lucideIcon(Space, TOOLBAR_ICON_CLASS);
+const FORMAT_JSON_ICON_HTML = lucideIcon(Braces, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
 const DARK_THEME_ICON_HTML = lucideIcon(Moon, TOOLBAR_ICON_CLASS);
 const LIGHT_THEME_ICON_HTML = lucideIcon(Sun, TOOLBAR_ICON_CLASS);
@@ -2364,7 +2368,9 @@ export class MdzipWorkspaceView {
   // Which parts of the edit toolbar the last render showed (renderFormattingControls).
   private formattingShown = false;
   private whitespaceControlShown = false;
+  private formatJsonShown = false;
   private readonly elWhitespaceBtn: HTMLButtonElement;
+  private readonly elFormatJsonBtn: HTMLButtonElement;
   private outlineOptions: MdzipOutlineViewOptions = {};
   private outline: MdzipHeadingOutline | null = null;
   private outlineGeneration = -1;
@@ -2498,6 +2504,7 @@ export class MdzipWorkspaceView {
     this.elSearchBtn = q('[data-ref="search-btn"]');
     this.elOutlineBtn = q('[data-ref="outline-btn"]');
     this.elWhitespaceBtn = q('[data-ref="whitespace-btn"]');
+    this.elFormatJsonBtn = q('[data-ref="format-json-btn"]');
     this.elOutlinePane = q('[data-ref="outline-pane"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
     this.elWidthControls = q('[data-ref="width-controls"]');
@@ -5273,9 +5280,12 @@ export class MdzipWorkspaceView {
     this.elDocumentStrip.hidden = !showTitleControl;
     this.elToolbar.hidden = !showToolbar;
     this.elToolbarLeft.hidden = !showNavigationControl;
-    this.elEditToolbar.hidden = !showEditControls && !showWhitespaceControl;
+    const showFormatJsonControl = canEdit && isMdzipJsonPath(snapshot.currentPath)
+      && this.shownLayout(snapshot) !== 'preview';
+    this.elEditToolbar.hidden = !showEditControls && !showWhitespaceControl && !showFormatJsonControl;
     this.formattingShown = showEditControls;
     this.whitespaceControlShown = showWhitespaceControl;
+    this.formatJsonShown = showFormatJsonControl;
     this.elLayoutControls.hidden = !showLayoutControls;
     this.elToolbarControls.hidden = !showSaveControl && !showZoomControl
       && !showWidthControl && !showColorSchemeControl && !showSearchControl && !showOutlineControl;
@@ -5702,6 +5712,11 @@ export class MdzipWorkspaceView {
     this.elOutlineBtn.addEventListener('click', () => {
       this.setOutlineVisible(!this.outlineVisible);
       this.options.onOutlineVisibilityChanged?.(this.outlineVisible);
+    });
+
+    this.elFormatJsonBtn.addEventListener('click', () => {
+      this.formatJson();
+      this.cmEditor?.focus();
     });
 
     this.elWhitespaceBtn.addEventListener('click', () => {
@@ -6882,6 +6897,39 @@ export class MdzipWorkspaceView {
   }
 
   /**
+   * Re-indents the open JSON file (2 spaces), changing only whitespace, as
+   * the toolbar's Format JSON button and Shift+Alt+F do. One undo step.
+   * Returns `false` when no JSON file is open in an editable editor or its
+   * text isn't valid JSON.
+   */
+  public formatJson(): boolean {
+    const editor = this.cmEditor;
+    const snapshot = this.workspace?.snapshot();
+    if (!editor || !snapshot || snapshot.mode === 'read-only' || !isMdzipJsonPath(snapshot.currentPath)) {
+      return false;
+    }
+    const text = editor.state.doc.toString();
+    const formatted = formatMdzipJsonText(text);
+    if (formatted === null) {
+      return false;
+    }
+    if (formatted !== text) {
+      // Replace only what differs, so the cursor keeps its place where it can.
+      let start = 0;
+      while (start < text.length && start < formatted.length && text[start] === formatted[start]) start += 1;
+      let end = 0;
+      while (end < text.length - start && end < formatted.length - start
+        && text[text.length - 1 - end] === formatted[formatted.length - 1 - end]) end += 1;
+      editor.dispatch({
+        changes: { from: start, to: text.length - end, insert: formatted.slice(start, formatted.length - end) },
+        userEvent: 'input.format',
+        scrollIntoView: true
+      });
+    }
+    return true;
+  }
+
+  /**
    * The problems of the edited `manifest.json` that block saving, or `null`
    * when the archive can be saved.
    */
@@ -6900,7 +6948,20 @@ export class MdzipWorkspaceView {
       this.cmEditor.dispatch({
         effects: this.languageCompartment.reconfigure(isJson
           // No spellcheck in JSON: keys like "someNewProp" aren't words.
-          ? [json(), syntaxHighlighting(mdzipJsonHighlight), this.jsonLinter(), Prec.highest(EditorView.contentAttributes.of({ spellcheck: 'false' }))]
+          ? [
+            json(),
+            syntaxHighlighting(mdzipJsonHighlight),
+            this.jsonLinter(),
+            bracketMatching(),
+            closeBrackets(),
+            foldGutter(),
+            Prec.high(keymap.of([
+              ...closeBracketsKeymap,
+              ...foldKeymap,
+              { key: 'Shift-Alt-f', run: () => this.formatJson() }
+            ])),
+            Prec.highest(EditorView.contentAttributes.of({ spellcheck: 'false' }))
+          ]
           : markdown())
       });
     }
@@ -6940,6 +7001,11 @@ export class MdzipWorkspaceView {
     this.jsonValidityPath = path;
     const status = this.elJsonStatus;
     status.hidden = validity === null || this.options.jsonStatus === false;
+    // Format needs valid JSON; a manifest error that isn't about syntax is fine.
+    this.elFormatJsonBtn.disabled = validity !== null && validity.value === undefined;
+    this.elFormatJsonBtn.title = this.elFormatJsonBtn.disabled
+      ? 'Format JSON: fix the syntax error first'
+      : 'Format JSON (Shift+Alt+F)';
     if (validity) {
       status.dataset.status = validity.status;
       status.textContent = validity.canSave
@@ -8782,6 +8848,7 @@ export class MdzipWorkspaceView {
       visibility[key] = visibility[key]! && this.formattingShown;
     }
     visibility['whitespace'] = this.whitespaceControlShown;
+    visibility['formatJson'] = this.formatJsonShown;
 
     this.elEditToolbar.querySelectorAll<HTMLElement>('[data-format-control]').forEach((element) => {
       element.hidden = !visibility[element.dataset['formatControl'] ?? ''];
@@ -10226,6 +10293,8 @@ const SHELL_HTML = `
         </div>
         <span class="edit-toolbar-divider" aria-hidden="true"></span>
         <div class="edit-toolbar-group">
+          <button type="button" data-ref="format-json-btn" data-format-control="formatJson"
+            title="Format JSON (Shift+Alt+F)" aria-label="Format JSON">${FORMAT_JSON_ICON_HTML}</button>
           <button type="button" class="edit-toolbar-toggle" data-ref="whitespace-btn" data-format-control="whitespace"
             title="Show whitespace" aria-label="Show whitespace" aria-pressed="false">${WHITESPACE_ICON_HTML}</button>
         </div>

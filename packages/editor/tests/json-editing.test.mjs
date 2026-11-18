@@ -376,3 +376,64 @@ test('showWhitespace: true starts with whitespace shown', async () => {
     container.remove();
   }
 });
+
+test('formatJson re-indents and changes nothing but whitespace', async () => {
+  const { formatMdzipJsonText } = await import('../dist/index.js');
+  const input = '{"b":1.0,"a":[1e3,12345678901234567890,{}, [ ]],"s":"x\\"y\u00e9 {,:}","a":true}\n';
+  const output = formatMdzipJsonText(input);
+  assert.equal(output, [
+    '{',
+    '  "b": 1.0,',
+    '  "a": [',
+    '    1e3,',
+    '    12345678901234567890,',
+    '    {},',
+    '    []',
+    '  ],',
+    '  "s": "x\\"y\u00e9 {,:}",',
+    '  "a": true',
+    '}',
+    ''
+  ].join('\n'));
+  assert.equal(output.replace(/\s/g, ''), input.replace(/\s/g, ''), 'only whitespace changes');
+  assert.equal(formatMdzipJsonText(output), output, 'formatting is stable');
+  assert.equal(formatMdzipJsonText('{"a": 1,}'), null, 'invalid JSON is left alone');
+  assert.equal(formatMdzipJsonText('[1,2]'), '[\n  1,\n  2\n]', 'no trailing newline added');
+});
+
+test('view: Format JSON button, brackets and folding in JSON files', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, { initialLayout: 'source', initialColorScheme: 'light' });
+  try {
+    const messy = new TextEncoder().encode('{"a":{"b":[1,2]},"c":"d"}');
+    await view.open(await buildNewArchiveBytesWithTitle('# Doc\n', 'Doc', [{ archivePath: 'data/x.json', fileBytes: messy }]), { mode: 'editable' });
+    const button = container.querySelector('[data-ref="format-json-btn"]');
+    assert.equal(button.hidden, true, 'no Format button for Markdown');
+    assert.equal(container.querySelector('.cm-foldGutter'), null, 'no fold gutter for Markdown');
+
+    await view.openPath('data/x.json');
+    assert.equal(button.hidden, false);
+    assert.ok(container.querySelector('.cm-foldGutter'), 'JSON gets the fold gutter');
+    const { EditorView } = await import('@codemirror/view');
+    const cm = EditorView.findFromDOM(container.querySelector('.edit-pane .cm-editor'));
+
+    button.click();
+    assert.equal(cm.state.doc.toString(), '{\n  "a": {\n    "b": [\n      1,\n      2\n    ]\n  },\n  "c": "d"\n}');
+
+    // Typing [ closes it.
+    cm.dispatch({ selection: { anchor: cm.state.doc.length } });
+    const { insertBracket } = await import('@codemirror/autocomplete');
+    const tr = insertBracket(cm.state, '[');
+    assert.ok(tr, 'auto-closing is active');
+    cm.dispatch(tr);
+    assert.ok(cm.state.doc.toString().endsWith('[]'));
+
+    // Invalid JSON: Format is disabled and does nothing.
+    cm.dispatch({ changes: { from: 0, to: cm.state.doc.length, insert: '{"a":1,}' } });
+    assert.equal(view.formatJson(), false);
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});

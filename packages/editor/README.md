@@ -299,6 +299,15 @@ const view = new MdzipWorkspaceView(container, {
 view.getManifestValidity(); // the manifest's problems that block saving, or null
 ```
 
+JSON files also get the usual editing aids: matching brackets are highlighted,
+`{`, `[` and `"` close themselves as you type, and arrows in the gutter fold
+objects and arrays (Ctrl+Shift+[ and Ctrl+Shift+] too). **Format JSON** (the
+`{}` button in the editing toolbar, or Shift+Alt+F) re-indents the file with
+2 spaces in one undo step. It only changes whitespace: keys stay in their
+order, and numbers (`1.0`, `1e3`, very long integers) and strings stay exactly
+as typed. It's disabled while the text isn't valid JSON. `view.formatJson()`
+does the same, and `formatMdzipJsonText(text)` formats any JSON text.
+
 The checks are also available on their own: `validateMdzipManifestText(text, {
 archivePaths, stored })` and `validateMdzipJsonText(text)` return the same
 `MdzipJsonValidity`, with each problem's position in the text.

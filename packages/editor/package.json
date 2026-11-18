@@ -55,6 +55,7 @@
     "test": "npm run build && node --test tests/*.test.mjs && vitest run"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.4",
     "@codemirror/commands": "^6.8.0",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.3.2",

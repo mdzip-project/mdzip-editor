@@ -387,6 +387,65 @@ export function validateMdzipManifestText(text: string, options: MdzipManifestVa
   });
 }
 
+/**
+ * Re-indents JSON text (2 spaces by default), changing only the whitespace
+ * between tokens: keys, strings (escapes included) and numbers (`1.0`,
+ * `1e3`, integers too large for a double) stay exactly as typed, in their
+ * order, repeated keys too. An empty object or array stays `{}` / `[]`.
+ * Returns `null` when the text isn't valid JSON, since there's nothing
+ * reliable to indent.
+ */
+export function formatMdzipJsonText(text: string, indent = '  '): string | null {
+  try {
+    parseJsonWithPositions(text);
+  } catch (error) {
+    if (error instanceof JsonSyntaxError) {
+      return null;
+    }
+    throw error;
+  }
+  let out = '';
+  let depth = 0;
+  const newline = (): string => `\n${indent.repeat(depth)}`;
+  const nextSignificant = (from: number): string | undefined => {
+    for (let j = from; j < text.length; j += 1) {
+      if (!/\s/.test(text[j]!)) return text[j];
+    }
+    return undefined;
+  };
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i]!;
+    if (ch === '"') {
+      // Copy the string verbatim, escapes and all.
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') {
+        j += text[j] === '\\' ? 2 : 1;
+      }
+      out += text.slice(i, j + 1);
+      i = j;
+    } else if (ch === '{' || ch === '[') {
+      const close = ch === '{' ? '}' : ']';
+      if (nextSignificant(i + 1) === close) {
+        out += ch + close;
+        i = text.indexOf(close, i + 1);
+      } else {
+        depth += 1;
+        out += ch + newline();
+      }
+    } else if (ch === '}' || ch === ']') {
+      depth -= 1;
+      out += newline() + ch;
+    } else if (ch === ',') {
+      out += `,${newline()}`;
+    } else if (ch === ':') {
+      out += ': ';
+    } else if (!/\s/.test(ch)) {
+      out += ch;
+    }
+  }
+  return /\n\s*$/.test(text) ? `${out}\n` : out;
+}
+
 /** Whether `path` is the archive's own manifest: `manifest.json` at the root (not one in a folder). */
 export function isMdzipRootManifestPath(path: string): boolean {
   return path.toLowerCase() === 'manifest.json';
