@@ -4,7 +4,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { linter, type Diagnostic } from '@codemirror/lint';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { closeSearchPanel, openSearchPanel, search, searchKeymap } from '@codemirror/search';
-import { Compartment, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
+import { Compartment, EditorState, Prec, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -6815,7 +6815,10 @@ export class MdzipWorkspaceView {
     if (language !== this.cmLanguage && this.cmEditor) {
       this.cmLanguage = language;
       this.cmEditor.dispatch({
-        effects: this.languageCompartment.reconfigure(isJson ? [json(), syntaxHighlighting(mdzipJsonHighlight), this.jsonLinter()] : markdown())
+        effects: this.languageCompartment.reconfigure(isJson
+          // No spellcheck in JSON: keys like "someNewProp" aren't words.
+          ? [json(), syntaxHighlighting(mdzipJsonHighlight), this.jsonLinter(), Prec.highest(EditorView.contentAttributes.of({ spellcheck: 'false' }))]
+          : markdown())
       });
     }
     if (!isJson) {
