@@ -2001,6 +2001,16 @@ export const WORKSPACE_CSS = `
   cursor: default;
 }
 
+.mdzip-root .mdzip-manifest-form .mmf-key {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 0.85em;
+  font-weight: 400;
+  color: var(--mdzip-muted-foreground-color);
+}
+
 .mdzip-root .mdzip-manifest-form .mmf-hint {
   margin: 4px 0 0;
   font-size: 0.85em;

@@ -244,7 +244,7 @@ export class MdzipManifestForm {
       const field = this.el('div', 'mmf-field');
       const label = this.doc.createElement('label');
       label.htmlFor = id;
-      label.textContent = spec.label;
+      this.labelWithKey(label, spec.label, spec.path.join('.'));
       let input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
       if (spec.kind === 'textarea') {
         input = this.doc.createElement('textarea');
@@ -302,17 +302,17 @@ export class MdzipManifestForm {
   }
 
   private renderDetails(validity: MdzipJsonValidity): void {
-    const rows: Array<[string, string]> = [];
+    const rows: Array<[string, string, string]> = [];
     for (const [path, label] of DETAIL_LABELS) {
       const value = valueAt(this.value, path.split('.'));
       const text = path === 'created' || path === 'modified'
         ? displayDate(value)
         : path === 'producer' ? displayProducer(value) : typeof value === 'string' ? value : '';
-      if (text) rows.push([label, text]);
+      if (text) rows.push([label, text, path]);
     }
-    this.details.replaceChildren(...rows.flatMap(([label, text]) => {
+    this.details.replaceChildren(...rows.flatMap(([label, text, path]) => {
       const dt = this.doc.createElement('dt');
-      dt.textContent = label;
+      this.labelWithKey(dt, label, path);
       const dd = this.doc.createElement('dd');
       dd.textContent = text;
       return [dt, dd];
@@ -326,6 +326,19 @@ export class MdzipManifestForm {
       note.append(edit);
       this.custom.append(note);
     }
+  }
+
+  // "Opens with (entryPoint)": the friendly name, then the manifest's own
+  // name for it when that's different, so the form and the JSON line up.
+  private labelWithKey(target: HTMLElement, label: string, key: string): void {
+    target.textContent = label;
+    if (label.toLowerCase() === key.toLowerCase()) {
+      return;
+    }
+    const code = this.doc.createElement('code');
+    code.className = 'mmf-key';
+    code.textContent = key;
+    target.append(' (', code, ')');
   }
 
   private el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string): HTMLElementTagNameMap[K] {

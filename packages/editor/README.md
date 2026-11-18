@@ -271,7 +271,9 @@ they don't parse.
 The archive's `manifest.json` opens as a form, **Document properties**, in
 the View layout: Title, Description, Author, Keywords, Language, License and
 Document version, with the entry point and mode under **Advanced** and the
-dates, spec version and producer as read-only details. Edit shows the JSON,
+dates, spec version and producer as read-only details. Where a label isn't
+the JSON key itself, the key follows it in parentheses, such as "Opens with
+(`entryPoint`)" and "Kind of archive (`mode`)". Edit shows the JSON,
 and Split shows both, each following the other as you type. The JSON text is
 the one source of truth: a change in the form sets only that value in the
 text (`setMdzipJsonMember()`), so key order, formatting and fields the form
