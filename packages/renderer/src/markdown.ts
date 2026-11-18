@@ -298,6 +298,32 @@ export function collectMdzipHeadingIds(tokens: readonly Token[]): string[] {
   return ids;
 }
 
+/** A heading as {@link collectMdzipHeadings} lists it. */
+export interface MdzipHeadingInfo {
+  /** The id its `<hN>` carries (without any prefix). */
+  id: string;
+  /** Its text, without Markdown syntax or extra whitespace. */
+  text: string;
+  /** 1 to 6. */
+  level: number;
+}
+
+/**
+ * Every heading that has an id, in document order, for a table of contents.
+ * Run {@link assignMdzipHeadingIds} (or {@link tokenizeMdzipMarkdown}) on the
+ * tokens first.
+ */
+export function collectMdzipHeadings(tokens: readonly Token[]): MdzipHeadingInfo[] {
+  const headings: MdzipHeadingInfo[] = [];
+  forEachHeadingToken(tokens, (token) => {
+    if (token.mdzipAnchorId) {
+      const text = inlineTokensPlainText(token.tokens).replace(/\s+/g, ' ').trim();
+      headings.push({ id: token.mdzipAnchorId, text, level: token.depth });
+    }
+  });
+  return headings;
+}
+
 // --- Code highlighting --------------------------------------------------------
 
 /**

@@ -1,6 +1,7 @@
 export {
   assignMdzipHeadingIds,
   collectMdzipHeadingIds,
+  collectMdzipHeadings,
   escapeHtml,
   finishMdzipHtml,
   hasMdzipDom,
@@ -16,6 +17,7 @@ export {
 } from './markdown.js';
 export type {
   MdzipFinishOptions,
+  MdzipHeadingInfo,
   MdzipMarkdownOptions,
   MdzipSanitizeContribution,
   Token,

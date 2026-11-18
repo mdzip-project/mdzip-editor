@@ -174,6 +174,64 @@ Unset is the same as `'default'`. A pixel number is used exactly as given and
 doesn't scale with zoom, and leaves no menu item checked; so does setting the
 `--mdzip-preview-content-max-width` CSS variable directly.
 
+## Outline Panel
+
+The outline panel is a table of contents built from the document's headings,
+beside the preview. It marks the section being read and jumps to a section on
+click. The toolbar's outline button (next to Find) shows and hides it; it
+appears while the preview of a Markdown document is visible, in View or Split
+layout. Under progressive rendering it lists every heading, including ones in
+chunks that haven't been drawn yet, and a click draws the chunks up to the
+heading first, as `scrollToAnchor()` does.
+
+The panel is closed at start. `outline` opens it and configures it, and
+`onOutlineVisibilityChanged(visible)` reports the button so a host can
+remember the choice:
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  controls: 'hosted-editor',
+  outline: { visible: savedOutline ?? false, levels: [1, 2, 3], collapse: true, label: 'Outline' },
+  onOutlineVisibilityChanged: (visible) => saveOutline(visible)
+});
+
+view.setOutlineVisible(true);
+view.isOutlineVisible; // true
+```
+
+`levels` defaults to `[1, 2, 3]`. With `collapse` (the default), deeper levels
+show only under the section being read. `controls: { outline: false }` hides
+the button; `outline: true` still opens the panel, for hosts with their own
+toggle. The panel is 240px wide (`--mdzip-outline-pane-width`); below 760px it
+floats over the preview. Its links use the `.mdz-outline*` classes and take
+their colors from `--mdz-outline-text`, `--mdz-outline-muted`,
+`--mdz-outline-rule` and `--mdz-outline-current`.
+
+The outline also works on its own, on any page that shows rendered Markdown
+(`@mdzip/editor/outline`, no other editor code):
+
+```ts
+import { createMdzipHeadingOutline, collectMdzipOutlineHeadings } from '@mdzip/editor/outline';
+
+const outline = createMdzipHeadingOutline({
+  content: document.querySelector('article')!,
+  container: document.querySelector('#toc')!,
+  levels: [2, 3],        // default
+  label: 'On this page', // default
+  scrollContainer: null  // the window; or the element that scrolls the content
+});
+outline.refresh(); // after the content changes
+outline.destroy();
+
+// Or just the headings, to draw your own: [{ id, text, level, element }]
+const headings = collectMdzipOutlineHeadings(document.querySelector('article')!, { levels: [2, 3] });
+```
+
+Headings without an id get one. `onNavigate(heading, event)` runs on click
+(call `event.preventDefault()` to scroll some other way), `offset` sets where a
+heading counts as reached (default 96px from the top), and `headings` /
+`findElement` supply headings that aren't in the DOM yet.
+
 ## Host Persistence
 
 Desktop hosts can flush pending editor content, persist the returned bytes, and

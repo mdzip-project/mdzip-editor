@@ -32,6 +32,10 @@
       "types": "./dist/merge-view.d.ts",
       "import": "./dist/merge-view.js"
     },
+    "./outline": {
+      "types": "./dist/heading-outline.d.ts",
+      "import": "./dist/heading-outline.js"
+    },
     "./mermaid": {
       "types": "./dist/mermaid.d.ts",
       "import": "./dist/mermaid.js"

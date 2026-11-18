@@ -1351,9 +1351,11 @@ test('resolves control policy presets for common host scenarios', () => {
     orphanActions: false,
     fileActions: false,
     search: true,
+    outline: true,
     codeBlockTools: true
   });
 
+  assert.equal(resolveMdzipControlPolicy('preview').outline, false);
   assert.equal(resolveMdzipControlPolicy('standalone-editor').save, true);
   assert.equal(resolveMdzipControlPolicy('hosted-editor').save, false);
   assert.equal(resolveMdzipControlPolicy(undefined).preset, 'standalone-editor');

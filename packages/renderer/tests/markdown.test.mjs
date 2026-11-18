@@ -8,7 +8,8 @@ import {
   tokenizeMdzipMarkdown,
   parseMdzipTokens,
   finishMdzipHtml,
-  useMdzipDomWindow
+  useMdzipDomWindow,
+  collectMdzipHeadings
 } from '../dist/index.js';
 
 const idsIn = (html) => [...html.matchAll(/<h[1-6] id="([^"]+)"/g)].map((match) => match[1]);
@@ -93,4 +94,23 @@ test('tokens tile the source and render in parts like the whole', () => {
   assert.equal(tokens.map((token) => token.raw).join(''), markdown);
   const parts = [tokens.slice(0, 2), tokens.slice(2)].map((part) => finishMdzipHtml(parseMdzipTokens(part))).join('');
   assert.equal(parts, finishMdzipHtml(parseMdzipTokens(tokens)));
+});
+
+test('collectMdzipHeadings lists headings with ids, levels and plain text', () => {
+  const tokens = tokenizeMdzipMarkdown(`# The *Guide*
+
+## Install \`mdz\`
+
+> ### Quoted
+
+## !!!
+
+## Install \`mdz\`
+`);
+  assert.deepEqual(collectMdzipHeadings(tokens), [
+    { id: 'the-guide', text: 'The Guide', level: 1 },
+    { id: 'install-mdz', text: 'Install mdz', level: 2 },
+    { id: 'quoted', text: 'Quoted', level: 3 },
+    { id: 'install-mdz-1', text: 'Install mdz', level: 2 }
+  ]);
 });

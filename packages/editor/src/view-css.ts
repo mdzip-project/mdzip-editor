@@ -947,6 +947,105 @@ export const WORKSPACE_CSS = `
   pointer-events: none;
 }
 
+/* Outline panel (heading-outline.ts): a table of contents beside the
+ * preview. The .mdz-outline rules only use --mdz-outline-* variables for
+ * colors, so a host theme can restyle them; here they follow the editor's. */
+.mdzip-root .workspace-shell {
+  position: relative;
+}
+
+.mdzip-root .outline-pane {
+  flex: 0 0 var(--mdzip-outline-pane-width, 240px);
+  width: var(--mdzip-outline-pane-width, 240px);
+  box-sizing: border-box;
+  padding: 16px 12px 16px 16px;
+  border-left: 1px solid var(--mdzip-border-color);
+  background: var(--mdzip-editor-background-color);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.mdzip-root .outline-pane[hidden] {
+  display: none;
+}
+
+.mdzip-root .mdz-outline {
+  --mdz-outline-text: var(--mdzip-editor-foreground-color);
+  --mdz-outline-muted: var(--mdzip-muted-foreground-color);
+  --mdz-outline-rule: var(--mdzip-border-color);
+  --mdz-outline-current: var(--mdzip-link-color);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mdzip-root .mdz-outline-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mdz-outline-text);
+}
+
+.mdzip-root .mdz-outline-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mdzip-root .mdz-outline > .mdz-outline-list {
+  border-left: 1px solid var(--mdz-outline-rule);
+}
+
+.mdzip-root .mdz-outline-link {
+  display: block;
+  margin-left: -1px;
+  padding: 3px 0 3px 12px;
+  border-left: 2px solid transparent;
+  color: var(--mdz-outline-muted);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.mdzip-root .mdz-outline-link:hover {
+  color: var(--mdz-outline-text);
+}
+
+.mdzip-root .mdz-outline-link:focus-visible {
+  outline: 2px solid var(--mdzip-focus-outline-color);
+  outline-offset: -2px;
+}
+
+.mdzip-root .mdz-outline-link.is-current {
+  color: var(--mdz-outline-current);
+  font-weight: 600;
+  border-left-color: var(--mdz-outline-current);
+}
+
+.mdzip-root .mdz-outline-list .mdz-outline-list .mdz-outline-link {
+  padding-left: 24px;
+}
+
+.mdzip-root .mdz-outline-list .mdz-outline-list .mdz-outline-list .mdz-outline-link {
+  padding-left: 36px;
+}
+
+/* collapse: deeper levels show only under the section being read */
+.mdzip-root .mdz-outline.is-collapsible .mdz-outline-item:not(.is-open) > .mdz-outline-list {
+  display: none;
+}
+
+/* Narrow: the panel floats over the preview instead of taking a column. */
+@media (max-width: 760px) {
+  .mdzip-root .outline-pane {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 5;
+    width: min(var(--mdzip-outline-pane-width, 240px), 80%);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+  }
+}
+
 .mdzip-root .pane-stack {
   display: block;
   flex: 1;
@@ -2211,6 +2310,7 @@ export const WORKSPACE_CSS = `
   .mdzip-root .document-strip,
   .mdzip-root .nav-pane,
   .mdzip-root .nav-resizer,
+  .mdzip-root .outline-pane,
   .mdzip-root .split-resizer,
   .mdzip-root .edit-pane,
   .mdzip-root .edit-toolbar,

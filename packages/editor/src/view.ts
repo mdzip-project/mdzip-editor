@@ -62,6 +62,7 @@ import {
   SquareCode,
   SquarePen,
   Strikethrough,
+  TableOfContents,
   Sun,
   TextSelect,
   ZoomIn
@@ -116,6 +117,12 @@ import {
   type MdzipParsedLink,
   type MdzipNavNode
 } from './workspace-view.js';
+import { collectMdzipHeadings } from '@mdzip/renderer';
+import {
+  createMdzipHeadingOutline,
+  type MdzipHeadingOutline,
+  type MdzipOutlineHeading
+} from './heading-outline.js';
 import { escapeMarkdownImageAlt, findImageReferenceAtOffset, formatImageEditMarkdown } from './image-edit.js';
 import {
   MdzipRenderingService,
@@ -177,6 +184,7 @@ const PREVIEW_ICON_HTML = lucideIcon(Eye, TOOLBAR_ICON_CLASS);
 const SPLIT_ICON_HTML = lucideIcon(Columns2, TOOLBAR_ICON_CLASS);
 const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
 const SEARCH_ICON_HTML = lucideIcon(Search, TOOLBAR_ICON_CLASS);
+const OUTLINE_ICON_HTML = lucideIcon(TableOfContents, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
 const DARK_THEME_ICON_HTML = lucideIcon(Moon, TOOLBAR_ICON_CLASS);
 const LIGHT_THEME_ICON_HTML = lucideIcon(Sun, TOOLBAR_ICON_CLASS);
@@ -627,6 +635,8 @@ export interface MdzipControlPolicy {
   fileActions?: boolean;
   /** Enables the find/replace toolbar button and Mod-f shortcut. */
   search?: boolean;
+  /** The toolbar button that shows and hides the outline panel (see `outline`). */
+  outline?: boolean;
   /**
    * Enables the preview's per-block code chrome: a language-name header, a
    * copy-to-clipboard button, and (on long enough blocks) a collapse/expand
@@ -684,6 +694,7 @@ export interface MdzipResolvedControlPolicy {
   orphanActions: boolean;
   fileActions: boolean;
   search: boolean;
+  outline: boolean;
   codeBlockTools: boolean;
 }
 
@@ -1069,6 +1080,27 @@ export interface MdzipWorkspaceViewOptions {
    * {@link MdzipFrontMatterOptions}.
    */
   frontMatter?: MdzipFrontMatterOptions;
+  /**
+   * The outline panel: a table of contents from the document's headings,
+   * beside the preview, which marks the section being read and jumps to a
+   * section on click. `true` opens it at start; an object also configures
+   * it. It shows while the preview of a Markdown document is visible (View
+   * or Split layout). The toolbar button (`controls.outline`) shows and hides it.
+   */
+  outline?: boolean | MdzipOutlineViewOptions;
+  /** Called when the outline panel is shown or hidden from the toolbar, so a host can remember the choice. */
+  onOutlineVisibilityChanged?: (visible: boolean) => void;
+}
+
+export interface MdzipOutlineViewOptions {
+  /** Open the panel at start. Default `false`. */
+  visible?: boolean;
+  /** Heading levels to list. Default `[1, 2, 3]`. */
+  levels?: readonly number[];
+  /** Show deeper levels only under the current section. Default `true`. */
+  collapse?: boolean;
+  /** Accessible name and title of the panel. Default "Outline". */
+  label?: string;
 }
 
 /** Options accepted by {@link MdzipWorkspaceView.setRenderingOptions}. */
@@ -1136,6 +1168,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     orphanActions: false,
     fileActions: false,
     search: false,
+    outline: false,
     codeBlockTools: true
   },
   viewer: {
@@ -1154,6 +1187,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     orphanActions: false,
     fileActions: false,
     search: true,
+    outline: true,
     codeBlockTools: true
   },
   'standalone-editor': {
@@ -1172,6 +1206,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     orphanActions: true,
     fileActions: true,
     search: true,
+    outline: true,
     codeBlockTools: true
   },
   'hosted-editor': {
@@ -1190,6 +1225,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     orphanActions: true,
     fileActions: true,
     search: true,
+    outline: true,
     codeBlockTools: true
   }
 };
@@ -2245,6 +2281,12 @@ export class MdzipWorkspaceView {
   private readonly elSourceIcon: HTMLElement;
   private readonly elSaveBtn: HTMLButtonElement;
   private readonly elSearchBtn: HTMLButtonElement;
+  private readonly elOutlineBtn: HTMLButtonElement;
+  private readonly elOutlinePane: HTMLElement;
+  private outlineVisible = false;
+  private outlineOptions: MdzipOutlineViewOptions = {};
+  private outline: MdzipHeadingOutline | null = null;
+  private outlineGeneration = -1;
   private readonly elZoomBtn: HTMLButtonElement;
   private readonly elWidthControls: HTMLElement;
   private readonly elWidthMenuBtn: HTMLButtonElement;
@@ -2338,6 +2380,8 @@ export class MdzipWorkspaceView {
     this.colorSchemePreference = options.initialColorScheme ?? 'system';
     this.colorScheme = this.resolveColorScheme(this.colorSchemePreference);
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
+    this.outlineOptions = typeof options.outline === 'object' ? options.outline : {};
+    this.outlineVisible = typeof options.outline === 'object' ? options.outline.visible ?? false : options.outline ?? false;
     this.markdownRenderer = options.markdownRenderer;
     this.markdownExtensions = options.markdownExtensions ?? [];
     this.frontMatterOptions = options.frontMatter ?? {};
@@ -2369,6 +2413,8 @@ export class MdzipWorkspaceView {
     this.elSourceIcon = q('[data-ref="source-icon"]');
     this.elSaveBtn = q('[data-ref="save-btn"]');
     this.elSearchBtn = q('[data-ref="search-btn"]');
+    this.elOutlineBtn = q('[data-ref="outline-btn"]');
+    this.elOutlinePane = q('[data-ref="outline-pane"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
     this.elWidthControls = q('[data-ref="width-controls"]');
     this.elWidthMenuBtn = q('[data-ref="width-menu-btn"]');
@@ -2794,6 +2840,8 @@ export class MdzipWorkspaceView {
     this.resetPreviewState();
     this.replaceAssetSession(null);
     this.teardownEntryRenderer();
+    this.outline?.destroy();
+    this.outline = null;
     // Release any whenRendered() waiters so their promises do not hang.
     this.flushRenderedWaiters();
     this.destroyed = true;
@@ -4669,6 +4717,7 @@ export class MdzipWorkspaceView {
     this.restorePendingPreviewScroll(generation);
     this.flushPendingAnchorSoon();
     this.markPreviewMounted();
+    this.refreshOutline();
     this.firingPreviewRendered = true;
     try {
       this.options.onPreviewRendered?.(snapshot);
@@ -5118,6 +5167,8 @@ export class MdzipWorkspaceView {
     }
     const showSearchControl = this.controlPolicy.search
       && canShowSource && snapshot.currentPathType === 'markdown';
+    const showOutlineControl = this.controlPolicy.outline && !entryClaimed
+      && snapshot.currentPathType === 'markdown' && this.layout !== 'source';
     const showEditControls = canEdit
       && snapshot.currentPathType === 'markdown'
       && this.layout !== 'preview'
@@ -5125,7 +5176,7 @@ export class MdzipWorkspaceView {
     const showToolbar = this.controlPolicy.toolbar
       && (showNavigationControl || showLayoutControls || showSaveControl
         || showZoomControl || showWidthControl || showColorSchemeControl || showSearchControl
-        || showEditControls);
+        || showOutlineControl || showEditControls);
 
     this.elDocumentStrip.hidden = !showTitleControl;
     this.elToolbar.hidden = !showToolbar;
@@ -5133,13 +5184,16 @@ export class MdzipWorkspaceView {
     this.elEditToolbar.hidden = !showEditControls;
     this.elLayoutControls.hidden = !showLayoutControls;
     this.elToolbarControls.hidden = !showSaveControl && !showZoomControl
-      && !showWidthControl && !showColorSchemeControl && !showSearchControl;
+      && !showWidthControl && !showColorSchemeControl && !showSearchControl && !showOutlineControl;
     this.elNavBtn.hidden = !showNavigationControl;
     this.elPreviewBtn.hidden = !this.controlPolicy.layout.preview;
     this.elSplitBtn.hidden = !this.controlPolicy.layout.split;
     this.elSourceBtn.hidden = !this.controlPolicy.layout.source;
     this.elSaveBtn.hidden = !showSaveControl;
     this.elSearchBtn.hidden = !showSearchControl;
+    this.elOutlineBtn.hidden = !showOutlineControl;
+    this.elOutlineBtn.classList.toggle('active', this.outlineVisible);
+    this.elOutlineBtn.setAttribute('aria-pressed', String(this.outlineVisible));
     this.elZoomBtn.hidden = !showZoomControl;
     this.elWidthControls.hidden = !showWidthControl;
     this.elThemeControls.hidden = !showColorSchemeControl;
@@ -5316,6 +5370,7 @@ export class MdzipWorkspaceView {
     this.elEntryPane.classList.toggle('active', entryClaimed);
     this.elPaneStack.classList.toggle('split-mode', this.layout === 'split' && !entryClaimed);
     this.elPaneStack.classList.toggle('entry-claimed', entryClaimed);
+    this.syncOutlinePane(this.outlineVisible && !entryClaimed && pt === 'markdown' && this.layout !== 'source');
 
     if (!showTitleControl) {
       this.titleDialogOpen = false;
@@ -5540,6 +5595,11 @@ export class MdzipWorkspaceView {
 
     this.elSearchBtn.addEventListener('click', () => {
       void this.openSearch();
+    });
+
+    this.elOutlineBtn.addEventListener('click', () => {
+      this.setOutlineVisible(!this.outlineVisible);
+      this.options.onOutlineVisibilityChanged?.(this.outlineVisible);
     });
 
     this.elZoomBtn.addEventListener('click', (e) => {
@@ -6222,6 +6282,98 @@ export class MdzipWorkspaceView {
     }
     const found = await this.scrollPreviewToAnchor(fragment);
     return found || !fragment || fragment.toLowerCase() === 'top';
+  }
+
+  /** Whether the outline panel is switched on (it shows while a Markdown preview is visible). */
+  public get isOutlineVisible(): boolean {
+    return this.outlineVisible;
+  }
+
+  /** Shows or hides the outline panel, as its toolbar button does (without calling `onOutlineVisibilityChanged`). */
+  public setOutlineVisible(visible: boolean): void {
+    if (this.outlineVisible === visible) {
+      return;
+    }
+    this.outlineVisible = visible;
+    this.render();
+  }
+
+  private syncOutlinePane(show: boolean): void {
+    this.elRoot.classList.toggle('outline-pane-visible', show);
+    if (!show) {
+      this.elOutlinePane.hidden = true;
+      this.outline?.destroy();
+      this.outline = null;
+      return;
+    }
+    if (!this.outline) {
+      // The outline hides its container while the document has no headings.
+      this.outline = createMdzipHeadingOutline({
+        content: this.elPreviewContent,
+        container: this.elOutlinePane,
+        scrollContainer: this.elPreviewPane,
+        label: this.outlineOptions.label ?? 'Outline',
+        collapse: this.outlineOptions.collapse,
+        offset: 64,
+        headings: () => this.outlineHeadings(),
+        findElement: (heading) => this.findOutlineElement(heading),
+        onNavigate: (heading, event) => {
+          event.preventDefault();
+          void this.scrollToAnchor(heading.id);
+        }
+      });
+      this.outlineGeneration = this.previewMountedGeneration;
+    } else if (this.outlineGeneration !== this.previewMountedGeneration) {
+      this.refreshOutline();
+    }
+  }
+
+  /** Rebuilds the outline after the preview renders a new version of the document. */
+  private refreshOutline(): void {
+    if (!this.outline) {
+      return;
+    }
+    this.outlineGeneration = this.previewMountedGeneration;
+    this.outline.refresh();
+  }
+
+  /**
+   * The document's headings for the outline, ids without the
+   * `user-content-` prefix. Under progressive rendering they come from the
+   * chunks' tokens, so headings in chunks that aren't mounted yet are listed
+   * too (without an element until they mount).
+   */
+  private outlineHeadings(): MdzipOutlineHeading[] {
+    if (this.entryState) {
+      return [];
+    }
+    const levels = new Set(this.outlineOptions.levels ?? [1, 2, 3]);
+    const state = this.chunkedRenderState;
+    if (state && state.generation === this.previewGeneration) {
+      return state.records
+        .flatMap((record) => collectMdzipHeadings(record.tokens))
+        .filter((heading) => levels.has(heading.level))
+        .map((heading) => ({ ...heading, element: null }));
+    }
+    const headings: MdzipOutlineHeading[] = [];
+    for (const element of Array.from(this.elPreviewContent.querySelectorAll<HTMLElement>('h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]'))) {
+      const level = Number(element.tagName[1]);
+      // Only the document's own headings: not the footnotes section's label, say.
+      if (!levels.has(level) || !element.id.startsWith(MDZIP_HEADING_ID_PREFIX)) continue;
+      const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim();
+      if (text) {
+        headings.push({ id: element.id.slice(MDZIP_HEADING_ID_PREFIX.length), text, level, element });
+      }
+    }
+    return headings;
+  }
+
+  private findOutlineElement(heading: MdzipOutlineHeading): HTMLElement | null {
+    const id = MDZIP_HEADING_ID_PREFIX + heading.id;
+    for (const element of Array.from(this.elPreviewContent.querySelectorAll<HTMLElement>('h1[id],h2[id],h3[id],h4[id],h5[id],h6[id]'))) {
+      if (element.id === id) return element;
+    }
+    return null;
   }
 
   /**
@@ -9856,6 +10008,9 @@ const SHELL_HTML = `
     </div>
 
     <div class="toolbar-controls" data-ref="toolbar-controls">
+      <button type="button" class="icon-toggle outline-toggle" data-ref="outline-btn" title="Outline" aria-label="Outline" aria-pressed="false">
+        ${OUTLINE_ICON_HTML}
+      </button>
       <button type="button" class="icon-toggle" data-ref="search-btn" title="Find/replace (Mod-F)" aria-label="Find/replace">
         ${SEARCH_ICON_HTML}
       </button>
@@ -9927,6 +10082,7 @@ const SHELL_HTML = `
       </section>
       <section class="pane entry-pane" data-ref="entry-pane"></section>
     </div>
+    <aside class="outline-pane" data-ref="outline-pane" hidden></aside>
   </div>
 
   <div class="title-dialog-backdrop" data-ref="title-dialog" hidden
