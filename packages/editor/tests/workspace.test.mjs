@@ -1698,6 +1698,50 @@ test('renameFile moves an asset and rewrites markdown references', async () => {
   );
 });
 
+test('switching files keeps the edits of the file left, Markdown and other text', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# A\n', 'Demo', [
+    { archivePath: 'docs/b.md', fileBytes: new TextEncoder().encode('# B\n') },
+    { archivePath: 'data.json', fileBytes: new TextEncoder().encode('{"v": 1}\n') },
+    { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+
+  workspace.editText('# A edited\n');
+  assert.equal(await workspace.openPath('docs/b.md'), true);
+  assert.equal(await workspace.openPath('index.md'), true);
+  assert.equal(workspace.currentText, '# A edited\n');
+
+  assert.equal(await workspace.openPath('data.json'), true);
+  workspace.editText('{"v": 22}\n');
+  assert.equal(await workspace.openPath('images/logo.png'), true);
+  assert.equal(await workspace.openPath('data.json'), true);
+  assert.equal(workspace.currentText, '{"v": 22}\n');
+
+  // Saved while an image is selected: the committed edits are written.
+  assert.equal(await workspace.openPath('images/logo.png'), true);
+  const saved = await workspace.saveToBytes();
+  assert.equal(await readTextFileFromArchive(saved, 'index.md'), '# A edited\n');
+  assert.equal(await readTextFileFromArchive(saved, 'data.json'), '{"v": 22}\n');
+});
+
+test('an edit that keeps the byte length of a text file is saved', async () => {
+  const bytes = await buildNewArchiveBytesWithTitle('# A\n', 'Demo', [
+    { archivePath: 'data.json', fileBytes: new TextEncoder().encode('{"v": 1}\n') }
+  ]);
+  const workspace = await MdzipWorkspaceService.open(bytes, { mode: 'editable' });
+  await workspace.openPath('data.json');
+  workspace.editText('{"v": 2}\n');
+  const saved = await workspace.saveToBytes();
+  assert.equal(await readTextFileFromArchive(saved, 'data.json'), '{"v": 2}\n');
+
+  const reopened = await MdzipWorkspaceService.open(saved, { mode: 'editable' });
+  await reopened.openPath('data.json');
+  reopened.editText('{"v": 3}\n');
+  await reopened.openPath('index.md');
+  const savedAgain = await reopened.saveToBytes();
+  assert.equal(await readTextFileFromArchive(savedAgain, 'data.json'), '{"v": 3}\n');
+});
+
 test('renameFile on the cover image updates manifest.cover', async () => {
   const bytes = await buildNewArchiveBytesWithTitle('# Hello\n', 'Demo', [
     { archivePath: 'images/logo.png', fileBytes: PNG_1X1 }

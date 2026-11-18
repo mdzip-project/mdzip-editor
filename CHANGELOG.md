@@ -14,6 +14,8 @@
 - **Markdown is parsed with marked 18** (was 15), which fixes slow parsing of some malformed Markdown and a set of CommonMark/GFM edge cases ([#65](https://github.com/mdzip-project/mdzip-editor/issues/65)). `dompurify` stays a dependency; `marked`, `marked-footnote` and `highlight.js` now come in through `@mdzip/renderer`.
 
 ### Fixed
+- **Switching files no longer loses unsaved edits.** Typing in one file and opening another from the file tree (or with `openPath()`) dropped the typing: the edits are now kept, and saved, even when the save happens while an image is selected. Hosts that saved on every change didn't see this; the standalone editor did.
+- **An edit that keeps a text file's size is saved.** Changing `"v": 1` to `"v": 2` in a `.json` or other non-Markdown file was not written, because the editor only compared the file's length.
 - **Renaming the cover image keeps the cover.** `renameFile()` on the image `manifest.cover` names now updates `cover` to the new path, as it already did for `entryPoint` ([#63](https://github.com/mdzip-project/mdzip-editor/issues/63)).
 
 ## [2.5.0] - 2026-11-12

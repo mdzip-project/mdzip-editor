@@ -171,6 +171,9 @@ export class MdzipWorkspaceService {
   private currentPathTypeValue: MdzipPathType = 'markdown';
   private dirtyValue = false;
   private pendingTextDirty = false;
+  // The text of a non-Markdown file as last loaded or committed, so a commit
+  // can tell an edit from the stored text without reading the archive again.
+  private loadedText: { path: string; text: string } | null = null;
   // Ledger of entry-level changes not yet written to archiveBytes. Lets
   // serializeWorkspaceBytes() patch the existing archive in place instead of
   // rebuilding it from the workspace model (which would force every lazy
@@ -414,6 +417,9 @@ export class MdzipWorkspaceService {
     if (!target) {
       return false;
     }
+    // Keep the edits of the file being left: the next file's text replaces
+    // currentText, which until now was the only copy of them.
+    this.commitPendingTextToWorkspace();
 
     const nextType = pathTypeForEntry(target);
     if (target.path === this.currentPathValue && nextType === this.currentPathTypeValue) {
@@ -434,6 +440,7 @@ export class MdzipWorkspaceService {
       return false;
     }
     this.currentTextValue = new TextDecoder('utf-8').decode(bytes);
+    this.loadedText = { path: target.path, text: this.currentTextValue };
     this.currentPathTypeValue = isLikelyBinary(bytes) ? 'binary' : nextType;
     this.emit('reload', ['selection'], target.path);
     return true;
@@ -849,9 +856,8 @@ export class MdzipWorkspaceService {
   }
 
   private async archiveBytesWithPendingText(): Promise<Uint8Array> {
-    if (!isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)) {
-      return this.archiveBytes;
-    }
+    // Edits committed when another file was opened are pending too, so the
+    // archive is rebuilt for them even while an image is selected.
     this.commitPendingTextToWorkspace();
     // If archiveBytes is empty, we're in the openWorkspace() path and must serialize.
     // Empty bytes is a signal that bytes were never populated, not a valid zero-byte archive.
@@ -983,15 +989,23 @@ export class MdzipWorkspaceService {
     const asset = this.workspaceValue.assets.find((item) => samePath(item.path, this.currentPathValue));
     if (asset) {
       const bytes = new TextEncoder().encode(this.currentTextValue);
-      const newByteSize = bytes.byteLength;
-      if (asset.byteSize !== newByteSize) {
+      // Compare the content, not the size: an edit that keeps the length
+      // (`"v": 1` to `"v": 2`) is still an edit.
+      const stored = asset.bytes instanceof Uint8Array
+        ? asset.bytes
+        : asset.bytes instanceof ArrayBuffer ? new Uint8Array(asset.bytes) : null;
+      const unchanged = stored
+        ? sameBytes(stored, bytes)
+        : this.loadedText !== null && samePath(this.loadedText.path, asset.path) && this.loadedText.text === this.currentTextValue;
+      if (!unchanged) {
         asset.bytes = bytes;
-        asset.byteSize = newByteSize;
+        asset.byteSize = bytes.byteLength;
         delete asset.readBytes;
         delete asset.readDataUri;
         this.recordPendingWrite(asset.path, bytes);
         this.pendingTextDirty = true;
       }
+      this.loadedText = { path: asset.path, text: this.currentTextValue };
     }
   }
 
@@ -1382,4 +1396,16 @@ function openCoreWorkspace(bytes: Uint8Array, workerClient?: MdzArchiveWorkerCli
   return workerClient
     ? workerClient.open(bytes, WORKSPACE_OPEN_OPTIONS)
     : MdzArchiveCore.openWorkspace(bytes, WORKSPACE_OPEN_OPTIONS);
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) {
+    return false;
+  }
+  for (let i = 0; i < a.byteLength; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+  return true;
 }
