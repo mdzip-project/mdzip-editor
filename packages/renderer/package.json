@@ -1,0 +1,61 @@
+{
+  "name": "@mdzip/renderer",
+  "version": "0.1.0",
+  "description": "Render MDZip Markdown and .mdz archives to HTML, in the browser and in Node. The renderer behind the MDZip editor's preview and mdzip.org.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mdzip-project/mdzip-editor.git",
+    "directory": "packages/renderer"
+  },
+  "homepage": "https://mdzip.org",
+  "bugs": {
+    "url": "https://github.com/mdzip-project/mdzip-editor/issues"
+  },
+  "keywords": [
+    "mdzip",
+    "mdz",
+    "markdown",
+    "renderer",
+    "static-site"
+  ],
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./page": {
+      "types": "./dist/page.d.ts",
+      "import": "./dist/page.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@mdzip/core-js": "^2.2.1",
+    "dompurify": "^3.2.0",
+    "highlight.js": "^11.10.0",
+    "marked": "^18.1.3",
+    "marked-footnote": "^1.4.0"
+  },
+  "peerDependencies": {
+    "jsdom": ">=22.0.0"
+  },
+  "peerDependenciesMeta": {
+    "jsdom": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

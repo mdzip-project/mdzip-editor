@@ -13,6 +13,12 @@ export const MDZIP_RUNTIME_LIBRARIES = [
     "description": "MDZip archive reading, writing, and validation."
   },
   {
+    "name": "@mdzip/renderer",
+    "version": "0.1.0",
+    "repositoryUrl": "https://github.com/mdzip-project/mdzip-editor/tree/main/packages/renderer",
+    "description": "MDZip Markdown and .mdz to HTML."
+  },
+  {
     "name": "CodeMirror",
     "version": "6.43.0",
     "repositoryUrl": "https://github.com/codemirror/dev",

@@ -1,9 +1,20 @@
-import DOMPurify from 'dompurify';
-import hljs from './highlight-core.js';
-import { Marked, type Token, type Tokens, type TokensList } from 'marked';
-import markedFootnote from 'marked-footnote';
+import {
+  collectMdzipHeadingIds,
+  parseMdzipTokens,
+  renderMdzipMarkdown,
+  sanitizeMdzipHtml as sanitizeWithRendererPolicy,
+  tokenizeMdzipMarkdown,
+  type MdzipSanitizeContribution,
+  type Token,
+  type TokensList
+} from '@mdzip/renderer';
 
-export type { Token, TokensList };
+export type { Token, TokensList, MdzipSanitizeContribution };
+export {
+  assignMdzipHeadingIds,
+  collectMdzipHeadingIds,
+  slugifyMdzipHeading
+} from '@mdzip/renderer';
 import type { MdzManifest } from '@mdzip/core-js';
 import type {
   MdzipPathType,
@@ -12,83 +23,16 @@ import type {
   MdzipWorkspaceSnapshot
 } from './workspace.js';
 
-// In browsers the dompurify default export is already bound to the global
-// window. In Node it is an unbound factory, so bind it to a host-provided DOM
-// (e.g. jsdom assigned to globalThis.window) on first use.
-let purifier: typeof DOMPurify | null = null;
-
-function resolvePurifier(): typeof DOMPurify {
-  if (purifier) {
-    return purifier;
-  }
-  if (typeof DOMPurify.sanitize === 'function') {
-    purifier = DOMPurify;
-    return purifier;
-  }
-  const globalWindow = (globalThis as { window?: unknown }).window;
-  if (!globalWindow) {
-    throw new Error(
-      'DOMPurify requires a DOM. In non-browser environments, assign a DOM window (e.g. from jsdom) to globalThis.window before rendering.'
-    );
-  }
-  purifier = DOMPurify(globalWindow as Window & typeof globalThis);
-  return purifier;
-}
-
-const BASE_FORBID_TAGS = ['base', 'embed', 'form', 'iframe', 'input', 'link', 'meta', 'object', 'script', 'style'];
-const BASE_FORBID_ATTR = ['style'];
-
 /**
- * Narrow, opt-in relaxations a render extension contributes to the single
- * DOMPurify pass so its `transformHtml` output survives sanitization.
- *
- * The default policy is HTML-only and strips SVG, inline styles, `<style>`,
- * and data attributes. An extension that injects richer markup — inline SVG
- * for a diagram, say — declares exactly what it needs here. Keep contributions
- * as narrow as possible: they widen the policy for the **whole** render pass
- * (the extension output and the surrounding markdown HTML are sanitized
- * together), so anything allowed here is allowed everywhere in that preview.
+ * Rendered heading ids carry this prefix (GitHub does the same) so a heading
+ * id can't collide with an id the editor's own UI uses. Links written against
+ * the bare slug (`#images`) still resolve — see the preview click handler.
  */
-export interface MdzipSanitizeContribution {
-  /**
-   * Enable DOMPurify's `svg` + `svgFilters` profiles so inline SVG survives.
-   * Even with this on, DOMPurify still strips scripts and event handlers from
-   * the SVG — extensions should additionally sanitize and lock down their own
-   * SVG before injecting it.
-   */
-  allowSvg?: boolean;
-  /** Extra element names to allow beyond the default policy. */
-  addTags?: readonly string[];
-  /** Extra attribute names to allow beyond the default policy. */
-  addAttr?: readonly string[];
-  /** Tags to drop from the default forbid-list (e.g. re-allow `style`). */
-  unforbidTags?: readonly string[];
-  /** Attributes to drop from the default forbid-list (e.g. re-allow inline `style`). */
-  unforbidAttr?: readonly string[];
-}
-
-function lower(value: string): string {
-  return value.toLowerCase();
-}
-
-function buildSanitizeOptions(contributions: readonly MdzipSanitizeContribution[]) {
-  const allowSvg = contributions.some((contribution) => contribution.allowSvg);
-  const addTags = [...new Set(contributions.flatMap((contribution) => contribution.addTags ?? []))];
-  const addAttr = ['class', ...new Set(contributions.flatMap((contribution) => contribution.addAttr ?? []))];
-  const unforbidTags = new Set(contributions.flatMap((contribution) => contribution.unforbidTags ?? []).map(lower));
-  const unforbidAttr = new Set(contributions.flatMap((contribution) => contribution.unforbidAttr ?? []).map(lower));
-  return {
-    USE_PROFILES: allowSvg ? { html: true, svg: true, svgFilters: true } : { html: true },
-    ADD_TAGS: addTags,
-    ADD_ATTR: addAttr,
-    FORBID_TAGS: BASE_FORBID_TAGS.filter((tag) => !unforbidTags.has(tag)),
-    FORBID_ATTR: BASE_FORBID_ATTR.filter((attr) => !unforbidAttr.has(attr)),
-    ALLOW_DATA_ATTR: false
-  };
-}
+export const MDZIP_HEADING_ID_PREFIX = 'user-content-';
 
 /**
- * Sanitizes rendered HTML with the editor's default DOMPurify policy.
+ * Sanitizes rendered HTML with the MDZip policy from `@mdzip/renderer`, and
+ * gives heading ids the preview's {@link MDZIP_HEADING_ID_PREFIX}.
  *
  * Note the policy strips data attributes and inline styles. Markdown render
  * extensions that need to find placeholders again in `mount()` should use
@@ -102,24 +46,7 @@ export function sanitizeMdzipHtml(
   html: string,
   contributions: readonly MdzipSanitizeContribution[] = []
 ): string {
-  return restoreTaskCheckboxes(resolvePurifier().sanitize(html, buildSanitizeOptions(contributions)));
-}
-
-// GFM task list markers. `<input>` stays forbidden in the sanitizer policy, so
-// raw-HTML inputs are always stripped; the renderer emits these placeholders
-// instead, and only they become (disabled, read-only) checkboxes after the pass.
-const TASK_CHECKBOX_PLACEHOLDER = /<span class="mdzip-task-checkbox( mdzip-task-checked)?"><\/span>/g;
-
-function taskCheckboxPlaceholder(checked: boolean): string {
-  return `<span class="mdzip-task-checkbox${checked ? ' mdzip-task-checked' : ''}"></span>`;
-}
-
-function restoreTaskCheckboxes(html: string): string {
-  if (!html.includes('mdzip-task-checkbox')) {
-    return html;
-  }
-  return html.replace(TASK_CHECKBOX_PLACEHOLDER, (_match, checked: string | undefined) =>
-    `<input type="checkbox" class="task-list-item-checkbox" disabled=""${checked ? ' checked=""' : ''}>`);
+  return sanitizeWithRendererPolicy(html, contributions, { headingIdPrefix: MDZIP_HEADING_ID_PREFIX });
 }
 
 /**
@@ -325,249 +252,14 @@ export interface MdzipRenderResult {
   html: string;
 }
 
-/**
- * Rendered heading ids carry this prefix (GitHub does the same) so a heading
- * like "## Images" or "## Title" can never collide with a document/form
- * property, which DOMPurify would otherwise strip the id for. Links written
- * against the bare slug (`#images`) still resolve — see the preview click handler.
- */
-export const MDZIP_HEADING_ID_PREFIX = 'user-content-';
-
-type AnchoredHeadingToken = Tokens.Heading & { mdzipAnchorId?: string };
-
-function decodeBasicEntities(text: string): string {
-  return text
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-    .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(parseInt(dec, 10)))
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    // Any other named entity (&copy; etc.) decodes to a symbol the slug
-    // pass would strip anyway.
-    .replace(/&[a-z][a-z0-9]*;/gi, '');
-}
-
-function inlineTokensPlainText(tokens: readonly Token[] | undefined): string {
-  let text = '';
-  for (const token of tokens ?? []) {
-    const inline = token as { type: string; text?: string; tokens?: Token[] };
-    if (inline.type === 'br') {
-      text += ' ';
-    } else if (inline.type === 'html') {
-      // Tag markers only — their inner text arrives as sibling text tokens.
-    } else if (inline.tokens) {
-      text += inlineTokensPlainText(inline.tokens);
-    } else if (typeof inline.text === 'string') {
-      text += inline.text;
-    }
-  }
-  return decodeBasicEntities(text);
-}
-
-/**
- * GitHub-style heading slug: lowercased, everything but letters, marks,
- * numbers, `_`, `-` and spaces removed, spaces turned into hyphens.
- */
-export function slugifyMdzipHeading(text: string): string {
-  return text.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, '').replace(/ /g, '-');
-}
-
-function forEachHeadingToken(tokens: readonly Token[], visit: (token: AnchoredHeadingToken) => void): void {
-  for (const token of tokens) {
-    if (token.type === 'heading') {
-      visit(token as AnchoredHeadingToken);
-    } else if (token.type === 'blockquote' || token.type === 'list' || token.type === 'list_item') {
-      const container = token as { tokens?: Token[]; items?: Token[] };
-      forEachHeadingToken(container.tokens ?? container.items ?? [], visit);
-    }
-  }
-}
-
-/**
- * Gives every heading token (including ones nested in blockquotes and lists)
- * the id its rendered `<hN>` will carry, in document order, disambiguating
- * repeats GitHub-style (`intro`, `intro-1`, `intro-2`). Has to run over the
- * whole document's tokens before they are split into chunks — a chunk rendered
- * on its own can't know how many earlier chunks already used a slug. A heading
- * whose text slugifies to nothing (e.g. only punctuation) gets no id.
- */
-export function assignMdzipHeadingIds(tokens: readonly Token[]): void {
-  const used = new Map<string, number>();
-  forEachHeadingToken(tokens, (token) => {
-    const base = slugifyMdzipHeading(inlineTokensPlainText(token.tokens));
-    if (!base) {
-      delete token.mdzipAnchorId;
-      return;
-    }
-    let candidate = base;
-    while (used.has(candidate)) {
-      const next = (used.get(base) ?? 0) + 1;
-      used.set(base, next);
-      candidate = `${base}-${next}`;
-    }
-    used.set(candidate, 0);
-    token.mdzipAnchorId = candidate;
-  });
-}
-
-/** The ids {@link assignMdzipHeadingIds} gave the headings in `tokens`, in order. */
-export function collectMdzipHeadingIds(tokens: readonly Token[]): string[] {
-  const ids: string[] = [];
-  forEachHeadingToken(tokens, (token) => {
-    if (token.mdzipAnchorId) {
-      ids.push(token.mdzipAnchorId);
-    }
-  });
-  return ids;
-}
-
-const marked = new Marked({
-  renderer: {
-    heading(token: AnchoredHeadingToken) {
-      const id = token.mdzipAnchorId ? ` id="${MDZIP_HEADING_ID_PREFIX}${escapeHtml(token.mdzipAnchorId)}"` : '';
-      return `<h${token.depth}${id}>${this.parser.parseInline(token.tokens)}</h${token.depth}>\n`;
-    },
-    code(token: { lang?: string; text: string }) {
-      const requestedLanguage = token.lang || '';
-      const language = requestedLanguage === 'vue' ? 'html' : requestedLanguage;
-      if (language && hljs.getLanguage(language)) {
-        try {
-          const highlighted = hljs.highlight(token.text, {
-            language,
-            ignoreIllegals: true
-          }).value;
-          return `<pre><code class="hljs language-${escapeHtml(requestedLanguage)}">${highlighted}</code></pre>`;
-        } catch {
-          // Fall through to escaped plain code.
-        }
-      }
-      // Preserve the requested language as a class even when it is not a
-      // highlightable language (e.g. `mermaid`), so render extensions and
-      // client-side highlighters can still find and claim the block.
-      const className = requestedLanguage ? ` class="language-${escapeHtml(requestedLanguage)}"` : '';
-      return `<pre><code${className}>${escapeHtml(token.text)}</code></pre>`;
-    },
-    list(token: Tokens.List) {
-      const type = token.ordered ? 'ol' : 'ul';
-      const start = token.ordered && token.start !== 1 && token.start !== '' ? ` start="${token.start}"` : '';
-      const className = token.items.some((item) => item.task) ? ' class="contains-task-list"' : '';
-      const body = token.items.map((item) => this.listitem(item)).join('');
-      return `<${type}${start}${className}>\n${body}</${type}>\n`;
-    },
-    // Same as marked's listitem, plus GitHub's `task-list-item` class (#54).
-    // Since marked 17 the checkbox is a token inside the item (inside its
-    // first paragraph when the list is loose), rendered by `checkbox` below.
-    listitem(item: Tokens.ListItem) {
-      return `<li${item.task ? ' class="task-list-item"' : ''}>${this.parser.parse(item.tokens)}</li>\n`;
-    },
-    checkbox({ checked }: Tokens.Checkbox) {
-      return `${taskCheckboxPlaceholder(checked)} `;
-    },
-    table(token: Tokens.Table) {
-      const renderCell = (cell: Tokens.TableCell): string => {
-        const tag = cell.header ? 'th' : 'td';
-        const align = cell.align ? ` align="${cell.align}"` : '';
-        return `<${tag}${align}>${this.parser.parseInline(cell.tokens)}</${tag}>\n`;
-      };
-      const renderRow = (cells: Tokens.TableCell[]): string =>
-        `<tr>\n${cells.map(renderCell).join('')}</tr>\n`;
-      const header = renderRow(token.header);
-      const body = token.rows.length
-        ? `<tbody>\n${token.rows.map(renderRow).join('')}</tbody>\n`
-        : '';
-      return `<div class="mdzip-table-scroll"><table>\n<thead>\n${header}</thead>\n${body}</table></div>\n`;
-    }
-  }
-});
-
-// GFM footnotes (#58): `[^1]` references and `[^1]: ...` definitions, rendered
-// as superscript links to a footnotes section at the end, with back-links.
-marked.use(markedFootnote());
-
-/**
- * Calls `callback` on every token, depth first, in the same order as marked's
- * own `walkTokens` (table cells, list items, extension child tokens, then
- * `tokens`). Marked's version also collects every callback's return value by
- * concatenating arrays as it goes, which is quadratic in the token count: on
- * a large chat export it took 13 seconds plus 6 of garbage collection, and
- * pushed VS Code's window past 4GB. Those values only matter to marked's async
- * mode, which the editor doesn't use.
- */
-function walkAllTokens(tokens: Token[], callback: (token: Token) => unknown): void {
-  const childTokens = marked.defaults.extensions?.childTokens ?? {};
-  const visit = (list: Token[]): void => {
-    for (const token of list) {
-      callback.call(marked, token);
-      switch (token.type) {
-        case 'table': {
-          const table = token as Tokens.Table;
-          for (const cell of table.header) {
-            visit(cell.tokens);
-          }
-          for (const row of table.rows) {
-            for (const cell of row) {
-              visit(cell.tokens);
-            }
-          }
-          break;
-        }
-        case 'list':
-          visit((token as Tokens.List).items);
-          break;
-        default: {
-          const names = childTokens[token.type];
-          if (names) {
-            for (const name of names) {
-              visit(((token as unknown as Record<string, unknown[]>)[name] ?? []).flat(Infinity) as Token[]);
-            }
-          } else if ('tokens' in token && token.tokens) {
-            visit(token.tokens);
-          }
-        }
-      }
-    }
-  };
-  visit(tokens);
-}
-
-/**
- * `marked.lexer()` plus the extensions' `walkTokens` hooks, which marked only
- * runs inside `parse()`. The footnote extension needs its hook to move the
- * footnotes section to the end and reset its per-document state.
- */
-function lexMarkdown(markdown: string): TokensList {
-  const tokens = marked.lexer(markdown);
-  const walkTokens = marked.defaults.walkTokens;
-  if (walkTokens) {
-    walkAllTokens(tokens, walkTokens);
-  }
-  // The extension adds its section token to every document, first; the hook
-  // moves a non-empty one to the end and leaves an empty `space` token behind.
-  // Drop both leftovers so token positions (and chunking) are as before.
-  for (let i = tokens.length - 1; i >= 0; i -= 1) {
-    const token = tokens[i] as Token & { items?: unknown[] };
-    const emptySection = token.type === 'footnotes' && !token.items?.length;
-    const placeholder = i === 0 && token.type === 'space' && token.raw === '';
-    if (emptySection || placeholder) {
-      tokens.splice(i, 1);
-    }
-  }
-  return tokens;
-}
-
 function renderDefaultMarkdownUnsanitized(markdown: string): string {
-  const tokens = lexMarkdown(markdown);
-  assignMdzipHeadingIds(tokens);
-  const rendered = marked.parser(tokens);
-  return typeof rendered === 'string' ? rendered : escapeHtml(markdown);
+  return parseMdzipTokens(tokenizeMdzipMarkdown(markdown));
 }
 
 export const defaultSafeMarkdownRenderer: MdzipMarkdownRenderer = {
   sanitizesOutput: true,
   render(markdown: string): string {
-    return sanitizeMdzipHtml(renderDefaultMarkdownUnsanitized(markdown));
+    return renderMdzipMarkdown(markdown, { headingIdPrefix: MDZIP_HEADING_ID_PREFIX });
   }
 };
 
@@ -709,14 +401,10 @@ export class MdzipRenderingService {
         if (context.signal.aborted) {
           throw createAbortError();
         }
-        const tokens = lexMarkdown(resolved);
-        assignMdzipHeadingIds(tokens);
-        return tokens;
+        return tokenizeMdzipMarkdown(resolved);
       });
     }
-    const tokens = lexMarkdown(value);
-    assignMdzipHeadingIds(tokens);
-    return tokens;
+    return tokenizeMdzipMarkdown(value);
   }
 
   /**
@@ -739,7 +427,7 @@ export class MdzipRenderingService {
         'renderChunk() only supports the default marked-based renderer; a custom renderer has no token structure to render from.'
       );
     }
-    let value: string | Promise<string> = marked.parser(tokens as Token[]);
+    let value: string | Promise<string> = parseMdzipTokens(tokens);
     for (const ext of this.extensions) {
       if (ext.transformHtml) {
         value = chainRenderStage(value, (html) => ext.transformHtml!(html, context, chunk), context.signal);
@@ -928,13 +616,4 @@ function rewriteAssetSources(markdown: string, resolver: MdzipAssetUrlResolver):
       return `![${alt}](${resolved}${suffix})`;
     }
   );
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }

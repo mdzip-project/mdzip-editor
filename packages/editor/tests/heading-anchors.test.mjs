@@ -72,10 +72,11 @@ function idsIn(html) {
 
 // --- Slugs and rendered ids -------------------------------------------------
 
-test('slugifyMdzipHeading follows GitHub-style slugs', () => {
+test('slugifyMdzipHeading uses the @mdzip/renderer slug (shared with mdzip.org and Pandoc)', () => {
   assert.equal(slugifyMdzipHeading('Skywalker Family Tree'), 'skywalker-family-tree');
   assert.equal(slugifyMdzipHeading("What's new? (v2.0)"), 'whats-new-v20');
-  assert.equal(slugifyMdzipHeading('snake_case & kebab-case'), 'snake_case--kebab-case');
+  assert.equal(slugifyMdzipHeading('snake_case & kebab-case'), 'snake_case-kebab-case');
+  assert.equal(slugifyMdzipHeading('🪟 Windows'), 'windows');
   assert.equal(slugifyMdzipHeading('Über Café 日本語'), 'über-café-日本語');
   assert.equal(slugifyMdzipHeading('!!!'), '');
 });

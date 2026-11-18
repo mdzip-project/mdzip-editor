@@ -1,4 +1,4 @@
-import type { Token } from 'marked';
+import type { Token } from '@mdzip/renderer';
 import type { MdzipMarkdownRenderContext, MdzipMarkdownRenderExtension } from './rendering.js';
 import { sanitizeMdzipHtml } from './rendering.js';
 

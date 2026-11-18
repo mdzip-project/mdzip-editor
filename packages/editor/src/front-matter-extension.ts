@@ -1,4 +1,4 @@
-import hljs from './highlight-core.js';
+import { highlightMdzipCode } from '@mdzip/renderer';
 import type { MdzipFrontMatter } from './front-matter.js';
 import { parseFrontMatter } from './front-matter.js';
 import type { MdzipMarkdownRenderContext, MdzipMarkdownRenderExtension } from './rendering.js';
@@ -75,12 +75,7 @@ function renderRawBody(frontMatter: MdzipFrontMatter): string {
   if (frontMatter.raw.trim() === '') {
     return '';
   }
-  let highlighted: string;
-  try {
-    highlighted = hljs.highlight(frontMatter.raw, { language: 'yaml', ignoreIllegals: true }).value;
-  } catch {
-    highlighted = escapeHtml(frontMatter.raw);
-  }
+  const highlighted = highlightMdzipCode(frontMatter.raw, 'yaml') ?? escapeHtml(frontMatter.raw);
   return `<pre><code class="hljs language-yaml">${highlighted}</code></pre>`;
 }
 
