@@ -1277,6 +1277,49 @@ export const WORKSPACE_CSS = `
   height: 100%;
 }
 
+/* Validity of the open .json file (#68), under the editor. */
+.mdzip-root .json-status {
+  flex: 0 0 auto;
+  padding: 3px 10px;
+  border-top: 1px solid var(--mdzip-border-color);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--mdzip-muted-foreground-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mdzip-root .json-status[data-status="warnings"] {
+  color: var(--mdzip-warning-color, #8a5a00);
+}
+
+.mdzip-root .json-status[data-status="invalid"] {
+  color: var(--mdzip-error-color, #b03030);
+  background: var(--mdzip-error-background-color, rgba(220, 70, 70, 0.08));
+}
+
+.mdzip-root.mdzip-theme-dark .json-status[data-status="warnings"] {
+  color: var(--mdzip-warning-color, #e0b050);
+}
+
+.mdzip-root.mdzip-theme-dark .json-status[data-status="invalid"] {
+  color: var(--mdzip-error-color, #f08080);
+}
+
+.mdzip-root .json-status.flash {
+  animation: mdzip-json-status-flash 0.9s ease-out;
+}
+
+@keyframes mdzip-json-status-flash {
+  0%, 40% { box-shadow: inset 0 0 0 2px var(--mdzip-error-color, #b03030); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mdzip-root .json-status.flash { animation: none; }
+}
+
 .mdzip-root .split-resizer {
   display: none;
   position: relative;

@@ -56,8 +56,10 @@
   },
   "dependencies": {
     "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.3.2",
     "@codemirror/language": "^6.11.0",
+    "@codemirror/lint": "~6.9.6",
     "@codemirror/merge": "^6.12.2",
     "@codemirror/search": "^6.5.11",
     "@codemirror/state": "^6.5.2",

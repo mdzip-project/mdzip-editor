@@ -48,9 +48,10 @@ export function canEditMdzipPath(
   archivePath: string,
   mode: MdzipWorkspaceMode = 'editable'
 ): boolean {
+  // manifest.json too (#68): the editor validates it and blocks saving an invalid one.
   return mode !== 'read-only'
     && (pathType === 'markdown' || pathType === 'text')
-    && !isMdzipManifestPath(archivePath);
+    && archivePath !== '';
 }
 
 export function isMdzipManifestPath(path: string): boolean {

@@ -1265,7 +1265,9 @@ test('provides workspace view helpers outside framework wrappers', async () => {
   const snapshot = workspace.snapshot();
 
   assert.equal(canEditMdzipPath(snapshot.currentPathType, snapshot.currentPath, snapshot.mode), true);
-  assert.equal(canEditMdzipPath('text', 'manifest.json', 'editable'), false);
+  // The manifest is editable since #68 (validated; an invalid one blocks saving).
+  assert.equal(canEditMdzipPath('text', 'manifest.json', 'editable'), true);
+  assert.equal(canEditMdzipPath('text', 'manifest.json', 'read-only'), false);
 
   const tree = buildMdzipNavTree(snapshot.content.paths);
   assert.equal(tree.some((node) => node.name === 'images'), true);

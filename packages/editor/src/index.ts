@@ -6,6 +6,7 @@ export * from './diff.js';
 export * from './front-matter.js';
 export * from './front-matter-extension.js';
 export * from './heading-outline.js';
+export * from './json-validation.js';
 export * from './mdz-archive.worker-client.js';
 export * from './merge-conflicts.js';
 export * from './metadata.js';

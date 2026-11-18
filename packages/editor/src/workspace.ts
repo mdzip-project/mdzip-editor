@@ -22,6 +22,12 @@ import {
 } from './archive-utils.js';
 import { MdzArchiveWorkerClient } from './mdz-archive.worker-client.js';
 import {
+  isMdzipRootManifestPath,
+  validateMdzipJsonText,
+  validateMdzipManifestText,
+  type MdzipJsonValidity
+} from './json-validation.js';
+import {
   displayTitleFromManifest,
   fileBaseNameFromPath,
   firstMarkdownHeading,
@@ -161,6 +167,21 @@ export class MdzipReadOnlyError extends Error {
   }
 }
 
+/**
+ * Thrown by `saveToBytes`, `exportBytes`, `serialize`, `flush` and
+ * `getCurrentSnapshot` while the edited `manifest.json` has an error: an
+ * archive with a manifest consumers would reject or partly ignore must not be
+ * written. `validity` lists the problems; fix them (or undo the edit) to save.
+ */
+export class MdzipManifestInvalidError extends Error {
+  public readonly code = 'ERR_MANIFEST_INVALID';
+  public constructor(public readonly validity: MdzipJsonValidity) {
+    const first = validity.problems.find((problem) => problem.severity === 'error');
+    super(`Cannot save: manifest.json has ${validity.errorCount === 1 ? 'an error' : `${validity.errorCount} errors`}${first ? ` (${first.message})` : ''}.`);
+    this.name = 'MdzipManifestInvalidError';
+  }
+}
+
 export class MdzipWorkspaceService {
   private readonly listeners = new Set<MdzipDocumentChangeListener>();
   private archiveBytes: Uint8Array;
@@ -174,6 +195,9 @@ export class MdzipWorkspaceService {
   // The text of a non-Markdown file as last loaded or committed, so a commit
   // can tell an edit from the stored text without reading the archive again.
   private loadedText: { path: string; text: string } | null = null;
+  // The text of an edited manifest.json that has an error, kept until it's
+  // fixed so switching files doesn't lose it; while set, saving throws.
+  private manifestDraft: { text: string; validity: MdzipJsonValidity } | null = null;
   // Ledger of entry-level changes not yet written to archiveBytes. Lets
   // serializeWorkspaceBytes() patch the existing archive in place instead of
   // rebuilding it from the workspace model (which would force every lazy
@@ -851,6 +875,33 @@ export class MdzipWorkspaceService {
     this.emit('reload', ['persistence']);
   }
 
+  /**
+   * Checks the text of a JSON entry: for the archive's `manifest.json`,
+   * against the spec and this archive (its files, the stored `producer` and
+   * `spec.version`); for any other `.json` file, as JSON. The view uses it
+   * to underline problems as you type.
+   */
+  public validateJsonText(archivePath: string, text: string): MdzipJsonValidity {
+    return isMdzipRootManifestPath(archivePath) && this.sourceFormatValue === 'mdz'
+      ? this.validateManifestText(text)
+      : validateMdzipJsonText(text);
+  }
+
+  /**
+   * The problems of the edited manifest that block saving, or `null` when it
+   * can be saved (it's unedited, or the edit is valid).
+   */
+  public manifestValidity(): MdzipJsonValidity | null {
+    if (isMdzipRootManifestPath(this.currentPathValue) && isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)) {
+      const loaded = this.loadedText && samePath(this.loadedText.path, this.currentPathValue) ? this.loadedText.text : null;
+      if (loaded !== this.currentTextValue) {
+        const validity = this.validateManifestText(this.currentTextValue);
+        return validity.canSave ? null : validity;
+      }
+    }
+    return this.manifestDraft?.validity ?? null;
+  }
+
   public manifest(): MdzManifest | null {
     return this.sourceFormatValue === 'mdz' ? this.contentValue.manifest : null;
   }
@@ -859,6 +910,7 @@ export class MdzipWorkspaceService {
     // Edits committed when another file was opened are pending too, so the
     // archive is rebuilt for them even while an image is selected.
     this.commitPendingTextToWorkspace();
+    this.assertManifestSavable();
     // If archiveBytes is empty, we're in the openWorkspace() path and must serialize.
     // Empty bytes is a signal that bytes were never populated, not a valid zero-byte archive.
     if (!this.pendingTextDirty && this.archiveBytes.length > 0) {
@@ -975,6 +1027,10 @@ export class MdzipWorkspaceService {
     if (!isEditableTextPath(this.currentPathTypeValue, this.currentPathValue)) {
       return;
     }
+    if (isMdzipRootManifestPath(this.currentPathValue)) {
+      this.commitManifestText();
+      return;
+    }
     const document = this.workspaceValue.documents.find((doc) => samePath(doc.path, this.currentPathValue));
     if (document) {
       if (document.text !== this.currentTextValue) {
@@ -1006,6 +1062,44 @@ export class MdzipWorkspaceService {
         this.pendingTextDirty = true;
       }
       this.loadedText = { path: asset.path, text: this.currentTextValue };
+    }
+  }
+
+  // The manifest isn't a file in the workspace model: a valid edit replaces
+  // workspace.manifest (written on the next serialization, with `modified`
+  // refreshed, as core-js writes every manifest); an invalid one is kept as a
+  // draft that blocks saving.
+  private commitManifestText(): void {
+    const text = this.currentTextValue;
+    if (this.loadedText && samePath(this.loadedText.path, this.currentPathValue) && this.loadedText.text === text) {
+      return;
+    }
+    this.loadedText = { path: this.currentPathValue, text };
+    const validity = this.validateManifestText(text);
+    if (!validity.canSave) {
+      this.manifestDraft = { text, validity };
+      return;
+    }
+    this.manifestDraft = null;
+    const manifest = validity.value as MdzManifest;
+    this.workspaceValue.manifest = manifest;
+    this.workspaceValue.title = typeof manifest.title === 'string' ? manifest.title : null;
+    if (typeof manifest.entryPoint === 'string') {
+      this.workspaceValue.entryPoint = manifest.entryPoint.replace(/^\.\//, '');
+    }
+    this.pendingTextDirty = true;
+  }
+
+  private validateManifestText(text: string): MdzipJsonValidity {
+    return validateMdzipManifestText(text, {
+      archivePaths: this.contentValue.paths.map((entry) => entry.path),
+      stored: this.workspaceValue.manifest ?? null
+    });
+  }
+
+  private assertManifestSavable(): void {
+    if (this.manifestDraft) {
+      throw new MdzipManifestInvalidError(this.manifestDraft.validity);
     }
   }
 
@@ -1052,6 +1146,9 @@ export class MdzipWorkspaceService {
   }
 
   private async readWorkspacePathBytes(archivePath: string): Promise<Uint8Array | undefined> {
+    if (archivePath === 'manifest.json' && this.manifestDraft) {
+      return new TextEncoder().encode(this.manifestDraft.text);
+    }
     if (archivePath === 'manifest.json' && this.workspaceValue.manifest) {
       return new TextEncoder().encode(JSON.stringify(this.workspaceValue.manifest, null, 2));
     }
@@ -1291,9 +1388,8 @@ function isEditableTextPath(currentPathType: MdzipPathType, archivePath: string)
   if (currentPathType !== 'markdown' && currentPathType !== 'text') {
     return false;
   }
-  const lower = archivePath.toLowerCase();
-  const fileName = lower.includes('/') ? lower.slice(lower.lastIndexOf('/') + 1) : lower;
-  return fileName !== 'manifest.json';
+  // manifest.json too (#68): edits are validated, and an invalid one blocks saving.
+  return archivePath !== '';
 }
 
 function fileNameFromPath(path: string): string {

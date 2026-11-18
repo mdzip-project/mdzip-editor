@@ -252,6 +252,49 @@ Structured callbacks are available for workspace, document, asset, manifest,
 selection, dirty, validation, and snapshot changes. Asset hosts can also call
 `addAsset()`, `replaceAsset()`, `removeAsset()`, and `listAssets()`.
 
+## Editing JSON and the Manifest
+
+`.json` files open in the editor with JSON highlighting, and are checked as
+you type: a syntax error is underlined where it is, with what's wrong ("Remove
+the comma before }: JSON has no trailing commas."), and a status line under
+the editor sums it up. Other JSON files are saved exactly as typed, even when
+they don't parse.
+
+The archive's `manifest.json` is editable too, and checked against the spec:
+
+| Problem | |
+| --- | --- |
+| Not JSON, not an object, or a property name used twice | error |
+| `spec`, `spec.version`, `mode` or `entryPoint` invalid, or `entryPoint` not a Markdown file in the archive | error |
+| A descriptive field with a wrong type or format (`title: 42`, `created: "yesterday"`) | error |
+| `cover` names no file in the archive | warning |
+| `producer` or `spec.version` edited (tools normally set these) | warning |
+| Fields the spec doesn't define | fine: listed as custom fields and kept |
+
+While the manifest has an error, saving is blocked: `flush()`, `saveToBytes()`,
+`exportBytes()`, `serialize()` and `getCurrentSnapshot()` throw
+`MdzipManifestInvalidError` (`code: 'ERR_MANIFEST_INVALID'`, with the problems
+in `validity`), and the toolbar's save button opens the manifest to show them.
+The broken text is kept while you look at other files. A valid manifest is
+saved as core-js writes every manifest: the same values, in the same order,
+custom fields included, with `modified` refreshed and 2-space indentation.
+
+```ts
+const view = new MdzipWorkspaceView(container, {
+  jsonStatus: true, // the status line under the editor (default)
+  onJsonValidityChanged: (validity, path) => {
+    // validity: { kind, status: 'valid' | 'warnings' | 'invalid', problems, canSave, customFields }
+    // null when the open file isn't JSON
+  }
+});
+
+view.getManifestValidity(); // the manifest's problems that block saving, or null
+```
+
+The checks are also available on their own: `validateMdzipManifestText(text, {
+archivePaths, stored })` and `validateMdzipJsonText(text)` return the same
+`MdzipJsonValidity`, with each problem's position in the text.
+
 ## File Management (navigation pane)
 
 With `controls: 'standalone-editor'` or `'hosted-editor'` (or `fileActions: true`

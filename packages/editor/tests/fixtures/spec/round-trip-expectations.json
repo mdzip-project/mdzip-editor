@@ -1,0 +1,162 @@
+{
+  "description": "Round-trip preservation checks for SPEC Sections 6.3 and 14.1 (1.2.0). Open round-trip.mdz, run each flow, save, and repeat the flow at least twice. After every save: (1) every pointer in preservedManifestValues still holds a value that is JSON-equal to the one listed; (2) every entry listed in preservedEntries that is not in the flow's changes or removes is still present with the same path, byte length and SHA-256. Entries in changes may differ; entries in removes must be absent.",
+  "source": "fixtures/src/round-trip/",
+  "archive": "fixtures/round-trip.mdz",
+  "preservedManifestValues": [
+    {
+      "pointer": "/spec/x-negotiated",
+      "value": [
+        "1.1.0",
+        "1.2.0"
+      ]
+    },
+    {
+      "pointer": "/producer/application/x-build",
+      "value": {
+        "channel": "test",
+        "number": 42
+      }
+    },
+    {
+      "pointer": "/author/x-orcid",
+      "value": null
+    },
+    {
+      "pointer": "/x-unknown-string",
+      "value": "keep me"
+    },
+    {
+      "pointer": "/x-unknown-number",
+      "value": 3.5
+    },
+    {
+      "pointer": "/x-unknown-boolean",
+      "value": false
+    },
+    {
+      "pointer": "/x-unknown-null",
+      "value": null
+    },
+    {
+      "pointer": "/x-unknown-array",
+      "value": [
+        1,
+        "two",
+        true,
+        null,
+        {
+          "three": 3
+        }
+      ]
+    },
+    {
+      "pointer": "/x-unknown-object",
+      "value": {
+        "nested": {
+          "deeper": [
+            {
+              "a": 1
+            },
+            {
+              "b": [
+                false,
+                null
+              ]
+            }
+          ]
+        },
+        "empty": {},
+        "emptyList": []
+      }
+    },
+    {
+      "pointer": "/profiles",
+      "value": [
+        {
+          "id": "https://example.com/profiles/report",
+          "version": "0.1.0",
+          "x-hint": "simulates a future field"
+        }
+      ]
+    }
+  ],
+  "preservedEntries": [
+    {
+      "path": "AGENTS.md",
+      "bytes": 143,
+      "sha256": "1474bb2dc851aae9646fee2e3c4e5759c2e4fb0cced5ab77350d56bbaf11ccd2"
+    },
+    {
+      "path": "data/table.csv",
+      "bytes": 64,
+      "sha256": "78422c1337fbf25726ef1bc14a480cde8b39ca1ed4ab417d5a7d5f3504b457a8"
+    },
+    {
+      "path": "docs/AGENTS.md",
+      "bytes": 146,
+      "sha256": "3c1f015f128a009e1e2a1b9ad52ff1c022c3ecf5cf44c4f5d5046cdc86688879"
+    },
+    {
+      "path": "docs/guide.md",
+      "bytes": 63,
+      "sha256": "15496dae7a7b3bdb0bc091abe72fbfb7d6ff19857d3c24e5424732db33a4e145"
+    },
+    {
+      "path": "extensions/custom-state.bin",
+      "bytes": 512,
+      "sha256": "110009dcee21620b166f3abfecb5eff7a873be729d1c2d53822e7acc5f34eb9b"
+    },
+    {
+      "path": "index.md",
+      "bytes": 127,
+      "sha256": "e596684c47523549facb9b4a4dfe57f3e34377b10b6088c2e7381fa9ce33d3e6"
+    },
+    {
+      "path": "large/AGENTS.md",
+      "bytes": 30747,
+      "sha256": "62cb59fa6233c8ddf2395b4dc3b375c668d0cbd32523e4509453d616e1ec1d5b"
+    }
+  ],
+  "flows": [
+    {
+      "name": "open and save without an edit",
+      "changes": []
+    },
+    {
+      "name": "change a recognized manifest field",
+      "changes": [
+        "manifest.json"
+      ],
+      "step": "set /title to \"Edited title\""
+    },
+    {
+      "name": "edit document content",
+      "changes": [
+        "index.md"
+      ],
+      "step": "append a line to index.md"
+    },
+    {
+      "name": "add a resource",
+      "changes": [],
+      "adds": [
+        "images/added.png"
+      ],
+      "step": "add any image at images/added.png"
+    },
+    {
+      "name": "remove a recognized resource",
+      "changes": [
+        "index.md"
+      ],
+      "removes": [
+        "docs/guide.md"
+      ],
+      "step": "remove docs/guide.md (and its link) through the tool"
+    }
+  ],
+  "notes": [
+    "manifest.json itself is excluded from the byte checks: rewriting it may change whitespace and property order. Check its unknown values with preservedManifestValues instead.",
+    "AGENTS.md (root), docs/AGENTS.md (nested) and large/AGENTS.md (> 24 KB) cover the AGENTS.md integrity case; extensions/custom-state.bin and data/table.csv cover files the tool does not recognize."
+  ]
+}

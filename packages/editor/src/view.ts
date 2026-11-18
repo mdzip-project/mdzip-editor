@@ -1,5 +1,7 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { json } from '@codemirror/lang-json';
 import { markdown } from '@codemirror/lang-markdown';
+import { linter, type Diagnostic } from '@codemirror/lint';
 import { HighlightStyle, syntaxHighlighting, syntaxTree } from '@codemirror/language';
 import { closeSearchPanel, openSearchPanel, search, searchKeymap } from '@codemirror/search';
 import { Compartment, EditorState, RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
@@ -96,6 +98,7 @@ import type {
   MdzipWorkspaceOpenOptions
 } from './workspace.js';
 import {
+  MdzipManifestInvalidError,
   MdzipWorkspaceService,
   extensionForMime,
   normalizeArchivePath,
@@ -118,6 +121,12 @@ import {
   type MdzipNavNode
 } from './workspace-view.js';
 import { collectMdzipHeadings } from '@mdzip/renderer';
+import {
+  describeMdzipJsonValidity,
+  isMdzipJsonPath,
+  isMdzipRootManifestPath,
+  type MdzipJsonValidity
+} from './json-validation.js';
 import {
   createMdzipHeadingOutline,
   type MdzipHeadingOutline,
@@ -1090,6 +1099,20 @@ export interface MdzipWorkspaceViewOptions {
   outline?: boolean | MdzipOutlineViewOptions;
   /** Called when the outline panel is shown or hidden from the toolbar, so a host can remember the choice. */
   onOutlineVisibilityChanged?: (visible: boolean) => void;
+  /**
+   * Show the status line under the editor while a `.json` file is open
+   * ("Valid manifest", or the first error). Default `true`. Problems are
+   * underlined in the text either way; a host that draws its own indicator
+   * can turn this off and use `onJsonValidityChanged`.
+   */
+  jsonStatus?: boolean;
+  /**
+   * Called (debounced, as you type) with the validity of the open `.json`
+   * file, and with `null` when another kind of file is opened. While the
+   * archive's `manifest.json` has an error (`validity.canSave === false`),
+   * saving fails with `MdzipManifestInvalidError`.
+   */
+  onJsonValidityChanged?: (validity: MdzipJsonValidity | null, path: string | null) => void;
 }
 
 export interface MdzipOutlineViewOptions {
@@ -1531,6 +1554,14 @@ const mdzipMarkdownHighlight = HighlightStyle.define([
   { tag: tags.quote, color: '#7a5c00' },
   { tag: tags.contentSeparator, color: '#6a9955' },
   { tag: tags.atom, color: '#d100d1' },
+]);
+
+// JSON entries (#68), in the same palette as the Markdown style above.
+const mdzipJsonHighlight = HighlightStyle.define([
+  { tag: tags.propertyName, color: '#008b8b' },
+  { tag: tags.string, color: '#c36f00' },
+  { tag: tags.number, color: '#6a9955' },
+  { tag: [tags.bool, tags.null], color: '#d100d1' },
 ]);
 
 const hardBreakMarkerMatcher = new MatchDecorator({
@@ -2146,6 +2177,10 @@ export class MdzipWorkspaceView {
   private readonly readOnlyCompartment = new Compartment();
   private readonly lineNumbersCompartment = new Compartment();
   private readonly searchCompartment = new Compartment();
+  private readonly languageCompartment = new Compartment();
+  private cmLanguage: 'markdown' | 'json' = 'markdown';
+  private jsonValidity: MdzipJsonValidity | null = null;
+  private jsonValidityPath: string | null = null;
   private updatingCm = false;
   private syncing = false;
   // Last value this class itself wrote to each pane's scrollTop, used to
@@ -2310,6 +2345,7 @@ export class MdzipWorkspaceView {
   private readonly elEditToolbar: HTMLElement;
   private readonly elImageInput: HTMLInputElement;
   private readonly elEditorHost: HTMLElement;
+  private readonly elJsonStatus: HTMLElement;
   private readonly elSplitResizer: HTMLElement;
   private readonly elPreviewPane: HTMLElement;
   private readonly elPreviewContent: HTMLElement;
@@ -2438,6 +2474,7 @@ export class MdzipWorkspaceView {
     this.elEditToolbar = q('[data-ref="edit-toolbar"]');
     this.elImageInput = q('[data-ref="image-input"]');
     this.elEditorHost = q('[data-ref="editor-host"]');
+    this.elJsonStatus = q('[data-ref="json-status"]');
     this.elSplitResizer = q('[data-ref="split-resizer"]');
     this.elPreviewPane = q('[data-ref="preview-pane"]');
     this.elPreviewContent = q('[data-ref="preview-content"]');
@@ -4989,7 +5026,7 @@ export class MdzipWorkspaceView {
           { key: 'Mod-k', run: () => self.runFormatShortcut('link') }
         ]),
         keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
-        markdown(),
+        this.languageCompartment.of(markdown()),
         syntaxHighlighting(mdzipMarkdownHighlight),
         hardBreakMarkerHighlight,
         htmlTagMarkerHighlight,
@@ -5109,11 +5146,14 @@ export class MdzipWorkspaceView {
       || !canShowSourceLayout(snapshot)) {
       return this.cmEditor;
     }
+    this.cmLanguage = 'markdown';
+    this.jsonValidityPath = null;
     this.cmEditor = this.createCmEditor(
       this.elEditorHost,
       snapshot.currentText,
       snapshot.mode
     );
+    this.syncEditorLanguage(snapshot);
     return this.cmEditor;
   }
 
@@ -5357,6 +5397,7 @@ export class MdzipWorkspaceView {
           EditorState.readOnly.of(snapshot.mode === 'read-only')
         )
       });
+      this.syncEditorLanguage(snapshot);
     }
 
     this.updatePreview(snapshot, entryClaimed);
@@ -6734,7 +6775,104 @@ export class MdzipWorkspaceView {
       }
       this.render();
     } catch (error) {
+      if (error instanceof MdzipManifestInvalidError) {
+        await this.showManifestProblems(error.validity);
+      }
       this.options.onFailed?.(error);
+    }
+  }
+
+  // Saving is blocked by an invalid manifest: show it, with its problems,
+  // wherever the user is, so they can see what to fix.
+  private async showManifestProblems(validity: MdzipJsonValidity): Promise<void> {
+    const snapshot = this.workspace?.snapshot();
+    if (snapshot && !isMdzipRootManifestPath(snapshot.currentPath)) {
+      await this.openPath('manifest.json');
+    }
+    if (this.layout === 'preview') {
+      await this.setLayout('split');
+    }
+    this.setJsonValidity(validity, 'manifest.json');
+    this.elJsonStatus.classList.remove('flash');
+    void this.elJsonStatus.offsetWidth;
+    this.elJsonStatus.classList.add('flash');
+  }
+
+  /**
+   * The problems of the edited `manifest.json` that block saving, or `null`
+   * when the archive can be saved.
+   */
+  public getManifestValidity(): MdzipJsonValidity | null {
+    return this.workspace?.manifestValidity() ?? null;
+  }
+
+  // JSON files get JSON highlighting and live validation; everything else
+  // keeps the Markdown language, as before.
+  private syncEditorLanguage(snapshot: MdzipWorkspaceSnapshot): void {
+    const isJson = (snapshot.currentPathType === 'text' || snapshot.currentPathType === 'markdown')
+      && isMdzipJsonPath(snapshot.currentPath);
+    const language = isJson ? 'json' : 'markdown';
+    if (language !== this.cmLanguage && this.cmEditor) {
+      this.cmLanguage = language;
+      this.cmEditor.dispatch({
+        effects: this.languageCompartment.reconfigure(isJson ? [json(), syntaxHighlighting(mdzipJsonHighlight), this.jsonLinter()] : markdown())
+      });
+    }
+    if (!isJson) {
+      this.setJsonValidity(null, null);
+    } else if (this.jsonValidityPath !== snapshot.currentPath && this.workspace) {
+      this.setJsonValidity(this.workspace.validateJsonText(snapshot.currentPath, snapshot.currentText), snapshot.currentPath);
+    }
+  }
+
+  private jsonLinter() {
+    return linter((view): Diagnostic[] => {
+      const workspace = this.workspace;
+      if (!workspace) {
+        return [];
+      }
+      const path = workspace.snapshot().currentPath;
+      const validity = workspace.validateJsonText(path, view.state.doc.toString());
+      this.setJsonValidity(validity, path);
+      const length = view.state.doc.length;
+      return validity.problems.map((problem) => {
+        const from = Math.min(problem.from, length);
+        return {
+          from,
+          to: Math.max(from, Math.min(problem.to, length)),
+          severity: problem.severity,
+          message: problem.message
+        };
+      });
+    }, { delay: 300 });
+  }
+
+  private setJsonValidity(validity: MdzipJsonValidity | null, path: string | null): void {
+    const changed = this.jsonValidityPath !== path
+      || JSON.stringify(this.jsonValidity?.problems ?? null) !== JSON.stringify(validity?.problems ?? null);
+    this.jsonValidity = validity;
+    this.jsonValidityPath = path;
+    const status = this.elJsonStatus;
+    status.hidden = validity === null || this.options.jsonStatus === false;
+    if (validity) {
+      status.dataset.status = validity.status;
+      status.textContent = validity.canSave
+        ? describeMdzipJsonValidity(validity)
+        : `${describeMdzipJsonValidity(validity)} Saving is blocked until it's fixed.`;
+      const custom = validity.customFields.length
+        ? `Custom fields, kept as they are: ${validity.customFields.join(', ')}.`
+        : '';
+      status.title = [
+        ...validity.problems.map((problem) => `${problem.severity}: ${problem.message}`),
+        custom
+      ].filter(Boolean).join('\n');
+    } else {
+      delete status.dataset.status;
+      status.textContent = '';
+      status.title = '';
+    }
+    if (changed) {
+      this.options.onJsonValidityChanged?.(validity, path);
     }
   }
 
@@ -10074,6 +10212,7 @@ const SHELL_HTML = `
     <div class="pane-stack" data-ref="pane-stack">
       <section class="pane edit-pane" data-ref="edit-pane">
         <div class="editor-host" data-ref="editor-host"></div>
+        <div class="json-status" data-ref="json-status" role="status" aria-live="polite" hidden></div>
       </section>
       <div class="split-resizer" data-ref="split-resizer"
         role="separator" aria-orientation="vertical" aria-label="Resize split panes"></div>
