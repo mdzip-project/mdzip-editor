@@ -309,3 +309,14 @@ test('view: the JSON status line follows the open file, and a blocked save opens
     container.remove();
   }
 });
+
+test('a text file in the preview is colored by its extension', async () => {
+  const { renderPlainTextPreview } = await import('../dist/index.js');
+  const json = renderPlainTextPreview('data/config.json', '{"a": "<b>", "n": 1}');
+  assert.match(json, /^<pre class="plain-text-preview language-json"><code class="hljs">/);
+  assert.match(json, /<span class="hljs-attr">&quot;a&quot;<\/span>/);
+  assert.ok(!json.includes('<b>'), 'text is escaped');
+  assert.match(renderPlainTextPreview('styles/site.css', 'a { color: red }'), /language-css/);
+  const plain = renderPlainTextPreview('notes.txt', 'x < y');
+  assert.equal(plain, '<pre class="plain-text-preview"><code>x &lt; y</code></pre>');
+});

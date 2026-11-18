@@ -2462,4 +2462,35 @@ export const WORKSPACE_CSS = `
 .mdzip-root.mdzip-theme-light .hljs-title { color: #50a14f; }
 .mdzip-root.mdzip-theme-light .hljs-punctuation { color: #383a42; }
 .mdzip-root.mdzip-theme-light .hljs-operator { color: #a626a4; }
+
+/* A text file in the preview (View layout) looks like it does in the editor:
+   the editor's font, size and line height, no code-block card, and for JSON
+   the editor's colors (#68). These follow the code-block rules above to win. */
+.mdzip-root .preview-content pre.plain-text-preview {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.mdzip-root .preview-content pre.plain-text-preview code {
+  display: block;
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: calc(16px * var(--mdz-zoom, 1));
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: visible;
+  color: var(--mdzip-editor-foreground-color);
+}
+
+.mdzip-root .plain-text-preview.language-json .hljs-attr { color: #008b8b; }
+.mdzip-root .plain-text-preview.language-json .hljs-string { color: #c36f00; }
+.mdzip-root .plain-text-preview.language-json .hljs-number { color: #6a9955; }
+.mdzip-root .plain-text-preview.language-json .hljs-literal { color: #d100d1; }
+.mdzip-root .plain-text-preview.language-json .hljs-punctuation { color: inherit; }
 `;

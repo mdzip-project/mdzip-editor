@@ -1,5 +1,6 @@
 import { nfc, samePath } from '@mdzip/core-js';
 import type { ArchiveEntry } from './archive-utils.js';
+import { highlightMdzipCode } from '@mdzip/renderer';
 import { MdzipRenderingService } from './rendering.js';
 import type { MdzipPathType, MdzipWorkspaceMode, MdzipWorkspaceSnapshot } from './workspace.js';
 
@@ -92,11 +93,35 @@ export function renderMdzipPreviewHtml(state: MdzipWorkspaceSnapshot): string {
   }
 
   if (state.currentPathType === 'text') {
-    return `<pre class="plain-text-preview"><code>${escapeHtml(state.currentText)}</code></pre>`;
+    return renderPlainTextPreview(state.currentPath, state.currentText);
   }
 
   const rewritten = rewriteMdzipImageSources(state.currentText, state.content.images);
   return renderingService.render({ markdown: rewritten }).html;
+}
+
+// Languages the preview colors a text file in, by extension (all of them
+// registered with highlight.js in @mdzip/renderer).
+const TEXT_PREVIEW_LANGUAGES: Record<string, string> = {
+  json: 'json', css: 'css', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  ts: 'typescript', mts: 'typescript', cts: 'typescript', tsx: 'tsx', jsx: 'javascript',
+  yaml: 'yaml', yml: 'yaml', xml: 'xml', svg: 'xml', html: 'html', htm: 'html',
+  py: 'python', sh: 'bash', bash: 'bash', sql: 'sql', rs: 'rust', go: 'go', java: 'java',
+  cs: 'csharp', cpp: 'cpp', cc: 'cpp', h: 'cpp', hpp: 'cpp'
+};
+
+// Past this size a file is shown uncolored: highlighting it would hold up the preview.
+const TEXT_PREVIEW_HIGHLIGHT_LIMIT = 512 * 1024;
+
+/** A text file shown as-is in the preview, colored by its extension when it's a known language. */
+export function renderPlainTextPreview(path: string, text: string): string {
+  const extension = path.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? '';
+  const language = TEXT_PREVIEW_LANGUAGES[extension];
+  const highlighted = language && text.length <= TEXT_PREVIEW_HIGHLIGHT_LIMIT
+    ? highlightMdzipCode(text, language)
+    : null;
+  const languageClass = highlighted ? ` language-${language}` : '';
+  return `<pre class="plain-text-preview${languageClass}"><code${highlighted ? ' class="hljs"' : ''}>${highlighted ?? escapeHtml(text)}</code></pre>`;
 }
 
 // True for a link that could plausibly point somewhere on disk relative to
