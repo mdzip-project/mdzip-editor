@@ -2361,6 +2361,9 @@ export class MdzipWorkspaceView {
   private readonly elOutlinePane: HTMLElement;
   private outlineVisible = false;
   private whitespaceVisible = false;
+  // Which parts of the edit toolbar the last render showed (renderFormattingControls).
+  private formattingShown = false;
+  private whitespaceControlShown = false;
   private readonly elWhitespaceBtn: HTMLButtonElement;
   private outlineOptions: MdzipOutlineViewOptions = {};
   private outline: MdzipHeadingOutline | null = null;
@@ -5270,19 +5273,18 @@ export class MdzipWorkspaceView {
     this.elDocumentStrip.hidden = !showTitleControl;
     this.elToolbar.hidden = !showToolbar;
     this.elToolbarLeft.hidden = !showNavigationControl;
-    this.elEditToolbar.hidden = !showEditControls;
+    this.elEditToolbar.hidden = !showEditControls && !showWhitespaceControl;
+    this.formattingShown = showEditControls;
+    this.whitespaceControlShown = showWhitespaceControl;
     this.elLayoutControls.hidden = !showLayoutControls;
     this.elToolbarControls.hidden = !showSaveControl && !showZoomControl
-      && !showWidthControl && !showColorSchemeControl && !showSearchControl && !showOutlineControl
-      && !showWhitespaceControl;
+      && !showWidthControl && !showColorSchemeControl && !showSearchControl && !showOutlineControl;
     this.elNavBtn.hidden = !showNavigationControl;
     this.elPreviewBtn.hidden = !this.controlPolicy.layout.preview;
     this.elSplitBtn.hidden = !this.controlPolicy.layout.split;
     this.elSourceBtn.hidden = !this.controlPolicy.layout.source;
     this.elSaveBtn.hidden = !showSaveControl;
     this.elSearchBtn.hidden = !showSearchControl;
-    this.elWhitespaceBtn.hidden = !showWhitespaceControl;
-    this.elWhitespaceBtn.classList.toggle('active', this.whitespaceVisible);
     this.elWhitespaceBtn.setAttribute('aria-pressed', String(this.whitespaceVisible));
     this.elOutlineBtn.hidden = !showOutlineControl;
     this.elOutlineBtn.classList.toggle('active', this.outlineVisible);
@@ -8775,6 +8777,11 @@ export class MdzipWorkspaceView {
       link: formatting.link,
       image: formatting.image
     };
+    // Formatting only applies to Markdown; the whitespace toggle to any text the editor shows.
+    for (const key of Object.keys(visibility)) {
+      visibility[key] = visibility[key]! && this.formattingShown;
+    }
+    visibility['whitespace'] = this.whitespaceControlShown;
 
     this.elEditToolbar.querySelectorAll<HTMLElement>('[data-format-control]').forEach((element) => {
       element.hidden = !visibility[element.dataset['formatControl'] ?? ''];
@@ -10173,7 +10180,7 @@ const SHELL_HTML = `
         </button>
       </div>
 
-      <div class="edit-toolbar" data-ref="edit-toolbar" role="toolbar" aria-label="Markdown formatting">
+      <div class="edit-toolbar" data-ref="edit-toolbar" role="toolbar" aria-label="Editing">
         <div class="edit-toolbar-group">
           <button type="button" data-format="bold" data-format-control="bold" title="Bold" aria-label="Bold">${BOLD_ICON_HTML}</button>
           <button type="button" data-format="italic" data-format-control="italic" title="Italic" aria-label="Italic">${ITALIC_ICON_HTML}</button>
@@ -10217,6 +10224,11 @@ const SHELL_HTML = `
           <button type="button" data-format="image" data-format-control="image" title="Image" aria-label="Image">${IMAGE_FORMAT_ICON_HTML}</button>
           <input type="file" data-ref="image-input" accept="image/*" hidden />
         </div>
+        <span class="edit-toolbar-divider" aria-hidden="true"></span>
+        <div class="edit-toolbar-group">
+          <button type="button" class="edit-toolbar-toggle" data-ref="whitespace-btn" data-format-control="whitespace"
+            title="Show whitespace" aria-label="Show whitespace" aria-pressed="false">${WHITESPACE_ICON_HTML}</button>
+        </div>
       </div>
     </div>
 
@@ -10239,9 +10251,6 @@ const SHELL_HTML = `
     <div class="toolbar-controls" data-ref="toolbar-controls">
       <button type="button" class="icon-toggle outline-toggle" data-ref="outline-btn" title="Outline" aria-label="Outline" aria-pressed="false">
         ${OUTLINE_ICON_HTML}
-      </button>
-      <button type="button" class="icon-toggle" data-ref="whitespace-btn" title="Show whitespace" aria-label="Show whitespace" aria-pressed="false">
-        ${WHITESPACE_ICON_HTML}
       </button>
       <button type="button" class="icon-toggle" data-ref="search-btn" title="Find/replace (Mod-F)" aria-label="Find/replace">
         ${SEARCH_ICON_HTML}

@@ -1190,6 +1190,12 @@ export const WORKSPACE_CSS = `
   box-shadow: inset 0 0 0 1px var(--mdzip-focus-outline-color);
 }
 
+/* A toggle in the edit toolbar (Show whitespace) while it's on. */
+.mdzip-root .edit-toolbar .edit-toolbar-toggle[aria-pressed="true"] {
+  background: var(--mdzip-control-hover-background-color);
+  color: var(--mdzip-link-color);
+}
+
 .mdzip-root .edit-toolbar .format-menu {
   position: relative;
   flex: 0 0 auto;
