@@ -457,33 +457,13 @@ const marked = new Marked({
       return `<${type}${start}${className}>\n${body}</${type}>\n`;
     },
     // Same as marked's listitem, plus GitHub's `task-list-item` class (#54).
+    // Since marked 17 the checkbox is a token inside the item (inside its
+    // first paragraph when the list is loose), rendered by `checkbox` below.
     listitem(item: Tokens.ListItem) {
-      let itemBody = '';
-      if (item.task) {
-        const checkbox = this.checkbox({ checked: !!item.checked });
-        if (item.loose) {
-          const first = item.tokens[0];
-          if (first?.type === 'paragraph') {
-            const paragraph = first as Tokens.Paragraph;
-            paragraph.text = `${checkbox} ${paragraph.text}`;
-            const inner = paragraph.tokens?.[0];
-            if (inner && inner.type === 'text') {
-              const text = inner as Tokens.Text;
-              text.text = `${checkbox} ${escapeHtml(text.text)}`;
-              text.escaped = true;
-            }
-          } else {
-            item.tokens.unshift({ type: 'text', raw: `${checkbox} `, text: `${checkbox} `, escaped: true } as Tokens.Text);
-          }
-        } else {
-          itemBody += `${checkbox} `;
-        }
-      }
-      itemBody += this.parser.parse(item.tokens, !!item.loose);
-      return `<li${item.task ? ' class="task-list-item"' : ''}>${itemBody}</li>\n`;
+      return `<li${item.task ? ' class="task-list-item"' : ''}>${this.parser.parse(item.tokens)}</li>\n`;
     },
     checkbox({ checked }: Tokens.Checkbox) {
-      return taskCheckboxPlaceholder(checked);
+      return `${taskCheckboxPlaceholder(checked)} `;
     },
     table(token: Tokens.Table) {
       const renderCell = (cell: Tokens.TableCell): string => {

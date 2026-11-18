@@ -20,7 +20,7 @@ export const MDZIP_RUNTIME_LIBRARIES = [
   },
   {
     "name": "Marked",
-    "version": "15.0.12",
+    "version": "18.1.3",
     "repositoryUrl": "https://github.com/markedjs/marked",
     "description": "Markdown parser and renderer."
   },
