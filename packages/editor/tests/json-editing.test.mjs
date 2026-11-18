@@ -321,25 +321,56 @@ test('a text file in the preview is colored by its extension', async () => {
   assert.equal(plain, '<pre class="plain-text-preview"><code>x &lt; y</code></pre>');
 });
 
-test('controls.whitespace shows spaces and tabs in the editor, off by default', async () => {
+test('the whitespace button shows spaces and tabs in the editor', async () => {
   const { resolveMdzipControlPolicy } = await import('../dist/index.js');
-  for (const preset of ['preview', 'viewer', 'standalone-editor', 'hosted-editor']) {
-    assert.equal(resolveMdzipControlPolicy(preset).whitespace, false, preset);
+  assert.equal(resolveMdzipControlPolicy('preview').whitespace, false);
+  for (const preset of ['viewer', 'standalone-editor', 'hosted-editor']) {
+    assert.equal(resolveMdzipControlPolicy(preset).whitespace, true, preset);
   }
-  assert.equal(resolveMdzipControlPolicy({ preset: 'standalone-editor', whitespace: true }).whitespace, true);
 
   const container = document.createElement('div');
   document.body.appendChild(container);
-  const view = new MdzipWorkspaceView(container, { initialLayout: 'source', initialColorScheme: 'light' });
+  const changes = [];
+  const view = new MdzipWorkspaceView(container, {
+    initialLayout: 'source',
+    initialColorScheme: 'light',
+    onWhitespaceVisibilityChanged: (visible) => changes.push(visible)
+  });
   try {
     await view.open(await buildNewArchiveBytesWithTitle('a  b\tc\n', 'Spaces'), { mode: 'editable' });
     const marks = () => container.querySelectorAll('.cm-highlightSpace, .cm-highlightTab').length;
+    const button = container.querySelector('[data-ref="whitespace-btn"]');
+    assert.equal(button.hidden, false, 'shown with the editor');
+    assert.equal(view.isWhitespaceVisible, false);
     assert.equal(marks(), 0);
-    view.setControls({ preset: 'standalone-editor', whitespace: true });
+
+    button.click();
+    assert.equal(view.isWhitespaceVisible, true);
+    assert.equal(button.getAttribute('aria-pressed'), 'true');
     assert.ok(container.querySelector('.cm-highlightSpace'), 'spaces are marked');
     assert.ok(container.querySelector('.cm-highlightTab'), 'tabs are marked');
-    view.setControls({ preset: 'standalone-editor', whitespace: false });
+    assert.deepEqual(changes, [true]);
+
+    view.setWhitespaceVisible(false);
     assert.equal(marks(), 0);
+    assert.deepEqual(changes, [true], 'the setter does not call back');
+
+    container.querySelector('[data-ref="preview-btn"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(button.hidden, true, 'hidden in View, where there is no editor');
+  } finally {
+    view.destroy();
+    container.remove();
+  }
+});
+
+test('showWhitespace: true starts with whitespace shown', async () => {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const view = new MdzipWorkspaceView(container, { initialLayout: 'source', initialColorScheme: 'light', showWhitespace: true });
+  try {
+    await view.open(await buildNewArchiveBytesWithTitle('a  b\n', 'Spaces'), { mode: 'editable' });
+    assert.ok(container.querySelector('.cm-highlightSpace'));
   } finally {
     view.destroy();
     container.remove();

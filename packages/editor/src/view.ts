@@ -65,6 +65,7 @@ import {
   SquareCode,
   SquarePen,
   Strikethrough,
+  Space,
   TableOfContents,
   Sun,
   TextSelect,
@@ -195,6 +196,7 @@ const SPLIT_ICON_HTML = lucideIcon(Columns2, TOOLBAR_ICON_CLASS);
 const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
 const SEARCH_ICON_HTML = lucideIcon(Search, TOOLBAR_ICON_CLASS);
 const OUTLINE_ICON_HTML = lucideIcon(TableOfContents, TOOLBAR_ICON_CLASS);
+const WHITESPACE_ICON_HTML = lucideIcon(Space, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
 const DARK_THEME_ICON_HTML = lucideIcon(Moon, TOOLBAR_ICON_CLASS);
 const LIGHT_THEME_ICON_HTML = lucideIcon(Sun, TOOLBAR_ICON_CLASS);
@@ -636,8 +638,9 @@ export interface MdzipControlPolicy {
   contextMenu?: boolean | MdzipContextMenuControlPolicy;
   lineNumbers?: boolean;
   /**
-   * Show spaces (as faint dots) and tabs (as arrows) in the source editor.
-   * Off in every preset; switch it live with `setControls()`.
+   * The toolbar button (␣) that shows spaces as faint dots and tabs as
+   * arrows in the source editor. On in the editor and viewer presets; the
+   * marks themselves start hidden unless `showWhitespace` is set.
    */
   whitespace?: boolean;
   save?: boolean;
@@ -1107,6 +1110,14 @@ export interface MdzipWorkspaceViewOptions {
   /** Called when the outline panel is shown or hidden from the toolbar, so a host can remember the choice. */
   onOutlineVisibilityChanged?: (visible: boolean) => void;
   /**
+   * Show spaces (as faint dots) and tabs (as arrows) in the source editor at
+   * start. Default `false`. The toolbar button (`controls.whitespace`) and
+   * `setWhitespaceVisible()` switch it.
+   */
+  showWhitespace?: boolean;
+  /** Called when whitespace is shown or hidden from the toolbar, so a host can remember the choice. */
+  onWhitespaceVisibilityChanged?: (visible: boolean) => void;
+  /**
    * Show the status line under the editor while a `.json` file is open
    * ("Valid manifest", or the first error). Default `true`. Problems are
    * underlined in the text either way; a host that draws its own indicator
@@ -1211,7 +1222,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     formatting: { ...NO_FORMATTING_CONTROLS },
     contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
-    whitespace: false,
+    whitespace: true,
     save: false,
     zoom: true,
     previewWidth: true,
@@ -1231,7 +1242,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     formatting: { ...ALL_FORMATTING_CONTROLS },
     contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
-    whitespace: false,
+    whitespace: true,
     save: true,
     zoom: true,
     previewWidth: true,
@@ -1251,7 +1262,7 @@ const CONTROL_PRESETS: Record<Exclude<MdzipControlPreset, 'custom'>, MdzipResolv
     formatting: { ...ALL_FORMATTING_CONTROLS },
     contextMenu: { ...ALL_CONTEXT_MENU_CONTROLS },
     lineNumbers: true,
-    whitespace: false,
+    whitespace: true,
     save: false,
     zoom: true,
     previewWidth: true,
@@ -2349,6 +2360,8 @@ export class MdzipWorkspaceView {
   private readonly elOutlineBtn: HTMLButtonElement;
   private readonly elOutlinePane: HTMLElement;
   private outlineVisible = false;
+  private whitespaceVisible = false;
+  private readonly elWhitespaceBtn: HTMLButtonElement;
   private outlineOptions: MdzipOutlineViewOptions = {};
   private outline: MdzipHeadingOutline | null = null;
   private outlineGeneration = -1;
@@ -2448,6 +2461,7 @@ export class MdzipWorkspaceView {
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
     this.outlineOptions = typeof options.outline === 'object' ? options.outline : {};
     this.outlineVisible = typeof options.outline === 'object' ? options.outline.visible ?? false : options.outline ?? false;
+    this.whitespaceVisible = options.showWhitespace ?? false;
     this.markdownRenderer = options.markdownRenderer;
     this.markdownExtensions = options.markdownExtensions ?? [];
     this.frontMatterOptions = options.frontMatter ?? {};
@@ -2480,6 +2494,7 @@ export class MdzipWorkspaceView {
     this.elSaveBtn = q('[data-ref="save-btn"]');
     this.elSearchBtn = q('[data-ref="search-btn"]');
     this.elOutlineBtn = q('[data-ref="outline-btn"]');
+    this.elWhitespaceBtn = q('[data-ref="whitespace-btn"]');
     this.elOutlinePane = q('[data-ref="outline-pane"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
     this.elWidthControls = q('[data-ref="width-controls"]');
@@ -2999,7 +3014,6 @@ export class MdzipWorkspaceView {
   public setControls(controls: MdzipControlPreset | MdzipControlPolicy | undefined): void {
     const next = resolveMdzipControlPolicy(controls);
     const lineNumbersChanged = next.lineNumbers !== this.controlPolicy.lineNumbers;
-    const whitespaceChanged = next.whitespace !== this.controlPolicy.whitespace;
     const searchChanged = next.search !== this.controlPolicy.search;
     // codeBlockTools chrome is only attached when the preview HTML actually
     // re-mounts (mountPreviewHtml/mountProgressivePreview), which updatePreview()
@@ -3015,11 +3029,6 @@ export class MdzipWorkspaceView {
         effects: this.lineNumbersCompartment.reconfigure(
           next.lineNumbers ? lineNumbers() : []
         )
-      });
-    }
-    if (whitespaceChanged && this.cmEditor) {
-      this.cmEditor.dispatch({
-        effects: this.whitespaceCompartment.reconfigure(next.whitespace ? highlightWhitespace() : [])
       });
     }
     if (searchChanged && this.cmEditor) {
@@ -5054,7 +5063,7 @@ export class MdzipWorkspaceView {
       doc: initialText,
       extensions: [
         this.lineNumbersCompartment.of(this.controlPolicy.lineNumbers ? lineNumbers() : []),
-        this.whitespaceCompartment.of(this.controlPolicy.whitespace ? highlightWhitespace() : []),
+        this.whitespaceCompartment.of(this.whitespaceVisible ? highlightWhitespace() : []),
         this.searchCompartment.of(this.controlPolicy.search ? [search({ top: true }), keymap.of(searchKeymap)] : []),
         history(),
         keymap.of([
@@ -5242,6 +5251,9 @@ export class MdzipWorkspaceView {
     if (!showWidthControl) {
       this.widthMenuOpen = false;
     }
+    // Only where the source editor shows: Edit or Split, for a file it can edit.
+    const showWhitespaceControl = this.controlPolicy.whitespace && !entryClaimed
+      && canShowSource && this.shownLayout(snapshot) !== 'preview';
     const showSearchControl = this.controlPolicy.search
       && canShowSource && snapshot.currentPathType === 'markdown';
     const showOutlineControl = this.controlPolicy.outline && !entryClaimed
@@ -5252,7 +5264,7 @@ export class MdzipWorkspaceView {
       && hasFormattingControls(this.controlPolicy.formatting);
     const showToolbar = this.controlPolicy.toolbar
       && (showNavigationControl || showLayoutControls || showSaveControl
-        || showZoomControl || showWidthControl || showColorSchemeControl || showSearchControl
+        || showZoomControl || showWidthControl || showColorSchemeControl || showSearchControl || showWhitespaceControl
         || showOutlineControl || showEditControls);
 
     this.elDocumentStrip.hidden = !showTitleControl;
@@ -5261,13 +5273,17 @@ export class MdzipWorkspaceView {
     this.elEditToolbar.hidden = !showEditControls;
     this.elLayoutControls.hidden = !showLayoutControls;
     this.elToolbarControls.hidden = !showSaveControl && !showZoomControl
-      && !showWidthControl && !showColorSchemeControl && !showSearchControl && !showOutlineControl;
+      && !showWidthControl && !showColorSchemeControl && !showSearchControl && !showOutlineControl
+      && !showWhitespaceControl;
     this.elNavBtn.hidden = !showNavigationControl;
     this.elPreviewBtn.hidden = !this.controlPolicy.layout.preview;
     this.elSplitBtn.hidden = !this.controlPolicy.layout.split;
     this.elSourceBtn.hidden = !this.controlPolicy.layout.source;
     this.elSaveBtn.hidden = !showSaveControl;
     this.elSearchBtn.hidden = !showSearchControl;
+    this.elWhitespaceBtn.hidden = !showWhitespaceControl;
+    this.elWhitespaceBtn.classList.toggle('active', this.whitespaceVisible);
+    this.elWhitespaceBtn.setAttribute('aria-pressed', String(this.whitespaceVisible));
     this.elOutlineBtn.hidden = !showOutlineControl;
     this.elOutlineBtn.classList.toggle('active', this.outlineVisible);
     this.elOutlineBtn.setAttribute('aria-pressed', String(this.outlineVisible));
@@ -5684,6 +5700,11 @@ export class MdzipWorkspaceView {
     this.elOutlineBtn.addEventListener('click', () => {
       this.setOutlineVisible(!this.outlineVisible);
       this.options.onOutlineVisibilityChanged?.(this.outlineVisible);
+    });
+
+    this.elWhitespaceBtn.addEventListener('click', () => {
+      this.setWhitespaceVisible(!this.whitespaceVisible);
+      this.options.onWhitespaceVisibilityChanged?.(this.whitespaceVisible);
     });
 
     this.elZoomBtn.addEventListener('click', (e) => {
@@ -6371,6 +6392,23 @@ export class MdzipWorkspaceView {
   /** Whether the outline panel is switched on (it shows while a Markdown preview is visible). */
   public get isOutlineVisible(): boolean {
     return this.outlineVisible;
+  }
+
+  /** Whether spaces and tabs are shown in the source editor. */
+  public get isWhitespaceVisible(): boolean {
+    return this.whitespaceVisible;
+  }
+
+  /** Shows or hides spaces and tabs in the source editor, as the ␣ toolbar button does (without calling `onWhitespaceVisibilityChanged`). */
+  public setWhitespaceVisible(visible: boolean): void {
+    if (this.whitespaceVisible === visible) {
+      return;
+    }
+    this.whitespaceVisible = visible;
+    this.cmEditor?.dispatch({
+      effects: this.whitespaceCompartment.reconfigure(visible ? highlightWhitespace() : [])
+    });
+    this.render();
   }
 
   /** Shows or hides the outline panel, as its toolbar button does (without calling `onOutlineVisibilityChanged`). */
@@ -10201,6 +10239,9 @@ const SHELL_HTML = `
     <div class="toolbar-controls" data-ref="toolbar-controls">
       <button type="button" class="icon-toggle outline-toggle" data-ref="outline-btn" title="Outline" aria-label="Outline" aria-pressed="false">
         ${OUTLINE_ICON_HTML}
+      </button>
+      <button type="button" class="icon-toggle" data-ref="whitespace-btn" title="Show whitespace" aria-label="Show whitespace" aria-pressed="false">
+        ${WHITESPACE_ICON_HTML}
       </button>
       <button type="button" class="icon-toggle" data-ref="search-btn" title="Find/replace (Mod-F)" aria-label="Find/replace">
         ${SEARCH_ICON_HTML}

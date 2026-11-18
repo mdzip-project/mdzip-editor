@@ -111,12 +111,12 @@ Call `setControls(nextControls)` to update the policy after construction
 without rebuilding the workspace view. `lineNumbers` changes are applied to the
 existing CodeMirror editor, preserving the current document and selection.
 
-`whitespace: true` shows spaces as faint dots and tabs as arrows in the source
-editor (off in every preset). It can be switched live the same way:
-
-```ts
-view.setControls({ preset: 'standalone-editor', whitespace: true });
-```
+The toolbar's **Show whitespace** button (␣, `controls.whitespace`, on except
+in `preview`) shows spaces as faint dots and tabs as arrows in the source
+editor; it appears while the editor is visible. The marks start hidden unless
+`showWhitespace: true` is passed; `setWhitespaceVisible()` and
+`isWhitespaceVisible` switch and read them, and `onWhitespaceVisibilityChanged`
+lets a host remember the reader's choice.
 
 ## Density and Spacing
 
