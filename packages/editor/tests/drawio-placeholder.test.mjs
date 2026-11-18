@@ -188,7 +188,10 @@ test('copying a selection across the card copies the image it stands for, not th
   });
   const { preview, container, cleanup } = await openPreview('# Diagrams\n\nBefore the diagram.\n\n![System flow](diagrams/flow.drawio)\n\nAfter the diagram.\n');
   try {
+    // The preview mounts in parts: under load the card can be in the DOM
+    // before the paragraph after it, so wait for that too.
     await waitFor(() => assert.ok(preview.querySelector('.mdzip-drawio-placeholder')));
+    await waitFor(() => assert.match(preview.textContent, /After the diagram\./));
     const find = (text) => {
       const walker = document.createTreeWalker(preview, window.NodeFilter.SHOW_TEXT);
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
