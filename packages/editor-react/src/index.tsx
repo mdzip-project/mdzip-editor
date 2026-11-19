@@ -44,6 +44,11 @@ import type {
   MdzWorkspace,
   MdzWorkspaceAsset,
   MdzipFileAction,
+  MdzipExtractedFile,
+  MdzipExtractRequest,
+  MdzipJsonValidity,
+  MdzipOutlinePosition,
+  MdzipOutlineViewOptions,
 } from '@mdzip/editor';
 
 /**
@@ -207,6 +212,33 @@ export interface MdzipWorkspaceProps {
   externalLinks?: MdzipExternalLinkPolicy;
   onFailed?: (error: unknown) => void;
   /**
+   * Writes files taken out of the archive (the contents pane's Extract…), for
+   * hosts that can write to disk themselves. With it, the menu says
+   * **Extract…** instead of offering browser downloads. Whether it's given is
+   * read when the view is created; the latest function is the one called.
+   */
+  onExtractFiles?: (request: MdzipExtractRequest) => void | Promise<void>;
+  /**
+   * The outline panel: `true` to open it, or options (`visible`, `position`,
+   * `width`, `levels`, `collapse`, `label`). `visible` and `position` apply
+   * live; the others are read when the view is created.
+   */
+  outline?: boolean | MdzipOutlineViewOptions;
+  /** The reader showed or hid the outline from the toolbar. */
+  onOutlineVisibilityChanged?: (visible: boolean) => void;
+  /** The reader finished dragging the outline panel to a new width (pixels). */
+  onOutlineWidthChanged?: (width: number) => void;
+  /** Shows spaces and tabs in the source editor. Applies live. */
+  showWhitespace?: boolean;
+  /** The reader showed or hid whitespace from the toolbar. */
+  onWhitespaceVisibilityChanged?: (visible: boolean) => void;
+  /** How `manifest.json` opens: `'form'` (the default) or `'json'`. Read when the view is created. */
+  manifestView?: 'form' | 'json';
+  /** The status line under the editor for `.json` files. Defaults to `true`. Read when the view is created. */
+  jsonStatus?: boolean;
+  /** The open `.json` file's validity (debounced while typing), or `null`s for other files. */
+  onJsonValidityChanged?: (validity: MdzipJsonValidity | null, path: string | null) => void;
+  /**
    * Host hook for the markdown→MDZ conversion flow. Return/resolve `true`
    * to take over (the built-in conversion dialog is suppressed).
    */
@@ -268,6 +300,12 @@ export interface MdzipWorkspaceHandle {
   /** The archive path of the file currently shown, or null before a workspace opens. */
   getCurrentPath(): string | null;
   markPersisted(): void;
+  /** Shows or hides the outline panel (without calling `onOutlineVisibilityChanged`). */
+  setOutlineVisible(visible: boolean): void;
+  /** Puts the outline panel on the left or the right of the document. */
+  setOutlinePosition(position: MdzipOutlinePosition): void;
+  /** The archive's files as `{ path, bytes }`, by file or folder path (see the view's `extractFiles()`). */
+  extractFiles(paths: readonly string[], options?: { includeFolders?: boolean }): Promise<MdzipExtractedFile[]>;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
   removeAsset(archivePath: string, options?: MdzipRemoveAssetOptions): Promise<boolean>;
@@ -325,6 +363,15 @@ function MdzipWorkspace({
   onLinkActivated,
   externalLinks,
   onFailed,
+  onExtractFiles,
+  outline,
+  onOutlineVisibilityChanged,
+  onOutlineWidthChanged,
+  showWhitespace,
+  onWhitespaceVisibilityChanged,
+  manifestView,
+  jsonStatus,
+  onJsonValidityChanged,
   onConversionRequested,
   onPackRequested,
   markdownRenderer,
@@ -363,6 +410,11 @@ function MdzipWorkspace({
     onAssetsHydrated,
     onLinkActivated,
     onFailed,
+    onExtractFiles,
+    onOutlineVisibilityChanged,
+    onOutlineWidthChanged,
+    onWhitespaceVisibilityChanged,
+    onJsonValidityChanged,
     onConversionRequested,
     onPackRequested,
     imageInsertHandler,
@@ -386,6 +438,11 @@ function MdzipWorkspace({
     onAssetsHydrated,
     onLinkActivated,
     onFailed,
+    onExtractFiles,
+    onOutlineVisibilityChanged,
+    onOutlineWidthChanged,
+    onWhitespaceVisibilityChanged,
+    onJsonValidityChanged,
     onConversionRequested,
     onPackRequested,
     imageInsertHandler,
@@ -408,6 +465,10 @@ function MdzipWorkspace({
   // Read when the view is created; a new array each render doesn't rebuild the view.
   const hostFileActionsRef = useRef(hostFileActions);
   hostFileActionsRef.current = hostFileActions;
+
+  // Read when the view is created, like hostFileActions.
+  const createOnlyRef = useRef({ outline, showWhitespace, manifestView, jsonStatus, hasExtract: onExtractFiles !== undefined });
+  createOnlyRef.current = { outline, showWhitespace, manifestView, jsonStatus, hasExtract: onExtractFiles !== undefined };
 
   // Latest rendering props, read at view-create and apply time so prop
   // identity changes alone never rebuild the workspace view.
@@ -439,6 +500,9 @@ function MdzipWorkspace({
     openPath: (path, options) => viewRef.current?.openPath(path, options) ?? Promise.resolve(false),
     getCurrentPath: () => viewRef.current?.getCurrentPath() ?? null,
     markPersisted: () => viewRef.current?.markPersisted(),
+    setOutlineVisible: (visible) => viewRef.current?.setOutlineVisible(visible),
+    setOutlinePosition: (position) => viewRef.current?.setOutlinePosition(position),
+    extractFiles: (paths, options) => viewRef.current?.extractFiles(paths, options) ?? Promise.resolve([]),
     addAsset: (archivePath, fileBytes) =>
       viewRef.current?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
     replaceAsset: (archivePath, fileBytes) =>
@@ -498,6 +562,17 @@ function MdzipWorkspace({
       onLinkActivated: (event) => callbacksRef.current.onLinkActivated?.(event),
       externalLinks: externalLinksRef.current,
       onFailed: (e) => callbacksRef.current.onFailed?.(e),
+      onExtractFiles: createOnlyRef.current.hasExtract
+        ? (request) => callbacksRef.current.onExtractFiles?.(request)
+        : undefined,
+      outline: createOnlyRef.current.outline,
+      onOutlineVisibilityChanged: (visible) => callbacksRef.current.onOutlineVisibilityChanged?.(visible),
+      onOutlineWidthChanged: (width) => callbacksRef.current.onOutlineWidthChanged?.(width),
+      showWhitespace: createOnlyRef.current.showWhitespace,
+      onWhitespaceVisibilityChanged: (visible) => callbacksRef.current.onWhitespaceVisibilityChanged?.(visible),
+      manifestView: createOnlyRef.current.manifestView,
+      jsonStatus: createOnlyRef.current.jsonStatus,
+      onJsonValidityChanged: (validity, path) => callbacksRef.current.onJsonValidityChanged?.(validity, path),
       // A hook returning false falls back to the built-in dialog, same as no
       // hook at all, so the always-present delegate is behavior-preserving.
       onConversionRequested: (action, context) =>
@@ -555,6 +630,23 @@ function MdzipWorkspace({
   useEffect(() => {
     viewRef.current?.setControls(controls);
   }, [controls]);
+
+  // The outline's visibility and side apply live; inline objects are safe.
+  const outlineVisible = typeof outline === 'object' ? outline.visible ?? false : outline ?? false;
+  const outlinePosition = typeof outline === 'object' ? outline.position : undefined;
+  useEffect(() => {
+    viewRef.current?.setOutlineVisible(outlineVisible);
+  }, [outlineVisible]);
+  useEffect(() => {
+    if (outlinePosition) {
+      viewRef.current?.setOutlinePosition(outlinePosition);
+    }
+  }, [outlinePosition]);
+  useEffect(() => {
+    if (showWhitespace !== undefined) {
+      viewRef.current?.setWhitespaceVisible(showWhitespace);
+    }
+  }, [showWhitespace]);
 
   useEffect(() => {
     viewRef.current?.setDensityOptions({ toolbarDensity, contentDensity });

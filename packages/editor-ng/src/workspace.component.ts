@@ -58,7 +58,18 @@ import type {
   MdzipWorkspaceSave,
   MdzipWorkspaceSnapshot,
   MdzipFileAction,
+  MdzipExtractedFile,
+  MdzipExtractRequest,
+  MdzipJsonValidity,
+  MdzipOutlinePosition,
+  MdzipOutlineViewOptions,
 } from '@mdzip/editor';
+
+/** What `jsonValidityChanged` emits: the open `.json` file's validity, or `null`s when another kind of file is open. */
+export interface MdzipJsonValidityChange {
+  validity: MdzipJsonValidity | null;
+  path: string | null;
+}
 
 // Identity-insensitive key for the rendering inputs: extensions and entry
 // renderers are diffed by their stable name/id (and priority), so template
@@ -176,6 +187,26 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
    * Changes re-apply to the mounted preview without a re-render.
    */
   @Input() externalLinks?: MdzipExternalLinkPolicy;
+  /**
+   * Writes files taken out of the archive (the contents pane's Extract…), for
+   * hosts that can write to disk themselves. With it, the menu says
+   * **Extract…** instead of offering browser downloads. An input function,
+   * like `onConversionRequested`, because the view waits for it. Read when the
+   * view is created.
+   */
+  @Input() onExtractFiles?: (request: MdzipExtractRequest) => void | Promise<void>;
+  /**
+   * The outline panel: `true` to open it, or options (`visible`, `position`,
+   * `width`, `levels`, `collapse`, `label`). `visible` and `position` apply
+   * live; the others are read when the view is created.
+   */
+  @Input() outline?: boolean | MdzipOutlineViewOptions;
+  /** Shows spaces and tabs in the source editor. Applies live. */
+  @Input() showWhitespace?: boolean;
+  /** How `manifest.json` opens: `'form'` (the default) or `'json'`. Read when the view is created. */
+  @Input() manifestView?: 'form' | 'json';
+  /** The status line under the editor for `.json` files. Defaults to `true`. Read when the view is created. */
+  @Input() jsonStatus?: boolean;
   @Output() readonly changed = new EventEmitter<MdzipWorkspaceChange>();
   @Output() readonly saved = new EventEmitter<MdzipWorkspaceSave>();
   @Output() readonly workspaceChanged = new EventEmitter<MdzipDocumentChangeEvent>();
@@ -201,6 +232,14 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
    */
   @Output() readonly linkActivated = new EventEmitter<MdzipLinkActivatedEvent>();
   @Output() readonly failed = new EventEmitter<unknown>();
+  /** Emits when the reader shows or hides the outline from the toolbar. */
+  @Output() readonly outlineVisibilityChanged = new EventEmitter<boolean>();
+  /** Emits the outline panel's width (pixels) when the reader finishes dragging its edge. */
+  @Output() readonly outlineWidthChanged = new EventEmitter<number>();
+  /** Emits when the reader shows or hides whitespace from the toolbar. */
+  @Output() readonly whitespaceVisibilityChanged = new EventEmitter<boolean>();
+  /** Emits (debounced, while typing) the open `.json` file's validity. */
+  @Output() readonly jsonValidityChanged = new EventEmitter<MdzipJsonValidityChange>();
 
   @ViewChild('host') private readonly hostRef!: ElementRef<HTMLDivElement>;
   /**
@@ -265,6 +304,16 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     if (this.view && changes['externalLinks']) {
       this.view.setExternalLinks(this.externalLinks);
     }
+    if (this.view && changes['outline'] && !changes['outline'].firstChange) {
+      const outline = this.outline;
+      this.view.setOutlineVisible(typeof outline === 'object' ? outline.visible ?? false : outline ?? false);
+      if (typeof outline === 'object' && outline.position) {
+        this.view.setOutlinePosition(outline.position);
+      }
+    }
+    if (this.view && changes['showWhitespace'] && !changes['showWhitespace'].firstChange) {
+      this.view.setWhitespaceVisible(this.showWhitespace ?? false);
+    }
     if (this.view && (changes['bytes'] || changes['workspace'] || changes['mode']
       || changes['sourceFormat'] || changes['fileName'] || changes['worker'])) {
       const renameOnly = changes['fileName'] && !changes['fileName'].firstChange
@@ -295,6 +344,21 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
 
   convertToMdz(): Promise<boolean> {
     return this.view?.convertToMdz() ?? Promise.resolve(false);
+  }
+
+  /** Shows or hides the outline panel (without emitting `outlineVisibilityChanged`). */
+  setOutlineVisible(visible: boolean): void {
+    this.view?.setOutlineVisible(visible);
+  }
+
+  /** Puts the outline panel on the left or the right of the document. */
+  setOutlinePosition(position: MdzipOutlinePosition): void {
+    this.view?.setOutlinePosition(position);
+  }
+
+  /** The archive's files as `{ path, bytes }`, by file or folder path (see the view's `extractFiles()`). */
+  extractFiles(paths: readonly string[], options?: { includeFolders?: boolean }): Promise<MdzipExtractedFile[]> {
+    return this.view?.extractFiles(paths, options) ?? Promise.resolve([]);
   }
 
   focus(): void {
@@ -441,6 +505,17 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onLinkActivated: (event: MdzipLinkActivatedEvent) => this.linkActivated.emit(event),
       externalLinks: this.externalLinks,
       onFailed: (e: unknown) => this.failed.emit(e),
+      onExtractFiles: this.onExtractFiles
+        ? (request) => this.onExtractFiles!(request)
+        : undefined,
+      outline: this.outline,
+      onOutlineVisibilityChanged: (visible) => this.outlineVisibilityChanged.emit(visible),
+      onOutlineWidthChanged: (width) => this.outlineWidthChanged.emit(width),
+      showWhitespace: this.showWhitespace,
+      onWhitespaceVisibilityChanged: (visible) => this.whitespaceVisibilityChanged.emit(visible),
+      manifestView: this.manifestView,
+      jsonStatus: this.jsonStatus,
+      onJsonValidityChanged: (validity, path) => this.jsonValidityChanged.emit({ validity, path }),
       onConversionRequested: this.onConversionRequested
         ? (action, context) => this.onConversionRequested!(action, context)
         : undefined,

@@ -20,6 +20,10 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setSystemColorScheme = vi.fn();
     public readonly setImageHydrationAnimation = vi.fn();
     public readonly setExternalLinks = vi.fn();
+    public readonly setOutlineVisible = vi.fn();
+    public readonly setOutlinePosition = vi.fn();
+    public readonly setWhitespaceVisible = vi.fn();
+    public readonly extractFiles = vi.fn(async () => [{ path: 'a.md', bytes: new Uint8Array([1]) }]);
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly setFileName = vi.fn((fileName: string) => !fileName.endsWith('.md'));
@@ -255,6 +259,56 @@ test('externalLinks input reaches the view at creation and re-applies on change'
   fixture.detectChanges();
   expect(viewInstances).toHaveLength(1);
   expect(view.setExternalLinks).toHaveBeenLastCalledWith({ target: '_top' });
+});
+
+test('2.5.0 options reach the view; outline and whitespace apply live; outputs emit', async () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  const extracted: unknown[] = [];
+  fixture.componentRef.setInput('onExtractFiles', (request: unknown) => { extracted.push(request); });
+  fixture.componentRef.setInput('outline', { visible: true, position: 'left', width: 300 });
+  fixture.componentRef.setInput('showWhitespace', true);
+  fixture.componentRef.setInput('manifestView', 'json');
+  fixture.componentRef.setInput('jsonStatus', false);
+  fixture.detectChanges();
+  const view = latestView();
+  expect(view.options['outline']).toEqual({ visible: true, position: 'left', width: 300 });
+  expect(view.options['showWhitespace']).toBe(true);
+  expect(view.options['manifestView']).toBe('json');
+  expect(view.options['jsonStatus']).toBe(false);
+  const request = { files: [], selection: { files: [], folders: [''] } };
+  await (view.options['onExtractFiles'] as (r: unknown) => Promise<void>)(request);
+  expect(extracted).toEqual([request]);
+
+  const emitted: unknown[] = [];
+  fixture.componentInstance.outlineVisibilityChanged.subscribe((v) => emitted.push(['outline', v]));
+  fixture.componentInstance.outlineWidthChanged.subscribe((w) => emitted.push(['width', w]));
+  fixture.componentInstance.whitespaceVisibilityChanged.subscribe((v) => emitted.push(['whitespace', v]));
+  fixture.componentInstance.jsonValidityChanged.subscribe((e) => emitted.push(['json', e]));
+  (view.options['onOutlineVisibilityChanged'] as (v: boolean) => void)(false);
+  (view.options['onOutlineWidthChanged'] as (w: number) => void)(320);
+  (view.options['onWhitespaceVisibilityChanged'] as (v: boolean) => void)(false);
+  (view.options['onJsonValidityChanged'] as (v: unknown, p: unknown) => void)(null, null);
+  expect(emitted).toEqual([['outline', false], ['width', 320], ['whitespace', false], ['json', { validity: null, path: null }]]);
+
+  fixture.componentRef.setInput('outline', { visible: false, position: 'right' });
+  fixture.componentRef.setInput('showWhitespace', false);
+  fixture.detectChanges();
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setOutlineVisible).toHaveBeenLastCalledWith(false);
+  expect(view.setOutlinePosition).toHaveBeenLastCalledWith('right');
+  expect(view.setWhitespaceVisible).toHaveBeenLastCalledWith(false);
+
+  fixture.componentInstance.setOutlinePosition('left');
+  expect(view.setOutlinePosition).toHaveBeenLastCalledWith('left');
+  expect(await fixture.componentInstance.extractFiles(['a.md'])).toEqual([{ path: 'a.md', bytes: new Uint8Array([1]) }]);
+});
+
+test('without onExtractFiles, the view gets none (the menu offers browser downloads)', () => {
+  TestBed.configureTestingModule({ imports: [MdzipWorkspaceComponent] });
+  const fixture = TestBed.createComponent(MdzipWorkspaceComponent);
+  fixture.detectChanges();
+  expect(latestView().options['onExtractFiles']).toBeUndefined();
 });
 
 test('linkActivated output emits synchronously so handlers can preventDefault', () => {

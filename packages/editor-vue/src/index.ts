@@ -57,6 +57,10 @@ import type {
   MdzWorkspaceAsset,
   MdzipWorkspaceSnapshot,
   MdzipFileAction,
+  MdzipExtractedFile,
+  MdzipExtractRequest,
+  MdzipOutlinePosition,
+  MdzipOutlineViewOptions,
 } from '@mdzip/editor';
 
 // Identity-insensitive key for the rendering props: extensions and entry
@@ -120,6 +124,12 @@ export interface MdzipWorkspaceExposed {
   /** The archive path of the file currently shown, or null before a workspace opens. */
   getCurrentPath(): string | null;
   markPersisted(): void;
+  /** Shows or hides the outline panel (without emitting `outlineVisibilityChanged`). */
+  setOutlineVisible(visible: boolean): void;
+  /** Puts the outline panel on the left or the right of the document. */
+  setOutlinePosition(position: MdzipOutlinePosition): void;
+  /** The archive's files as `{ path, bytes }`, by file or folder path (see the view's `extractFiles()`). */
+  extractFiles(paths: readonly string[], options?: { includeFolders?: boolean }): Promise<MdzipExtractedFile[]>;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
   removeAsset(archivePath: string, options?: MdzipRemoveAssetOptions): Promise<boolean>;
@@ -248,6 +258,32 @@ export const MdzipWorkspace = defineComponent({
     },
     /** Matching priority of the `#entry` slot relative to `entryRenderers`. */
     entrySlotPriority: { type: Number, default: 0 },
+    /**
+     * Writes files taken out of the archive (the contents pane's Extract…),
+     * for hosts that can write to disk themselves. With it, the menu says
+     * **Extract…** instead of offering browser downloads. A function prop,
+     * like `onConversionRequested`, because the view waits for it. Whether
+     * it's given is read when the view is created.
+     */
+    onExtractFiles: {
+      type: Function as PropType<(request: MdzipExtractRequest) => void | Promise<void>>,
+      default: undefined
+    },
+    /**
+     * The outline panel: `true` to open it, or options (`visible`,
+     * `position`, `width`, `levels`, `collapse`, `label`). `visible` and
+     * `position` apply live; the others are read when the view is created.
+     */
+    outline: {
+      type: [Boolean, Object] as PropType<boolean | MdzipOutlineViewOptions>,
+      default: undefined
+    },
+    /** Shows spaces and tabs in the source editor. Applies live. */
+    showWhitespace: { type: Boolean, default: undefined },
+    /** How `manifest.json` opens: `'form'` (the default) or `'json'`. Read when the view is created. */
+    manifestView: { type: String as PropType<'form' | 'json'>, default: undefined },
+    /** The status line under the editor for `.json` files. Defaults to `true`. Read when the view is created. */
+    jsonStatus: { type: Boolean, default: undefined },
   },
   emits: [
     'changed',
@@ -270,7 +306,15 @@ export const MdzipWorkspace = defineComponent({
      * `event.preventDefault()` in the handler to take over navigation.
      */
     'linkActivated',
-    'failed'
+    'failed',
+    /** The reader showed or hid the outline from the toolbar. */
+    'outlineVisibilityChanged',
+    /** The reader finished dragging the outline panel to a new width (pixels). */
+    'outlineWidthChanged',
+    /** The reader showed or hid whitespace from the toolbar. */
+    'whitespaceVisibilityChanged',
+    /** The open `.json` file's validity (debounced while typing): `{ validity, path }`. */
+    'jsonValidityChanged'
   ],
   setup(props, { emit, expose, slots }) {
     const hostRef = ref<HTMLElement | null>(null);
@@ -341,6 +385,10 @@ export const MdzipWorkspace = defineComponent({
         view?.openPath(path, options) ?? Promise.resolve(false),
       getCurrentPath: () => view?.getCurrentPath() ?? null,
       markPersisted: () => view?.markPersisted(),
+      setOutlineVisible: (visible: boolean) => view?.setOutlineVisible(visible),
+      setOutlinePosition: (position: MdzipOutlinePosition) => view?.setOutlinePosition(position),
+      extractFiles: (paths: readonly string[], options?: { includeFolders?: boolean }) =>
+        view?.extractFiles(paths, options) ?? Promise.resolve([]),
       addAsset: (archivePath: string, fileBytes: Uint8Array) =>
         view?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
       replaceAsset: (archivePath: string, fileBytes: Uint8Array) =>
@@ -399,6 +447,17 @@ export const MdzipWorkspace = defineComponent({
         onLinkActivated: (event: MdzipLinkActivatedEvent) => emit('linkActivated', event),
         externalLinks: props.externalLinks,
         onFailed: (e: unknown) => emit('failed', e),
+        onExtractFiles: props.onExtractFiles
+          ? (request: MdzipExtractRequest) => props.onExtractFiles?.(request)
+          : undefined,
+        outline: props.outline,
+        onOutlineVisibilityChanged: (visible: boolean) => emit('outlineVisibilityChanged', visible),
+        onOutlineWidthChanged: (width: number) => emit('outlineWidthChanged', width),
+        showWhitespace: props.showWhitespace,
+        onWhitespaceVisibilityChanged: (visible: boolean) => emit('whitespaceVisibilityChanged', visible),
+        manifestView: props.manifestView,
+        jsonStatus: props.jsonStatus,
+        onJsonValidityChanged: (validity, path) => emit('jsonValidityChanged', { validity, path }),
         onConversionRequested: props.onConversionRequested,
         onPackRequested: props.onPackRequested,
         imageInsertHandler: (request) => props.imageInsertHandler?.(request),
@@ -467,6 +526,25 @@ export const MdzipWorkspace = defineComponent({
 
     watch(() => props.controls, (controls) => {
       view?.setControls(controls);
+    });
+
+    // The outline's visibility and side apply live; inline objects are safe.
+    watch(
+      () => (typeof props.outline === 'object' ? props.outline.visible ?? false : props.outline ?? false),
+      (visible) => view?.setOutlineVisible(visible)
+    );
+    watch(
+      () => (typeof props.outline === 'object' ? props.outline.position : undefined),
+      (position) => {
+        if (position) {
+          view?.setOutlinePosition(position);
+        }
+      }
+    );
+    watch(() => props.showWhitespace, (visible) => {
+      if (visible !== undefined) {
+        view?.setWhitespaceVisible(visible);
+      }
     });
 
     watch([() => props.toolbarDensity, () => props.contentDensity], ([toolbarDensity, contentDensity]) => {

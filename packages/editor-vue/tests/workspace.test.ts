@@ -16,6 +16,10 @@ const { MockView, MockDiffView, viewInstances, diffViewInstances } = vi.hoisted(
     public readonly setSystemColorScheme = vi.fn();
     public readonly setImageHydrationAnimation = vi.fn();
     public readonly setExternalLinks = vi.fn();
+    public readonly setOutlineVisible = vi.fn();
+    public readonly setOutlinePosition = vi.fn();
+    public readonly setWhitespaceVisible = vi.fn();
+    public readonly extractFiles = vi.fn(async () => [{ path: 'a.md', bytes: new Uint8Array([1]) }]);
     public readonly open = vi.fn(async () => {});
     public readonly openWorkspace = vi.fn(async () => {});
     public readonly setFileName = vi.fn((fileName: string) => !fileName.endsWith('.md'));
@@ -169,6 +173,48 @@ test('frontMatter prop reaches the view at creation and re-applies on deep-equal
   expect(view.setRenderingOptions).toHaveBeenCalledTimes(1);
   const applied = view.setRenderingOptions.mock.calls[0][0] as { frontMatter: unknown };
   expect(applied.frontMatter).toEqual({ display: 'raw', collapsible: false, label: 'Metadata' });
+});
+
+test('2.5.0 options reach the view; outline and whitespace apply live; events emit', async () => {
+  const extracted: unknown[] = [];
+  const wrapper = mount(MdzipWorkspace, { props: {
+    onExtractFiles: (request: unknown) => { extracted.push(request); },
+    outline: { visible: true, position: 'left', width: 300 },
+    showWhitespace: true,
+    manifestView: 'json',
+    jsonStatus: false
+  } });
+  const view = latestView();
+  expect(view.options['outline']).toEqual({ visible: true, position: 'left', width: 300 });
+  expect(view.options['showWhitespace']).toBe(true);
+  expect(view.options['manifestView']).toBe('json');
+  expect(view.options['jsonStatus']).toBe(false);
+  const request = { files: [], selection: { files: [], folders: [''] } };
+  await (view.options['onExtractFiles'] as (r: unknown) => Promise<void>)(request);
+  expect(extracted).toEqual([request]);
+
+  (view.options['onOutlineVisibilityChanged'] as (v: boolean) => void)(false);
+  (view.options['onOutlineWidthChanged'] as (w: number) => void)(320);
+  (view.options['onJsonValidityChanged'] as (v: unknown, p: unknown) => void)(null, null);
+  expect(wrapper.emitted('outlineVisibilityChanged')).toEqual([[false]]);
+  expect(wrapper.emitted('outlineWidthChanged')).toEqual([[320]]);
+  expect(wrapper.emitted('jsonValidityChanged')).toEqual([[{ validity: null, path: null }]]);
+
+  await wrapper.setProps({ outline: { visible: true, position: 'left' } });
+  expect(view.setOutlineVisible).not.toHaveBeenCalled();
+  await wrapper.setProps({ outline: { visible: false, position: 'right' }, showWhitespace: false });
+  expect(viewInstances).toHaveLength(1);
+  expect(view.setOutlineVisible).toHaveBeenLastCalledWith(false);
+  expect(view.setOutlinePosition).toHaveBeenLastCalledWith('right');
+  expect(view.setWhitespaceVisible).toHaveBeenLastCalledWith(false);
+
+  const exposed = wrapper.vm as unknown as { extractFiles: (p: string[]) => Promise<unknown> };
+  expect(await exposed.extractFiles(['a.md'])).toEqual([{ path: 'a.md', bytes: new Uint8Array([1]) }]);
+});
+
+test('without onExtractFiles, the view gets none (the menu offers browser downloads)', () => {
+  mount(MdzipWorkspace);
+  expect(latestView().options['onExtractFiles']).toBeUndefined();
 });
 
 test('externalLinks reaches the view at creation and re-applies only when its fields change', async () => {

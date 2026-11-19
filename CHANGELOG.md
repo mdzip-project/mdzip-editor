@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+The Angular, React and Vue wrappers only; `@mdzip/editor` and `@mdzip/renderer` are unchanged.
+
+### Added
+- **The wrappers pass the 2.5.0 options through.** `onExtractFiles` (a function input/prop, so a desktop host's menu says **Extract…** and the host writes the files), `outline` (`visible` and `position` apply live), `showWhitespace` (live), `manifestView` and `jsonStatus`; and the events `outlineVisibilityChanged`, `outlineWidthChanged`, `whitespaceVisibilityChanged` and `jsonValidityChanged` (`{ validity, path }`; React: `onJsonValidityChanged(validity, path)`). New methods `setOutlineVisible()`, `setOutlinePosition()` and `extractFiles()` on the Angular component, the React handle and the Vue exposed object. Angular exports `MdzipJsonValidityChange`.
+
 ## [2.5.0] - 2026-11-18
 
 Also publishes **`@mdzip/renderer` 0.1.0**, its first release, which the editor now depends on. Still requires `@mdzip/core-js` 2.2.1. The Angular, React and Vue wrappers have no changes of their own and require `@mdzip/editor` 2.5.0; they pass the new `markdown` and `readResource` side options through, and the rendered toggle works in their toolbar.
