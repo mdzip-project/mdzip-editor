@@ -47,6 +47,14 @@ A host that writes a linked image file itself (plain `.md`) can reuse the editor
 
 `onLinkActivated(event)` fires for every preview link click before built-in handling. `event.preventDefault()` must be called synchronously — calling it after an `await` is too late, and the built-in anchor scroll / document open / `onUnresolvedLinkClick` will already have run. To open new tabs for external links, use the `externalLinks` policy (or `setExternalLinks()`), not a custom renderer or DOMPurify hook: sanitization strips `target`, so the policy is applied to the mounted DOM instead. `scrollToAnchor()` is safe to call right after `open()` — it waits for the preview to mount rather than failing — so hosts don't need their own `onPreviewRendered` + retry loop. To deep-link into another file use `openPath(path, { anchor })` (resolves `false` for an unknown path or anchor). To reload an archive without sending the user back to the entry point, pass `initialPath: view.getCurrentPath()` to `open()`/`openWorkspace()`; for a rename only (Save As), call `setFileName()` instead of reopening.
 
+**Rendering moved to `@mdzip/renderer` (since 2.5.0)**
+
+The Markdown-to-HTML pipeline (marked, footnotes, highlight.js, heading ids, the DOMPurify policy) is now the `@mdzip/renderer` package, a dependency of the editor; `marked`, `marked-footnote` and `highlight.js` come in through it. Heading ids changed: a repeated heading gets `-1`, `-2` (was `-2`, `-3`), and letters in any language are kept, so stored `#anchor` links to repeated headings may need updating. To render a page the way the preview does (a static site, a server), use the renderer directly rather than mounting the editor.
+
+**Extract and Find depend on host options (since 2.5.0)**
+
+Without `onExtractFiles`, the contents pane offers browser downloads (Download, Download as ZIP) — wrong wording and behavior in a desktop host, which should pass `onExtractFiles` to get **Extract…** and write the files itself, asking before overwriting. Extracting never changes the archive or marks it dirty. Find in the View layout (a find bar over the preview, no source editor) is gated by the same `controls.search` flag as find/replace: a host that passes `search: false` turns both off.
+
 **Preview code-block chrome (since 1.3.16)**
 
 Rendered code blocks get a language header, a copy button, and (past 15 lines) a collapse toggle, gated by the `codeBlockTools` control-policy flag (default `true` everywhere, including `preview`). This is wired into `mountPreviewHtml`/`mountProgressivePreview` directly, not a `markdownExtensions` entry — don't confuse it with `formatting.codeBlock`, which is the unrelated editor-toolbar insert-code-block control.
