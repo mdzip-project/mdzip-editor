@@ -395,6 +395,39 @@ new MdzipWorkspaceView(container, {
 The items show in read-only workspaces too; the host decides what each one
 allows. The Angular, React and Vue wrappers take the same `hostFileActions`.
 
+**Selecting and extracting files.** Ctrl+click (Cmd+click on a Mac) adds a
+row of the tree to the selection or takes it off, Shift+click selects the rows
+in between, and Ctrl+A / Cmd+A with focus in the tree selects every row
+(Escape clears it). Right-clicking a row outside the selection selects just
+that row; inside a selection of several, the menu offers only taking them out
+of the archive. Folders take all their files, and `manifest.json` comes only
+when it's selected itself. Paths below the folder are kept and bytes are
+copied as stored. The archive isn't changed, so this works in read-only
+workspaces too.
+
+- **On the web** (no `onExtractFiles`), one file is **Download**, and a folder
+  or several rows are **Download as ZIP** (the folder's name, or the
+  archive's, `.zip`), plus **Extract to Folder…** in browsers that can write
+  to a folder (`showDirectoryPicker`). That asks in the editor before
+  replacing files already there.
+- **In a desktop host**, `onExtractFiles` replaces all of these with
+  **Extract…** (**Extract All…** on the empty part of the pane). It's called
+  with `{ files: [{ path, bytes }], selection: { files, folders } }`; the host
+  picks where they go, keeps the paths below it and asks before replacing.
+
+```ts
+new MdzipWorkspaceView(container, {
+  onExtractFiles: async ({ files }) => {
+    const folder = await pickFolder();       // the host's own dialog
+    await writeFiles(folder, files);         // ask first if any exist
+  }
+});
+```
+
+`view.extractFiles(paths, { includeFolders })` returns the same
+`{ path, bytes }[]` for files and folders named by path (`''` is the whole
+archive), for hosts with their own commands.
+
 The same operations are available programmatically: `removeFile()`,
 `renameFile()` (rewrites markdown references, including a moved document's own
 relative links), `setEntryPoint()`, and `setCoverImage()`.

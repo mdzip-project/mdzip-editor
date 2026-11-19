@@ -747,6 +747,12 @@ export const WORKSPACE_CSS = `
   background: var(--mdzip-selection-background-color);
 }
 
+.mdzip-root .nav-file.nav-selected,
+.mdzip-root .nav-directory > summary.nav-selected {
+  background: var(--mdzip-selection-background-color);
+  box-shadow: inset 2px 0 0 var(--mdzip-link-color);
+}
+
 .mdzip-root .nav-file.current-entry::after {
   content: '';
   width: 10px;

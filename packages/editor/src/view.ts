@@ -138,6 +138,7 @@ import {
 } from './json-validation.js';
 import { MdzipManifestForm } from './manifest-form.js';
 import { mapScrollPosition, type ScrollAnchor } from './scroll-anchors.js';
+import { zipSync, type Zippable } from 'fflate';
 import {
   collectFindText,
   findMatches,
@@ -560,7 +561,9 @@ type MdzipNavMenuTarget =
       isImage: boolean;
       isManifest: boolean;
     }
-  | { kind: 'directory'; path: string };
+  | { kind: 'directory'; path: string }
+  // Several rows of the file tree, selected together (#69).
+  | { kind: 'selection'; files: string[]; folders: string[] };
 
 const HOST_FILE_ACTION_PREFIX = 'host:';
 
@@ -851,6 +854,20 @@ export interface MdzipFileAction {
   run: (file: MdzipFileActionTarget) => void | Promise<void>;
 }
 
+/** A file taken out of the archive: its archive path and its bytes. */
+export interface MdzipExtractedFile {
+  path: string;
+  bytes: Uint8Array;
+}
+
+/** What the contents pane's Extract… asks the host to write; see {@link MdzipWorkspaceViewOptions.onExtractFiles}. */
+export interface MdzipExtractRequest {
+  /** The files, in archive order, each with its full archive path (`images/a.webp`). */
+  files: MdzipExtractedFile[];
+  /** What was picked: files, and folders (`''` is the whole archive). */
+  selection: { files: string[]; folders: string[] };
+}
+
 export interface MdzipWorkspaceViewOptions {
   /**
    * Additional host or framework libraries to show in Document Information.
@@ -1054,6 +1071,18 @@ export interface MdzipWorkspaceViewOptions {
    * host (for example "Open in VS Code Editor"). See {@link MdzipFileAction}.
    */
   hostFileActions?: readonly MdzipFileAction[];
+  /**
+   * Writes files taken out of the archive (#69), for hosts that can write to
+   * disk themselves, such as a desktop app. With it, the contents pane's
+   * menu offers **Extract…** for a file, a folder or several selected rows,
+   * and calls this with their bytes: show a folder picker (or, for one file,
+   * a save dialog), keep the paths below the folder chosen, and ask before
+   * replacing files. Without it (a web page), one file is offered as
+   * **Download**, and folders or several files as **Download as ZIP**, plus
+   * **Extract to Folder…** where the browser can write to a folder
+   * (`showDirectoryPicker`). The archive itself is unchanged either way.
+   */
+  onExtractFiles?: (request: MdzipExtractRequest) => void | Promise<void>;
   /**
    * Reads files dropped as addresses rather than contents, so they can be
    * added to the archive. Some hosts only pass a dragged file's URI: VS Code,
@@ -1887,6 +1916,10 @@ function attributesToHtml(attrs: Record<string, string | number | undefined>): s
 }
 
 interface NavRenderOptions {
+  // Selected rows: `f:<path>` for files, `d:<path>` for folders.
+  selected: ReadonlySet<string>;
+  // Folders the reader closed.
+  collapsed: ReadonlySet<string>;
   allowOrphanActions: boolean;
   allowFileActions: boolean;
   /**
@@ -1897,6 +1930,23 @@ interface NavRenderOptions {
    */
   allowDrag: boolean;
   pendingFolders: ReadonlySet<string>;
+}
+
+// The selection key of the tree row at or around `element`: `f:<path>` for
+// a file, `d:<path>` for a folder's own row (its summary), else null.
+function navRowKey(element: Element | null): string | null {
+  if (!element) {
+    return null;
+  }
+  const file = element.closest('[data-nav-path]');
+  if (file) {
+    return `f:${file.getAttribute('data-nav-path') ?? ''}`;
+  }
+  const summary = element.closest('details[data-nav-dir] > summary');
+  if (summary) {
+    return `d:${summary.parentElement?.getAttribute('data-nav-dir') ?? ''}`;
+  }
+  return null;
 }
 
 // Renders the per-row indent/guide cells: one fixed-width cell per ancestor
@@ -1944,6 +1994,7 @@ function renderNavNode(
       : safePath;
     const classes = [
       'nav-file',
+      options.selected.has(`f:${node.entry.path}`) ? 'nav-selected' : '',
       isCurrent ? 'current-entry' : '',
       isOrphaned ? 'orphaned-asset' : '',
       isEntryPoint ? 'entry-point' : ''
@@ -1976,8 +2027,10 @@ function renderNavNode(
       renderNavNode(child, state, options, childTrail, index === node.children.length - 1, depth + 1))
     .join('');
   const pending = options.pendingFolders.has(node.path);
-  return `<details class="nav-directory${pending ? ' pending-folder' : ''}" open data-nav-dir="${escapeHtml(node.path)}">
-    <summary${pending ? ` title="${escapeHtml(node.path)} — not saved until it contains a file"` : ''}>
+  const open = options.collapsed.has(node.path) ? '' : ' open';
+  const selected = options.selected.has(`d:${node.path}`) ? ' class="nav-selected"' : '';
+  return `<details class="nav-directory${pending ? ' pending-folder' : ''}"${open} data-nav-dir="${escapeHtml(node.path)}">
+    <summary${selected}${pending ? ` title="${escapeHtml(node.path)} — not saved until it contains a file"` : ''}>
       ${guides}<span class="nav-caret" aria-hidden="true"></span>
       <span class="nav-folder-icon closed">${FOLDER_CLOSED_ICON_HTML}</span>
       <span class="nav-folder-icon open">${FOLDER_OPEN_ICON_HTML}</span>
@@ -2230,6 +2283,14 @@ export class MdzipWorkspaceView {
     error: string;
   } | null = null;
   private deleteDialogState: { path: string } | null = null;
+  // Selected rows of the file tree (#69): `f:<path>` / `d:<path>`, in the
+  // order picked, and the row a Shift+click range starts from.
+  private navSelection: string[] = [];
+  private navSelectionAnchor: string | null = null;
+  // Folders the reader closed, kept across the tree's redraws.
+  private readonly navCollapsed = new Set<string>();
+  // A yes/no question in the editor's own dialog (see askConfirm()).
+  private confirmDialogState: { title: string; text: string; confirm: string; resolve: (ok: boolean) => void } | null = null;
   private readonly pendingNewFolders = new Set<string>();
   private pendingReplacePath: string | null = null;
   private conversionHookPending = false;
@@ -2518,6 +2579,10 @@ export class MdzipWorkspaceView {
   private readonly elNameValidation: HTMLElement;
   private readonly elNameConfirmBtn: HTMLButtonElement;
   private readonly elDeleteDialog: HTMLElement;
+  private readonly elConfirmDialog: HTMLElement;
+  private readonly elConfirmDialogTitle: HTMLElement;
+  private readonly elConfirmDialogText: HTMLElement;
+  private readonly elConfirmDialogOk: HTMLButtonElement;
   private readonly elDeleteDialogText: HTMLElement;
   private readonly elDeleteConfirmBtn: HTMLButtonElement;
   private readonly elReplaceInput: HTMLInputElement;
@@ -2658,6 +2723,10 @@ export class MdzipWorkspaceView {
     this.elNameValidation = q('[data-ref="name-validation"]');
     this.elNameConfirmBtn = q('[data-ref="name-confirm-btn"]');
     this.elDeleteDialog = q('[data-ref="delete-dialog"]');
+    this.elConfirmDialog = q('[data-ref="confirm-dialog"]');
+    this.elConfirmDialogTitle = q('[data-ref="confirm-dialog-title"]');
+    this.elConfirmDialogText = q('[data-ref="confirm-dialog-text"]');
+    this.elConfirmDialogOk = q('[data-ref="confirm-dialog-ok"]');
     this.elDeleteDialogText = q('[data-ref="delete-dialog-text"]');
     this.elDeleteConfirmBtn = q('[data-ref="delete-confirm-btn"]');
     this.elReplaceInput = q('[data-ref="replace-input"]');
@@ -5909,11 +5978,14 @@ export class MdzipWorkspaceView {
       allowOrphanActions,
       allowFileActions,
       allowDrag: snapshot.mode !== 'read-only' && snapshot.sourceFormat === 'mdz',
-      pendingFolders: new Set(this.pendingNewFolders)
+      pendingFolders: new Set(this.pendingNewFolders),
+      selected: new Set(this.navSelection),
+      collapsed: this.navCollapsed
     };
     this.elNavTree.innerHTML = navTree
       .map((n, i) => renderNavNode(n, snapshot, navRenderOptions, [], i === navTree.length - 1, 0))
       .join('');
+    this.syncNavSelection();
     this.prepareTooltips();
 
     if (this.cmEditor) {
@@ -6039,6 +6111,12 @@ export class MdzipWorkspaceView {
       this.elNameConfirmBtn.disabled = Boolean(this.nameDialogState.error);
     }
 
+    this.elConfirmDialog.hidden = this.confirmDialogState === null;
+    if (this.confirmDialogState) {
+      this.elConfirmDialogTitle.textContent = this.confirmDialogState.title;
+      this.elConfirmDialogText.textContent = this.confirmDialogState.text;
+      this.elConfirmDialogOk.textContent = this.confirmDialogState.confirm;
+    }
     this.elDeleteDialog.hidden = this.deleteDialogState === null;
     if (this.deleteDialogState) {
       this.elDeleteDialogText.textContent =
@@ -6090,6 +6168,9 @@ export class MdzipWorkspaceView {
       }
       if (this.widthMenuOpen) {
         this.closeWidthMenu(true);
+      }
+      if (this.confirmDialogState) {
+        this.answerConfirm(false);
       }
       if (this.contextMenuState || this.deleteDialogState || this.nameDialogState) {
         this.contextMenuState = null;
@@ -6371,23 +6452,85 @@ export class MdzipWorkspaceView {
         this.showNavMenuForPath(orphanBtn.getAttribute('data-orphan-path')!, e);
         return;
       }
+      const key = navRowKey(target);
+      if (key && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+        // Selecting, not opening (or, on a folder, not opening or closing it).
+        e.preventDefault();
+        if (e.shiftKey) {
+          this.selectNavRange(key, e.ctrlKey || e.metaKey);
+        } else {
+          this.navSelection = this.navSelection.includes(key)
+            ? this.navSelection.filter((item) => item !== key)
+            : [...this.navSelection, key];
+          this.navSelectionAnchor = key;
+        }
+        this.syncNavSelection();
+        return;
+      }
+      if (key) {
+        this.navSelection = [key];
+        this.navSelectionAnchor = key;
+        this.syncNavSelection();
+      }
       const navFile = target.closest<HTMLElement>('[data-nav-path]');
       if (navFile) {
         void this.openPath(navFile.getAttribute('data-nav-path')!);
       }
     });
 
+    // Remember closed folders: the tree is redrawn on every change.
+    this.elNavTree.addEventListener('toggle', (e) => {
+      const details = e.target as HTMLElement;
+      if (!(details instanceof HTMLElement) || !details.matches('details[data-nav-dir]')) {
+        return;
+      }
+      const path = details.getAttribute('data-nav-dir') ?? '';
+      if ((details as HTMLDetailsElement).open) {
+        this.navCollapsed.delete(path);
+      } else {
+        this.navCollapsed.add(path);
+      }
+    }, true);
+
     this.elNavPane.addEventListener('contextmenu', (e) => {
-      const target = this.navMenuTargetFromElement(e.target as HTMLElement);
+      let target = this.navMenuTargetFromElement(e.target as HTMLElement);
       if (!target) {
         return;
       }
       e.preventDefault();
       e.stopPropagation();
+      // Right-clicking a row outside the selection selects just that row, as
+      // file managers do; inside a selection of several, the menu is for all.
+      const key = navRowKey(e.target as HTMLElement);
+      if (key && !this.navSelection.includes(key)) {
+        this.navSelection = [key];
+        this.navSelectionAnchor = key;
+        this.syncNavSelection();
+      } else if (key && this.navSelection.length > 1) {
+        target = {
+          kind: 'selection',
+          files: this.navSelection.filter((item) => item.startsWith('f:')).map((item) => item.slice(2)),
+          folders: this.navSelection.filter((item) => item.startsWith('d:')).map((item) => item.slice(2))
+        };
+      }
       this.showNavMenu(target, e);
     });
 
     this.elNavTree.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'a' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        this.navSelection = this.navRowKeys();
+        this.navSelectionAnchor = this.navSelection[0] ?? null;
+        this.syncNavSelection();
+        return;
+      }
+      if (e.key === 'Escape' && this.navSelection.length > 1) {
+        e.preventDefault();
+        this.navSelection = [];
+        this.navSelectionAnchor = null;
+        this.syncNavSelection();
+        return;
+      }
       if (e.key === 'Enter') {
         const orphanBtn = (e.target as HTMLElement).closest<HTMLElement>('[data-orphan-path]');
         if (this.controlPolicy.orphanActions && orphanBtn) {
@@ -6706,6 +6849,10 @@ export class MdzipWorkspaceView {
     this.elNameConfirmBtn.addEventListener('click', () => {
       void this.confirmNameDialog();
     });
+
+    this.elConfirmDialog.querySelector<HTMLButtonElement>('[data-action="cancel-confirm"]')!
+      .addEventListener('click', () => this.answerConfirm(false));
+    this.elConfirmDialogOk.addEventListener('click', () => this.answerConfirm(true));
 
     this.elDeleteDialog.querySelector<HTMLButtonElement>('[data-action="cancel-delete"]')!
       .addEventListener('click', () => {
@@ -9910,21 +10057,27 @@ export class MdzipWorkspaceView {
     snapshot: MdzipWorkspaceSnapshot
   ): Array<MdzipNavMenuItem | null> {
     const canMutate = this.allowFileActions(snapshot);
+    if (target.kind === 'selection') {
+      return this.extractMenuItems('many', false);
+    }
     if (target.kind === 'directory') {
+      const hasFiles = this.collectExtractPaths({ files: [], folders: [target.path] }, snapshot).length > 0;
+      const extract = hasFiles ? this.extractMenuItems('many', target.path === '') : [];
       if (!canMutate) {
-        return [];
+        return extract;
       }
       return [
         { action: 'new-file', label: 'New .md File' },
         { action: 'new-folder', label: 'New Folder' },
         null,
-        { action: 'add-files', label: 'Add Files…' }
+        { action: 'add-files', label: 'Add Files…' },
+        ...(extract.length ? [null, ...extract] : [])
       ];
     }
 
     const hostItems = this.fileActionItems(target);
     if (target.isManifest) {
-      return [...hostItems, ...(hostItems.length ? [null] : []), { action: 'download', label: 'Download' }];
+      return [...hostItems, ...(hostItems.length ? [null] : []), ...this.extractMenuItems('one', false)];
     }
 
     const groups: Array<Array<MdzipNavMenuItem>> = [];
@@ -9960,7 +10113,7 @@ export class MdzipWorkspaceView {
     if (hostItems.length > 0) {
       groups.push(hostItems);
     }
-    groups.push([{ action: 'download', label: 'Download' }]);
+    groups.push(this.extractMenuItems('one', false));
     if (canMutate && !target.isEntryPoint) {
       groups.push([{
         action: 'delete',
@@ -9969,6 +10122,27 @@ export class MdzipWorkspaceView {
     }
 
     return groups.flatMap((group, index) => index === 0 ? group : [null, ...group]);
+  }
+
+  /**
+   * Taking files out of the archive: **Extract…** where the host writes
+   * them (`onExtractFiles`), else **Download** for one file, and for several
+   * **Download as ZIP** plus **Extract to Folder…** where the browser can
+   * write to a folder.
+   */
+  private extractMenuItems(count: 'one' | 'many', all: boolean): MdzipNavMenuItem[] {
+    if (this.options.onExtractFiles) {
+      return [{ action: 'extract', label: all ? 'Extract All…' : 'Extract…' }];
+    }
+    if (count === 'one') {
+      return [{ action: 'download', label: 'Download' }];
+    }
+    const items: MdzipNavMenuItem[] = [{ action: 'download-zip', label: all ? 'Download All as ZIP' : 'Download as ZIP' }];
+    const win = this.elRoot.ownerDocument.defaultView as (Window & { showDirectoryPicker?: unknown }) | null;
+    if (typeof win?.showDirectoryPicker === 'function') {
+      items.push({ action: 'extract-folder', label: all ? 'Extract All to Folder…' : 'Extract to Folder…' });
+    }
+    return items;
   }
 
   /** Menu items for the host's {@link MdzipFileAction}s that apply to this file. */
@@ -10045,6 +10219,11 @@ export class MdzipWorkspaceView {
           if (target.kind === 'file') {
             await this.downloadArchiveFile(target.path);
           }
+          break;
+        case 'extract':
+        case 'download-zip':
+        case 'extract-folder':
+          await this.extractNavTarget(target, action);
           break;
         case 'duplicate':
           if (target.kind === 'file') {
@@ -10266,6 +10445,216 @@ export class MdzipWorkspaceView {
     const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
     const fileName = path.slice(path.lastIndexOf('/') + 1);
     this.downloadSavedBlob(new Blob([buffer]), fileName);
+  }
+
+  /**
+   * The files of the archive as `{ path, bytes }`, for a host or a test to
+   * write elsewhere (#69). Each path names a file, or a folder (with or
+   * without a trailing `/`; `''` is the whole archive) whose files are all
+   * included when `includeFolders` isn't false. `manifest.json` comes only
+   * when named. In archive order, each file once; paths that match nothing
+   * are skipped. Bytes are the file's current content, as Download gives.
+   */
+  public async extractFiles(
+    paths: readonly string[],
+    options: { includeFolders?: boolean } = {}
+  ): Promise<MdzipExtractedFile[]> {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot) {
+      return [];
+    }
+    const files: string[] = [];
+    const folders: string[] = [];
+    for (const path of paths) {
+      if (snapshot.content.paths.some((entry) => samePath(entry.path, path))) {
+        files.push(path);
+      } else if (options.includeFolders !== false) {
+        folders.push(path.replace(/\/+$/, ''));
+      }
+    }
+    return this.readExtractFiles(this.collectExtractPaths({ files, folders }, snapshot));
+  }
+
+  // The archive paths a selection covers, in archive order.
+  private collectExtractPaths(selection: { files: string[]; folders: string[] }, snapshot: MdzipWorkspaceSnapshot): string[] {
+    return snapshot.content.paths
+      .map((entry) => entry.path)
+      .filter((path) => selection.files.some((file) => samePath(file, path))
+        || (!isMdzipManifestPath(path) && selection.folders.some((folder) => folder === '' || path.startsWith(`${folder}/`))));
+  }
+
+  private async readExtractFiles(paths: readonly string[]): Promise<MdzipExtractedFile[]> {
+    const workspace = this.workspace;
+    const files: MdzipExtractedFile[] = [];
+    for (const path of paths) {
+      const bytes = await workspace?.readPathBytes(path);
+      if (bytes) {
+        files.push({ path, bytes });
+      }
+    }
+    return files;
+  }
+
+  private async extractNavTarget(target: MdzipNavMenuTarget, action: string): Promise<void> {
+    const snapshot = this.workspace?.snapshot();
+    if (!snapshot) {
+      return;
+    }
+    const selection = target.kind === 'selection'
+      ? { files: target.files, folders: target.folders }
+      : target.kind === 'directory'
+        ? { files: [], folders: [target.path] }
+        : { files: [target.path], folders: [] };
+    if (action === 'extract-folder') {
+      // Ask for the folder first: the picker needs the click's user activation.
+      await this.extractToPickedFolder(selection, snapshot);
+      return;
+    }
+    const files = await this.readExtractFiles(this.collectExtractPaths(selection, snapshot));
+    if (!files.length) {
+      return;
+    }
+    if (action === 'extract') {
+      await this.options.onExtractFiles?.({ files, selection });
+      return;
+    }
+    const zippable: Zippable = {};
+    for (const file of files) {
+      // Pictures are compressed already.
+      zippable[file.path] = [file.bytes, { level: /\.(png|jpe?g|gif|webp|avif|mp4|webm|zip|mdz)$/i.test(file.path) ? 0 : 6 }];
+    }
+    const zipped = zipSync(zippable);
+    const buffer = zipped.buffer.slice(zipped.byteOffset, zipped.byteOffset + zipped.byteLength) as ArrayBuffer;
+    const base = snapshot.fileName.replace(/\.[^.]+$/, '') || 'archive';
+    const onlyFolder = selection.files.length === 0 && selection.folders.length === 1 && selection.folders[0] !== ''
+      ? selection.folders[0].slice(selection.folders[0].lastIndexOf('/') + 1)
+      : null;
+    this.downloadSavedBlob(new Blob([buffer], { type: 'application/zip' }), `${onlyFolder ?? base}.zip`);
+  }
+
+  // Extract to Folder… in a browser that can write to one: keeps the archive
+  // paths below the folder picked, and asks before replacing files.
+  private async extractToPickedFolder(
+    selection: { files: string[]; folders: string[] },
+    snapshot: MdzipWorkspaceSnapshot
+  ): Promise<void> {
+    interface DirectoryHandle {
+      name: string;
+      getDirectoryHandle(name: string, options?: { create?: boolean }): Promise<DirectoryHandle>;
+      getFileHandle(name: string, options?: { create?: boolean }): Promise<{
+        createWritable(): Promise<{ write(data: Uint8Array): Promise<void>; close(): Promise<void> }>;
+      }>;
+    }
+    const win = this.elRoot.ownerDocument.defaultView as (Window & {
+      showDirectoryPicker?: (options?: { mode?: string; id?: string }) => Promise<DirectoryHandle>;
+    }) | null;
+    if (!win?.showDirectoryPicker) {
+      return;
+    }
+    let root: DirectoryHandle;
+    try {
+      root = await win.showDirectoryPicker({ mode: 'readwrite', id: 'mdzip-extract' });
+    } catch (error) {
+      if ((error as { name?: string } | null)?.name === 'AbortError') {
+        return;
+      }
+      throw error;
+    }
+    const files = await this.readExtractFiles(this.collectExtractPaths(selection, snapshot));
+    const folderOf = async (path: string, create: boolean): Promise<DirectoryHandle | null> => {
+      let dir = root;
+      for (const part of path.split('/').slice(0, -1)) {
+        try {
+          dir = await dir.getDirectoryHandle(part, { create });
+        } catch {
+          return null;
+        }
+      }
+      return dir;
+    };
+    const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1);
+    let existing = 0;
+    for (const file of files) {
+      const dir = await folderOf(file.path, false);
+      if (dir && await dir.getFileHandle(nameOf(file.path)).then(() => true, () => false)) {
+        existing += 1;
+      }
+    }
+    if (existing > 0) {
+      const ok = await this.askConfirm(
+        'Replace Existing Files?',
+        `${existing === 1 ? 'One file' : `${existing} files`} of the ${files.length} already ${existing === 1 ? 'exists' : 'exist'} in "${root.name}". Replace ${existing === 1 ? 'it' : 'them'}?`,
+        'Replace'
+      );
+      if (!ok) {
+        return;
+      }
+    }
+    for (const file of files) {
+      const dir = await folderOf(file.path, true);
+      if (!dir) {
+        throw new Error(`Could not create the folder for ${file.path}.`);
+      }
+      const writable = await (await dir.getFileHandle(nameOf(file.path), { create: true })).createWritable();
+      await writable.write(file.bytes);
+      await writable.close();
+    }
+    this.showCopyToast(`Extracted ${files.length === 1 ? 'one file' : `${files.length} files`} to "${root.name}"`);
+  }
+
+  /** Asks a yes/no question in the editor's own dialog (no browser confirm(), which some hosts block). */
+  private askConfirm(title: string, text: string, confirm: string): Promise<boolean> {
+    this.confirmDialogState?.resolve(false);
+    return new Promise((resolve) => {
+      this.confirmDialogState = { title, text, confirm, resolve };
+      this.render();
+      this.elConfirmDialogOk.focus();
+    });
+  }
+
+  private answerConfirm(ok: boolean): void {
+    const state = this.confirmDialogState;
+    this.confirmDialogState = null;
+    this.render();
+    state?.resolve(ok);
+  }
+
+  // The tree's rows in order, as selection keys.
+  private navRowKeys(): string[] {
+    return Array.from(this.elNavTree.querySelectorAll<HTMLElement>('[data-nav-path], details[data-nav-dir] > summary'))
+      // Hidden in a closed folder? (A folder's own row shows while it's closed.)
+      .filter((row) => !(row.matches('summary') ? row.parentElement?.parentElement : row)?.closest('details:not([open])'))
+      .map((row) => navRowKey(row))
+      .filter((key): key is string => key !== null);
+  }
+
+  // Shift+click: the rows from the anchor to this one (added to the
+  // selection with Ctrl/Cmd).
+  private selectNavRange(key: string, add: boolean): void {
+    const rows = this.navRowKeys();
+    const anchor = this.navSelectionAnchor && rows.includes(this.navSelectionAnchor) ? this.navSelectionAnchor : key;
+    const [from, to] = [rows.indexOf(anchor), rows.indexOf(key)].sort((a, b) => a - b);
+    const range = rows.slice(from, to + 1);
+    this.navSelection = add ? [...new Set([...this.navSelection, ...range])] : range;
+    this.navSelectionAnchor = anchor;
+  }
+
+  // Marks the selected rows, dropping any no longer in the tree.
+  private syncNavSelection(): void {
+    const present = new Set(this.navRowKeysAll());
+    this.navSelection = this.navSelection.filter((key) => present.has(key));
+    const selected = new Set(this.navSelection);
+    for (const row of Array.from(this.elNavTree.querySelectorAll<HTMLElement>('[data-nav-path], details[data-nav-dir] > summary'))) {
+      const key = navRowKey(row);
+      row.classList.toggle('nav-selected', !!key && selected.has(key));
+    }
+    this.elNavTree.classList.toggle('has-selection', this.navSelection.length > 1);
+  }
+
+  private navRowKeysAll(): string[] {
+    return Array.from(this.elNavTree.querySelectorAll<HTMLElement>('[data-nav-path], details[data-nav-dir] > summary'))
+      .map((row) => navRowKey(row))
+      .filter((key): key is string => key !== null);
   }
 
   private async duplicateFile(path: string): Promise<void> {
@@ -11388,6 +11777,18 @@ const SHELL_HTML = `
       <div class="title-dialog-actions">
         <button type="button" data-action="cancel-delete">Cancel</button>
         <button type="button" class="danger-action" data-ref="delete-confirm-btn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="title-dialog-backdrop" data-ref="confirm-dialog" hidden
+    role="dialog" aria-modal="true" aria-labelledby="mdzip-confirm-dialog-heading">
+    <div class="title-dialog">
+      <h3 id="mdzip-confirm-dialog-heading" data-ref="confirm-dialog-title"></h3>
+      <p data-ref="confirm-dialog-text"></p>
+      <div class="title-dialog-actions">
+        <button type="button" data-action="cancel-confirm">Cancel</button>
+        <button type="button" class="danger-action" data-ref="confirm-dialog-ok"></button>
       </div>
     </div>
   </div>
