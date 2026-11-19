@@ -22,9 +22,11 @@ import {
 import { tags } from '@lezer/highlight';
 import {
   Bold,
+  CaseSensitive,
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ClipboardPaste,
   ClipboardType,
   Code,
@@ -71,6 +73,7 @@ import {
   TableOfContents,
   Sun,
   TextSelect,
+  X,
   ZoomIn
 } from 'lucide';
 import { samePath, type MdzWorkspace, type MdzWorkspaceAsset } from '@mdzip/core-js';
@@ -135,6 +138,14 @@ import {
 } from './json-validation.js';
 import { MdzipManifestForm } from './manifest-form.js';
 import { mapScrollPosition, type ScrollAnchor } from './scroll-anchors.js';
+import {
+  collectFindText,
+  findMatches,
+  findPattern,
+  findRange,
+  setFindHighlights,
+  type FindText
+} from './preview-find.js';
 import { MDZIP_BLOCK_ATTRIBUTE, stripMdzipBlockMarks } from '@mdzip/renderer';
 import {
   createMdzipHeadingOutline,
@@ -202,6 +213,11 @@ const PREVIEW_ICON_HTML = lucideIcon(Eye, TOOLBAR_ICON_CLASS);
 const SPLIT_ICON_HTML = lucideIcon(Columns2, TOOLBAR_ICON_CLASS);
 const SAVE_ICON_HTML = lucideIcon(Save, TOOLBAR_ICON_CLASS);
 const SEARCH_ICON_HTML = lucideIcon(Search, TOOLBAR_ICON_CLASS);
+const FIND_ICON_CLASS = 'preview-find-icon';
+const FIND_PREVIOUS_ICON_HTML = lucideIcon(ChevronUp, FIND_ICON_CLASS);
+const FIND_NEXT_ICON_HTML = lucideIcon(ChevronDown, FIND_ICON_CLASS);
+const FIND_CASE_ICON_HTML = lucideIcon(CaseSensitive, FIND_ICON_CLASS);
+const FIND_CLOSE_ICON_HTML = lucideIcon(X, FIND_ICON_CLASS);
 const OUTLINE_ICON_HTML = lucideIcon(TableOfContents, TOOLBAR_ICON_CLASS);
 const WHITESPACE_ICON_HTML = lucideIcon(Pilcrow, TOOLBAR_ICON_CLASS);
 const FORMAT_JSON_ICON_HTML = lucideIcon(Braces, TOOLBAR_ICON_CLASS);
@@ -2388,6 +2404,32 @@ export class MdzipWorkspaceView {
   private readonly elSourceIcon: HTMLElement;
   private readonly elSaveBtn: HTMLButtonElement;
   private readonly elSearchBtn: HTMLButtonElement;
+  // The find bar over the preview (#62); see openFind().
+  private readonly elFind: HTMLElement;
+  private readonly elFindInput: HTMLInputElement;
+  private readonly elFindCount: HTMLElement;
+  private readonly elFindCase: HTMLButtonElement;
+  private readonly elFindPrevious: HTMLButtonElement;
+  private readonly elFindNext: HTMLButtonElement;
+  private readonly elFindClose: HTMLButtonElement;
+  private findOpen = false;
+  private findMatchCase = false;
+  private findState: {
+    matches: Array<{ chunk: number; ordinal: number; start: number; end: number }>;
+    current: number;
+    // Some chunk's text isn't known yet (not drawn, not indexed).
+    pending: boolean;
+    texts: Array<FindText | null>;
+  } | null = null;
+  // Each drawn chunk's text with its nodes, until something in it changes.
+  private findDomTexts = new WeakMap<Element, FindText>();
+  // Every chunk's text by its source key, drawn or not, for counting.
+  private readonly findTextCache = new Map<string, string>();
+  private findObserver: MutationObserver | null = null;
+  private findRefreshQueued = false;
+  private findIndexing = false;
+  // Goes to the first match once typing pauses, when it isn't drawn yet.
+  private findRevealTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly elOutlineBtn: HTMLButtonElement;
   private readonly elOutlinePane: HTMLElement;
   private outlineVisible = false;
@@ -2536,6 +2578,13 @@ export class MdzipWorkspaceView {
     this.elSourceIcon = q('[data-ref="source-icon"]');
     this.elSaveBtn = q('[data-ref="save-btn"]');
     this.elSearchBtn = q('[data-ref="search-btn"]');
+    this.elFind = q('[data-ref="preview-find"]');
+    this.elFindInput = q('[data-ref="preview-find-input"]');
+    this.elFindCount = q('[data-ref="preview-find-count"]');
+    this.elFindCase = q('[data-ref="preview-find-case"]');
+    this.elFindPrevious = q('[data-ref="preview-find-previous"]');
+    this.elFindNext = q('[data-ref="preview-find-next"]');
+    this.elFindClose = q('[data-ref="preview-find-close"]');
     this.elOutlineBtn = q('[data-ref="outline-btn"]');
     this.elWhitespaceBtn = q('[data-ref="whitespace-btn"]');
     this.elFormatJsonBtn = q('[data-ref="format-json-btn"]');
@@ -2900,11 +2949,12 @@ export class MdzipWorkspaceView {
   }
 
   /**
-   * Opens CodeMirror's find/replace panel for the current document. Unlike
-   * {@link executeCommand}, this works in read-only (Viewer) hosts too —
-   * searching doesn't require edit access, only a visible source pane. If
-   * the current layout is preview-only, switches to split/source first so
-   * the panel has somewhere to render.
+   * Opens find for the current document. In the View layout it's a find
+   * bar over the preview that searches the rendered text, the whole
+   * document including parts not drawn yet, and leaves the layout as it is.
+   * In Edit and Split it's CodeMirror's find/replace panel. Works in
+   * read-only (Viewer) hosts too. When the preview belongs to an entry
+   * renderer, switches to split/source for the panel.
    */
   public async openSearch(): Promise<boolean> {
     if (!this.controlPolicy.search) {
@@ -2913,6 +2963,10 @@ export class MdzipWorkspaceView {
     const snapshot = this.workspace?.snapshot();
     if (!snapshot || snapshot.currentPathType !== 'markdown') {
       return false;
+    }
+    if (this.findApplies(snapshot)) {
+      this.openFind();
+      return true;
     }
     if (this.layout === 'preview') {
       const nextLayout = this.controlPolicy.layout.split
@@ -2932,7 +2986,371 @@ export class MdzipWorkspaceView {
   }
 
   public closeSearch(): boolean {
+    if (this.findOpen) {
+      return this.closeFind();
+    }
     return this.cmEditor ? closeSearchPanel(this.cmEditor) : false;
+  }
+
+  /** Whether the find bar is open over the preview. */
+  public get isFindOpen(): boolean {
+    return this.findOpen;
+  }
+
+  // --- Find in the preview (#62) ---------------------------------------------------
+
+  private findApplies(snapshot = this.workspace?.snapshot()): boolean {
+    return !!snapshot && this.controlPolicy.search && this.layout === 'preview'
+      && snapshot.currentPathType === 'markdown' && !this.entryState;
+  }
+
+  private openFind(): void {
+    const doc = this.elRoot.ownerDocument;
+    // Like a browser: a short selection in the document becomes the query.
+    const selection = doc.getSelection?.();
+    if (selection && selection.rangeCount && selection.anchorNode && this.elPreviewContent.contains(selection.anchorNode)) {
+      const selected = selection.toString().trim();
+      if (selected && selected.length <= 200 && !/\n/.test(selected)) {
+        this.elFindInput.value = selected;
+      }
+    }
+    this.findOpen = true;
+    this.elFind.hidden = false;
+    this.elSearchBtn.classList.add('active');
+    this.elFindInput.focus();
+    this.elFindInput.select();
+    if (!this.findObserver && typeof MutationObserver !== 'undefined') {
+      this.findObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          const target = record.target.nodeType === 1 ? record.target as Element : record.target.parentElement;
+          const root = target?.closest('.mdzip-chunk') ?? this.elPreviewContent;
+          this.findDomTexts.delete(root);
+        }
+        this.scheduleFindRefresh();
+      });
+      this.findObserver.observe(this.elPreviewContent, { childList: true, subtree: true, characterData: true });
+    }
+    this.refreshFind('viewport');
+    this.revealFindMatchSoon();
+  }
+
+  // When the current match is in a chunk not drawn yet, draws it and goes
+  // there once typing pauses (the next keystroke starts the wait again).
+  private revealFindMatchSoon(): void {
+    if (this.findRevealTimer !== null) {
+      clearTimeout(this.findRevealTimer);
+    }
+    this.findRevealTimer = setTimeout(() => {
+      this.findRevealTimer = null;
+      void this.moveFind(0);
+    }, 300);
+  }
+
+  private closeFind(restoreFocus = true): boolean {
+    if (!this.findOpen) {
+      return false;
+    }
+    const doc = this.elRoot.ownerDocument;
+    const hadFocus = this.elFind.contains(doc.activeElement);
+    this.findOpen = false;
+    if (this.findRevealTimer !== null) {
+      clearTimeout(this.findRevealTimer);
+      this.findRevealTimer = null;
+    }
+    this.elFind.hidden = true;
+    this.elSearchBtn.classList.remove('active');
+    this.findState = null;
+    this.findObserver?.disconnect();
+    this.findObserver = null;
+    this.findDomTexts = new WeakMap();
+    setFindHighlights(doc, this, [], null);
+    if (restoreFocus && hadFocus) {
+      this.elPreviewPane.focus({ preventScroll: true });
+    }
+    return true;
+  }
+
+  private scheduleFindRefresh(): void {
+    if (this.findRefreshQueued) {
+      return;
+    }
+    this.findRefreshQueued = true;
+    requestAnimationFrame(() => {
+      this.findRefreshQueued = false;
+      this.refreshFind('keep');
+    });
+  }
+
+  // The chunks of the document, drawn or not. Without chunks (a custom
+  // renderer), the whole preview is one.
+  private findChunks(): Array<{ key: string | null; root: Element | null; index: number }> {
+    const state = this.chunkedRenderState;
+    if (!state) {
+      return [{ key: null, root: this.elPreviewContent, index: 0 }];
+    }
+    return state.records.map((record, index) => ({
+      key: record.key,
+      root: record.root && record.root.isConnected ? record.root : null,
+      index
+    }));
+  }
+
+  /**
+   * Matches the query against every chunk's text and repaints. `viewport`
+   * (a new query) makes the first match at or below the top of the pane
+   * current and scrolls to it; `keep` (the document changed under the bar)
+   * keeps the current match.
+   */
+  private refreshFind(mode: 'viewport' | 'keep', scroll = mode === 'viewport'): void {
+    if (!this.findOpen || this.destroyed) {
+      return;
+    }
+    const previous = this.findState;
+    const pattern = findPattern(this.elFindInput.value, this.findMatchCase);
+    const matches: Array<{ chunk: number; ordinal: number; start: number; end: number }> = [];
+    const texts: Array<FindText | null> = [];
+    let pending = false;
+    const chunks = this.findChunks();
+    if (pattern) {
+      for (const chunk of chunks) {
+        let dom: FindText | null = null;
+        let text: string | undefined;
+        if (chunk.root) {
+          dom = this.findDomTexts.get(chunk.root) ?? null;
+          if (!dom) {
+            dom = collectFindText(chunk.root);
+            this.findDomTexts.set(chunk.root, dom);
+          }
+          text = dom.text;
+          if (chunk.key !== null) {
+            this.findTextCache.set(chunk.key, text);
+          }
+        } else if (chunk.key !== null) {
+          text = this.findTextCache.get(chunk.key);
+        }
+        texts.push(dom);
+        if (text === undefined) {
+          pending = true;
+          continue;
+        }
+        let ordinal = 0;
+        for (const [start, end] of findMatches(text, pattern)) {
+          matches.push({ chunk: chunk.index, ordinal: ordinal++, start, end });
+        }
+      }
+    }
+    let current = -1;
+    if (matches.length) {
+      const was = mode === 'keep' && previous && previous.current >= 0 ? previous.matches[previous.current] : null;
+      if (was) {
+        current = matches.findIndex((match) => match.chunk === was.chunk && match.ordinal === was.ordinal);
+        if (current < 0) {
+          current = Math.min(previous!.current, matches.length - 1);
+        }
+      } else {
+        current = this.firstFindMatchInView(matches, chunks, texts);
+        // A first match (perhaps found by the background count): show it,
+        // drawing its chunk first when it isn't yet.
+        scroll = true;
+        if (!texts[matches[current].chunk]) {
+          this.revealFindMatchSoon();
+        }
+      }
+    }
+    this.findState = { matches, current, pending, texts };
+    this.paintFind(scroll);
+    if (pending) {
+      this.indexFindChunks();
+    }
+  }
+
+  // The first match at or below the top of the preview pane, or the first.
+  private firstFindMatchInView(
+    matches: Array<{ chunk: number; start: number; end: number }>,
+    chunks: Array<{ root: Element | null }>,
+    texts: Array<FindText | null>
+  ): number {
+    const paneTop = this.elPreviewPane.getBoundingClientRect().top;
+    let skipped = -1;
+    for (let i = 0; i < matches.length; i += 1) {
+      const match = matches[i];
+      const root = chunks[match.chunk]?.root;
+      const dom = texts[match.chunk];
+      if (!root || !dom) {
+        // Not drawn yet: below what is.
+        return i;
+      }
+      if (match.chunk === skipped) {
+        continue;
+      }
+      if (root.getBoundingClientRect().bottom < paneTop) {
+        skipped = match.chunk;
+        continue;
+      }
+      const range = findRange(dom, match.start, match.end);
+      if (!range || typeof range.getBoundingClientRect !== 'function' || range.getBoundingClientRect().top >= paneTop - 1) {
+        return i;
+      }
+    }
+    return 0;
+  }
+
+  // Highlights the matches near the current one (all of them, up to a
+  // thousand) and the current one, and updates the count.
+  private paintFind(scroll: boolean): void {
+    const state = this.findState;
+    const all: Range[] = [];
+    let currentRange: Range | null = null;
+    if (state && state.current >= 0) {
+      const from = Math.max(0, state.current - 500);
+      const to = Math.min(state.matches.length, state.current + 500);
+      for (let i = from; i < to; i += 1) {
+        const match = state.matches[i];
+        const dom = state.texts[match.chunk];
+        const range = dom ? findRange(dom, match.start, match.end) : null;
+        if (!range) {
+          continue;
+        }
+        if (i === state.current) {
+          currentRange = range;
+        } else {
+          all.push(range);
+        }
+      }
+    }
+    setFindHighlights(this.elRoot.ownerDocument, this, all, currentRange);
+    const query = this.elFindInput.value.trim();
+    const total = state?.matches.length ?? 0;
+    let label = '';
+    if (query && state) {
+      if (!total) {
+        label = state.pending ? 'Searching…' : 'No results';
+      } else {
+        label = `${state.current + 1} of ${total}${state.pending ? '+' : ''}`;
+      }
+    }
+    this.elFindCount.textContent = label;
+    this.elFind.classList.toggle('no-results', !!query && !!state && !total && !state.pending);
+    this.elFindPrevious.disabled = total === 0;
+    this.elFindNext.disabled = total === 0;
+    if (scroll && currentRange) {
+      this.scrollFindRangeIntoView(currentRange);
+    }
+  }
+
+  private scrollFindRangeIntoView(range: Range): void {
+    if (typeof range.getBoundingClientRect !== 'function') {
+      return;
+    }
+    const pane = this.elPreviewPane;
+    const rect = range.getBoundingClientRect();
+    const paneRect = pane.getBoundingClientRect();
+    // Below the find bar, above the bottom edge.
+    if (rect.top >= paneRect.top + this.elFind.offsetHeight + 16 && rect.bottom <= paneRect.bottom - 16) {
+      return;
+    }
+    this.releaseAnchorPin();
+    pane.scrollTop += rect.top - paneRect.top - pane.clientHeight / 3;
+  }
+
+  /**
+   * Goes to the next (1) or previous (-1) match, drawing its chunk first
+   * when it isn't yet. A current match that hasn't been shown (its chunk
+   * isn't drawn) is gone to first, not skipped; 0 only does that.
+   */
+  private async moveFind(delta: 1 | -1 | 0): Promise<void> {
+    const state = this.findState;
+    if (!this.findOpen || !state || !state.matches.length) {
+      return;
+    }
+    const total = state.matches.length;
+    const unseen = state.current >= 0 && !state.texts[state.matches[state.current].chunk];
+    if (!unseen) {
+      if (delta === 0) {
+        return;
+      }
+      const from = state.current < 0 ? (delta > 0 ? -1 : 0) : state.current;
+      state.current = (from + delta + total) % total;
+    }
+    const match = state.matches[state.current];
+    if (!state.texts[match.chunk]) {
+      await this.mountChunksThrough(match.chunk);
+      this.findDomTexts = new WeakMap();
+      this.refreshFind('keep', true);
+      return;
+    }
+    this.paintFind(true);
+  }
+
+  // Draws the chunks up to and including `index`, as scrollToAnchor() does.
+  private async mountChunksThrough(index: number): Promise<void> {
+    const pending = this.chunkedRenderState;
+    if (!pending || pending.cursor > index) {
+      return;
+    }
+    await this.drainRemainingChunks(pending, () => {}, new AbortController().signal, index);
+    const remaining = this.chunkedRenderState;
+    if (remaining && remaining.generation === pending.generation && !remaining.sentinelHandle
+      && remaining.cursor < remaining.records.length) {
+      this.armChunkSentinel(remaining.records, remaining.cursor, remaining.context, remaining.generation, remaining.animateImageHydration);
+    }
+  }
+
+  /**
+   * Finds the text of chunks not drawn yet, a few at a time between frames,
+   * so the count covers the whole document: each chunk's HTML (cached, or
+   * rendered) in a detached fragment, read the same way as the preview.
+   */
+  private indexFindChunks(): void {
+    const state = this.chunkedRenderState;
+    if (this.findIndexing || !state) {
+      return;
+    }
+    this.findIndexing = true;
+    const records = state.records;
+    const generation = state.generation;
+    const live = new Set(records.map((record) => record.key));
+    for (const key of Array.from(this.findTextCache.keys())) {
+      if (!live.has(key)) {
+        this.findTextCache.delete(key);
+      }
+    }
+    const run = async () => {
+      let batchStart = performance.now();
+      for (let i = 0; i < records.length; i += 1) {
+        if (!this.findOpen || this.destroyed || this.chunkedRenderState?.records !== records) {
+          return;
+        }
+        const record = records[i];
+        if ((record.root && record.root.isConnected) || this.findTextCache.has(record.key)) {
+          continue;
+        }
+        let html = record.html
+          ?? (this.chunkHtmlCache?.generation === generation ? this.chunkHtmlCache.html.get(i) : undefined);
+        if (html === undefined) {
+          const result = this.renderingService.renderChunk(record.tokens, state.context, { index: i, markBlocks: true });
+          html = typeof result === 'string' ? result : await result;
+        }
+        this.findTextCache.set(record.key, collectFindText(this.inertPreviewFragment(html)).text);
+        if (performance.now() - batchStart > 12) {
+          this.refreshFind('keep', false);
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          batchStart = performance.now();
+        }
+      }
+    };
+    void run()
+      .catch((error) => {
+        if ((error as { name?: string } | null)?.name !== 'AbortError') {
+          this.options.onFailed?.(error);
+        }
+      })
+      .finally(() => {
+        this.findIndexing = false;
+        if (this.findOpen && !this.destroyed && this.chunkedRenderState?.records === records) {
+          this.refreshFind('keep', false);
+        }
+      });
   }
 
   public async convertToMdz(): Promise<boolean> {
@@ -2954,6 +3372,7 @@ export class MdzipWorkspaceView {
   }
 
   public destroy(): void {
+    this.closeFind(false);
     this.systemColorSchemeQuery?.removeEventListener?.('change', this.onSystemColorSchemeChange);
     this.conversionDocumentGeneration += 1;
     this.resolveImageInsertDialog(null);
@@ -5304,8 +5723,11 @@ export class MdzipWorkspaceView {
     // Only where the source editor shows: Edit or Split, for a file it can edit.
     const showWhitespaceControl = this.controlPolicy.whitespace && !entryClaimed
       && canShowSource && this.shownLayout(snapshot) !== 'preview';
-    const showSearchControl = this.controlPolicy.search
-      && canShowSource && snapshot.currentPathType === 'markdown';
+    const showSearchControl = this.controlPolicy.search && snapshot.currentPathType === 'markdown'
+      && (canShowSource || this.findApplies(snapshot));
+    if (this.findOpen && !this.findApplies(snapshot)) {
+      this.closeFind(false);
+    }
     const showOutlineControl = this.controlPolicy.outline && !entryClaimed
       && snapshot.currentPathType === 'markdown' && this.layout !== 'source';
     const showEditControls = canEdit
@@ -5335,6 +5757,9 @@ export class MdzipWorkspaceView {
     this.elSourceBtn.hidden = !this.controlPolicy.layout.source;
     this.elSaveBtn.hidden = !showSaveControl;
     this.elSearchBtn.hidden = !showSearchControl;
+    const findLabel = this.findApplies(snapshot) ? 'Find' : 'Find/replace';
+    this.elSearchBtn.title = `${findLabel} (Mod-F)`;
+    this.elSearchBtn.setAttribute('aria-label', findLabel);
     this.elWhitespaceBtn.setAttribute('aria-pressed', String(this.whitespaceVisible));
     this.elOutlineBtn.hidden = !showOutlineControl;
     this.elOutlineBtn.classList.toggle('active', this.outlineVisible);
@@ -5746,7 +6171,59 @@ export class MdzipWorkspaceView {
     });
 
     this.elSearchBtn.addEventListener('click', () => {
-      void this.openSearch();
+      if (this.findOpen) {
+        this.closeFind();
+      } else {
+        void this.openSearch();
+      }
+    });
+
+    this.elFindInput.addEventListener('input', () => {
+      this.refreshFind('viewport');
+      this.revealFindMatchSoon();
+    });
+    this.elFindInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        void this.moveFind(event.shiftKey ? -1 : 1);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.closeFind();
+      }
+    });
+    this.elFindCase.addEventListener('click', () => {
+      this.findMatchCase = !this.findMatchCase;
+      this.elFindCase.setAttribute('aria-pressed', String(this.findMatchCase));
+      this.refreshFind('viewport');
+      this.revealFindMatchSoon();
+      this.elFindInput.focus();
+    });
+    this.elFindPrevious.addEventListener('click', () => { void this.moveFind(-1); });
+    this.elFindNext.addEventListener('click', () => { void this.moveFind(1); });
+    this.elFindClose.addEventListener('click', () => { this.closeFind(); });
+    // Ctrl/Cmd+F in the View layout opens the find bar instead of the
+    // browser's, which can't see chunks not drawn yet; F3 / Shift+F3 move
+    // and Escape closes while it's open.
+    doc.addEventListener('keydown', (e) => {
+      if (this.destroyed) {
+        return;
+      }
+      const focused = doc.activeElement;
+      const inView = !!focused && this.elRoot.contains(focused);
+      const key = e.key.toLowerCase();
+      if (key === 'f' && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+        if (inView && this.findApplies()) {
+          e.preventDefault();
+          this.openFind();
+        }
+      } else if (e.key === 'F3' && this.findOpen && inView) {
+        e.preventDefault();
+        void this.moveFind(e.shiftKey ? -1 : 1);
+      } else if (e.key === 'Escape' && this.findOpen && !!focused && this.elPreviewPane.contains(focused)) {
+        e.preventDefault();
+        this.closeFind();
+      }
     });
 
     this.elOutlineBtn.addEventListener('click', () => {
@@ -10719,6 +11196,19 @@ const SHELL_HTML = `
       <section class="pane preview-pane" data-ref="preview-pane" tabindex="-1">
         <article class="preview-content" data-ref="preview-content"></article>
       </section>
+      <div class="preview-find" data-ref="preview-find" role="search" aria-label="Find in document" hidden>
+        <input type="text" class="preview-find-input" data-ref="preview-find-input"
+          placeholder="Find" aria-label="Find in document" spellcheck="false" autocomplete="off" />
+        <span class="preview-find-count" data-ref="preview-find-count" aria-live="polite"></span>
+        <button type="button" class="preview-find-button" data-ref="preview-find-case"
+          aria-pressed="false" title="Match case" aria-label="Match case">${FIND_CASE_ICON_HTML}</button>
+        <button type="button" class="preview-find-button" data-ref="preview-find-previous"
+          title="Previous match (Shift+Enter)" aria-label="Previous match">${FIND_PREVIOUS_ICON_HTML}</button>
+        <button type="button" class="preview-find-button" data-ref="preview-find-next"
+          title="Next match (Enter)" aria-label="Next match">${FIND_NEXT_ICON_HTML}</button>
+        <button type="button" class="preview-find-button" data-ref="preview-find-close"
+          title="Close (Escape)" aria-label="Close find">${FIND_CLOSE_ICON_HTML}</button>
+      </div>
       <section class="pane entry-pane" data-ref="entry-pane"></section>
     </div>
     <aside class="outline-pane" data-ref="outline-pane" hidden></aside>

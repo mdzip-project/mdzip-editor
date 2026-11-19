@@ -189,6 +189,28 @@ Unset is the same as `'default'`. A pixel number is used exactly as given and
 doesn't scale with zoom, and leaves no menu item checked; so does setting the
 `--mdzip-preview-content-max-width` CSS variable directly.
 
+## Find
+
+`view.openSearch()`, the toolbar's Find button and Ctrl+F (Cmd+F on a Mac)
+with focus in the editor open find for the current Markdown document:
+
+- **In View**, a find bar over the preview searches the rendered text, what
+  the reader sees rather than the Markdown, and the layout stays View. It
+  counts matches in the whole document ("3 of 12"), including parts the
+  progressive preview hasn't drawn yet; going to one of those draws it first.
+  Matches are highlighted with the CSS Custom Highlight API, so the preview's
+  DOM isn't changed. Enter and Shift+Enter (or F3 and Shift+F3, or the arrow
+  buttons) move between them, **Aa** matches case, and Escape closes the bar
+  and clears the highlights. Spaces in the query match any whitespace, and a
+  match doesn't run from one paragraph into the next. Diagrams, code-block
+  headers and other editor chrome aren't searched.
+- **In Edit and Split**, it's the source editor's find and replace panel, as
+  before.
+
+`closeSearch()` closes either; `isFindOpen` says whether the bar is open.
+`controls.search: false` turns both off. Find works in read-only documents
+too.
+
 ## Outline Panel
 
 The outline panel is a table of contents built from the document's headings,

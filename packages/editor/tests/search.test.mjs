@@ -60,7 +60,7 @@ test('openSearch mounts the find/replace panel and closeSearch removes it', asyn
   }
 });
 
-test('openSearch switches out of preview-only layout so the panel has somewhere to render', async () => {
+test('openSearch in the View layout opens the find bar over the preview, not the source panel (#62)', async () => {
   const container = document.createElement('div');
   document.body.appendChild(container);
   const view = new MdzipWorkspaceView(container, {
@@ -76,8 +76,10 @@ test('openSearch switches out of preview-only layout so the panel has somewhere 
 
     const opened = await view.openSearch();
     assert.equal(opened, true);
-    assert.ok(view.cmEditor, 'CodeMirror editor was created to host the panel');
-    assert.ok(container.querySelector('.cm-search'), 'search panel is mounted');
+    assert.equal(view.cmEditor, null, 'no source editor: the layout stays View');
+    assert.equal(container.querySelector('[data-ref="preview-find"]').hidden, false, 'the find bar is open');
+    assert.equal(view.closeSearch(), true);
+    assert.equal(container.querySelector('[data-ref="preview-find"]').hidden, true);
   } finally {
     view.destroy();
     container.remove();

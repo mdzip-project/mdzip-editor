@@ -1284,6 +1284,111 @@ export const WORKSPACE_CSS = `
 }
 
 /* Validity of the open .json file (#68), under the editor. */
+/* Find in the preview (#62): a bar over the top right of the View layout. */
+.mdzip-root .pane-stack {
+  position: relative;
+}
+
+.mdzip-root .preview-find {
+  position: absolute;
+  top: 8px;
+  right: 24px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  max-width: calc(100% - 40px);
+  padding: 4px;
+  background: var(--mdzip-widget-background-color, var(--mdzip-editor-background-color));
+  color: var(--mdzip-editor-foreground-color);
+  border: 1px solid var(--mdzip-widget-border-color, var(--mdzip-border-color));
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  font-size: 13px;
+}
+
+.mdzip-root .preview-find[hidden] {
+  display: none;
+}
+
+.mdzip-root .preview-find-input {
+  flex: 1 1 200px;
+  min-width: 80px;
+  width: 220px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 2px 8px;
+  font: inherit;
+  color: inherit;
+  background: var(--mdzip-editor-background-color);
+  border: 1px solid var(--mdzip-border-color);
+  border-radius: 4px;
+  outline: none;
+}
+
+.mdzip-root .preview-find-input:focus {
+  border-color: var(--mdzip-focus-outline-color);
+}
+
+.mdzip-root .preview-find.no-results .preview-find-input {
+  border-color: #cf222e;
+}
+
+.mdzip-root .preview-find-count {
+  flex: 0 0 auto;
+  min-width: 64px;
+  padding: 0 6px;
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.mdzip-root .preview-find-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--mdzip-control-foreground-color);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mdzip-root .preview-find-button:hover:not(:disabled) {
+  background: var(--mdzip-control-hover-background-color, var(--mdzip-hover-background-color));
+}
+
+.mdzip-root .preview-find-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mdzip-root .preview-find-button[aria-pressed="true"] {
+  background: var(--mdzip-accent-color);
+  color: var(--mdzip-accent-foreground-color);
+}
+
+.mdzip-root .preview-find-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Browser find's colors, which read in light and dark alike. */
+.mdzip-root ::highlight(mdzip-find) {
+  background-color: rgba(255, 214, 0, 0.45);
+}
+
+.mdzip-root ::highlight(mdzip-find-current) {
+  background-color: #ff9632;
+  color: #000000;
+}
+
 .mdzip-root .json-status {
   flex: 0 0 auto;
   padding: 3px 10px;
