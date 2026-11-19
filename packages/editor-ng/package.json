@@ -1,6 +1,6 @@
 {
   "name": "@mdzip/editor-ng",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Angular wrapper for the MDZip workspace editor.",
   "license": "Apache-2.0",
   "repository": {

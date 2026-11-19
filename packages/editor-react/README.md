@@ -102,6 +102,11 @@ showUnchanged? }`) to opt any of them out.
 | `renderEntryPriority` | `number` | `0` | Matching priority of `renderEntry` relative to `entryRenderers` |
 | `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; inline objects are safe |
 | `externalLinks` | `MdzipExternalLinkPolicy` | — | External-link policy, e.g. `{ target: '_blank' }` (adds `rel="noopener noreferrer"`); optional `rel` and `predicate(href)`. Re-applies without a re-render only when `target`, `rel` or `predicate` change; inline objects are safe |
+| `onExtractFiles` | `(request: MdzipExtractRequest) => void \| Promise<void>` | — | Writes files taken out of the archive (the contents pane's Extract…) for hosts that can write to disk; the menu then says **Extract…** instead of offering browser downloads. The request has `files: [{ path, bytes }]` and `selection`. Read when the view is created |
+| `outline` | `boolean \| MdzipOutlineViewOptions` | `false` | The outline panel: `true`, or `{ visible, position, width, levels, collapse, label }`. `visible` and `position` (prop changes) apply live; the rest are read when the view is created |
+| `showWhitespace` | `boolean` | `false` | Shows spaces and tabs in the source editor. Applies live |
+| `manifestView` | `'form' \| 'json'` | `'form'` | How `manifest.json` opens. Read when the view is created |
+| `jsonStatus` | `boolean` | `true` | The status line under the editor for `.json` files. Read when the view is created |
 
 `controls`, density, `imageHydrationAnimation`, and rendering prop changes apply in
 place — they never recreate the workspace view. Line-number visibility changes
@@ -146,6 +151,10 @@ re-mount), and unmounts on selection change.
 | `onAssetsHydrated` | `(snapshot: MdzipWorkspaceSnapshot) => void` | Called once the mounted preview's images have loaded |
 | `onLinkActivated` | `(event: MdzipLinkActivatedEvent) => void` | Called for every preview link click before built-in handling; call `event.preventDefault()` to take over |
 | `onFailed` | `(error: unknown) => void` | Called on unrecoverable errors |
+| `onOutlineVisibilityChanged` | `(visible: boolean) => void` | Called when the reader shows or hides the outline from the toolbar |
+| `onOutlineWidthChanged` | `(width: number) => void` | Called with the outline panel's width (pixels) when the reader finishes dragging its edge |
+| `onWhitespaceVisibilityChanged` | `(visible: boolean) => void` | Called when the reader shows or hides whitespace from the toolbar |
+| `onJsonValidityChanged` | `(validity: MdzipJsonValidity \| null, path: string \| null) => void` | Called (debounced while typing) with the open `.json` file's validity; `null`s for other files |
 | `onConversionRequested` | `(action: MdzipConversionAction) => boolean \| Promise<boolean>` | Host hook for the markdown→MDZ conversion flow (nav button, Insert Image, or image paste on a plain `.md`). Return/resolve `true` to take over and suppress the built-in conversion dialog |
 | `onPackRequested` | `(request: MdzipPackFilesRequest, context: MdzipPackFilesContext) => boolean \| Promise<boolean>` | Host hook for the folder→.mdz packing decision surfaced by the `packFilesAsWorkspace(files, options)` ref method — fires only when the file list contains more than one Markdown file. Same return contract as `onConversionRequested` |
 
@@ -207,5 +216,7 @@ await ref.current?.executeCommand('bold');
 
 return <MdzipWorkspace ref={ref} ... />;
 ```
+
+Also: `setOutlineVisible(visible)` and `setOutlinePosition('left' | 'right')` move the outline panel, and `extractFiles(paths, { includeFolders })` returns the archive's files as `{ path, bytes }`.
 
 See the [`@mdzip/editor`](https://www.npmjs.com/package/@mdzip/editor) package for the full API reference, theming guide, and framework-agnostic usage.

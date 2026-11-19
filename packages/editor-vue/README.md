@@ -106,6 +106,11 @@ prop (`{ navigation?, changeTraversal?, showUnchanged? }`) to opt any out.
 | `entrySlotPriority` | `number` | `0` | Matching priority of the `#entry` slot relative to `entryRenderers` |
 | `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; inline objects are safe |
 | `externalLinks` | `MdzipExternalLinkPolicy` | — | External-link policy, e.g. `{ target: '_blank' }` (adds `rel="noopener noreferrer"`); optional `rel` and `predicate(href)`. Re-applies without a re-render only when `target`, `rel` or `predicate` change; inline objects are safe |
+| `onExtractFiles` | `(request: MdzipExtractRequest) => void \| Promise<void>` | — | A function prop, like `onConversionRequested`, because the view waits for it. Writes files taken out of the archive (the contents pane's Extract…) for hosts that can write to disk; the menu then says **Extract…** instead of offering browser downloads. The request has `files: [{ path, bytes }]` and `selection`. Read when the view is created |
+| `outline` | `boolean \| MdzipOutlineViewOptions` | `false` | The outline panel: `true`, or `{ visible, position, width, levels, collapse, label }`. `visible` and `position` (prop changes) apply live; the rest are read when the view is created |
+| `showWhitespace` | `boolean` | `false` | Shows spaces and tabs in the source editor. Applies live |
+| `manifestView` | `'form' \| 'json'` | `'form'` | How `manifest.json` opens. Read when the view is created |
+| `jsonStatus` | `boolean` | `true` | The status line under the editor for `.json` files. Read when the view is created |
 
 `controls`, density, `imageHydrationAnimation`, and rendering prop changes apply in
 place — they never recreate the workspace view. Line-number visibility changes
@@ -149,6 +154,10 @@ reactive, and the tree unmounts on selection change.
 | `assetsHydrated` | `MdzipWorkspaceSnapshot` | Emitted once the mounted preview's images have loaded |
 | `linkActivated` | `MdzipLinkActivatedEvent` | Emitted for every preview link click before built-in handling; call `event.preventDefault()` to take over |
 | `failed` | `unknown` | Emitted on unrecoverable errors |
+| `outlineVisibilityChanged` | `boolean` | Emitted when the reader shows or hides the outline from the toolbar |
+| `outlineWidthChanged` | `number` | Emitted with the outline panel's width (pixels) when the reader finishes dragging its edge |
+| `whitespaceVisibilityChanged` | `boolean` | Emitted when the reader shows or hides whitespace from the toolbar |
+| `jsonValidityChanged` | `{ validity, path }` | Emitted (debounced while typing) with the open `.json` file's validity; `null`s for other files |
 
 ## Conversion hook
 
@@ -206,6 +215,8 @@ async function save() {
   <MdzipWorkspace ref="workspace" ... />
 </template>
 ```
+
+Also: `setOutlineVisible(visible)` and `setOutlinePosition('left' | 'right')` move the outline panel, and `extractFiles(paths, { includeFolders })` returns the archive's files as `{ path, bytes }`.
 
 The handle also exposes `whenRendered()`, which resolves once the current preview (including
 its images) is mounted — useful for revealing or animating read-only preview content.

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.5.1] - 2026-11-18
+
 The Angular, React and Vue wrappers only; `@mdzip/editor` and `@mdzip/renderer` are unchanged.
 
 ### Added

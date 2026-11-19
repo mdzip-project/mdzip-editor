@@ -108,6 +108,11 @@ showUnchanged? }`) to opt any of them out.
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — new array identities with the same ids are safe |
 | `frontMatter` | `MdzipFrontMatterOptions` | `{}` | Front matter panel config (`enabled`, `display`, `collapsible`, `label`) — always registered, diffed by deep equality; new object identities with equal contents are safe |
 | `externalLinks` | `MdzipExternalLinkPolicy` | — | External-link policy, e.g. `{ target: '_blank' }` (adds `rel="noopener noreferrer"`); optional `rel` and `predicate(href)`. Re-applies without a re-render; diffed by reference — keep the object stable |
+| `onExtractFiles` | `(request: MdzipExtractRequest) => void \| Promise<void>` | — | An input function, like `onConversionRequested`. Writes files taken out of the archive (the contents pane's Extract…) for hosts that can write to disk; the menu then says **Extract…** instead of offering browser downloads. The request has `files: [{ path, bytes }]` and `selection`. Read when the view is created |
+| `outline` | `boolean \| MdzipOutlineViewOptions` | `false` | The outline panel: `true`, or `{ visible, position, width, levels, collapse, label }`. `visible` and `position` (input changes) apply live; the rest are read when the view is created |
+| `showWhitespace` | `boolean` | `false` | Shows spaces and tabs in the source editor. Applies live |
+| `manifestView` | `'form' \| 'json'` | `'form'` | How `manifest.json` opens. Read when the view is created |
+| `jsonStatus` | `boolean` | `true` | The status line under the editor for `.json` files. Read when the view is created |
 
 `controls`, density, `imageHydrationAnimation`, and rendering input changes apply in
 place — they never recreate the workspace view. Line-number visibility changes
@@ -157,6 +162,10 @@ change.
 | `assetsHydrated` | `MdzipWorkspaceSnapshot` | Emitted once the mounted preview's images have loaded |
 | `linkActivated` | `MdzipLinkActivatedEvent` | Emitted for every preview link click before built-in handling; call `event.preventDefault()` to take over |
 | `failed` | `unknown` | Emitted on unrecoverable errors |
+| `outlineVisibilityChanged` | `boolean` | Emitted when the reader shows or hides the outline from the toolbar |
+| `outlineWidthChanged` | `number` | Emitted with the outline panel's width (pixels) when the reader finishes dragging its edge |
+| `whitespaceVisibilityChanged` | `boolean` | Emitted when the reader shows or hides whitespace from the toolbar |
+| `jsonValidityChanged` | `MdzipJsonValidityChange` | Emitted (debounced while typing) with the open `.json` file's validity; `null`s for other files |
 
 ## Conversion hook
 
@@ -211,6 +220,8 @@ the archive content changes. See the
 All imperative methods are public instance methods on `MdzipWorkspaceComponent`,
 so any reference to the component instance works. No view query is required: a
 template reference variable can hand the instance directly to an event handler.
+
+Also: `setOutlineVisible(visible)` and `setOutlinePosition('left' | 'right')` move the outline panel, and `extractFiles(paths, { includeFolders })` returns the archive's files as `{ path, bytes }`.
 
 ```ts
 @Component({
