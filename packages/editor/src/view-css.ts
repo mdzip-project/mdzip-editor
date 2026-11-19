@@ -975,6 +975,50 @@ export const WORKSPACE_CSS = `
   display: none;
 }
 
+/* The panel's draggable edge, beside the document on either side. Flex
+ * order places the outline (and its edge) right of the document, or with
+ * outline-left, between the contents pane and the document. */
+.mdzip-root .outline-resizer {
+  position: relative;
+  flex: 0 0 6px;
+  margin: 0 -3px;
+  z-index: 2;
+  cursor: col-resize;
+}
+
+.mdzip-root .outline-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.mdzip-root .outline-resizer:hover::before {
+  background: var(--mdzip-focus-outline-color);
+}
+
+.mdzip-root .outline-pane[hidden] + .outline-resizer {
+  display: none;
+}
+
+.mdzip-root .nav-pane { order: 0; }
+.mdzip-root .nav-resizer { order: 1; }
+.mdzip-root .pane-stack { order: 4; }
+.mdzip-root .outline-resizer { order: 5; }
+.mdzip-root .outline-pane { order: 6; }
+
+.mdzip-root.outline-left .outline-pane {
+  order: 2;
+  border-left: none;
+  border-right: 1px solid var(--mdzip-border-color);
+}
+
+.mdzip-root.outline-left .outline-resizer { order: 3; }
+
 .mdzip-root .mdz-outline {
   --mdz-outline-text: var(--mdzip-editor-foreground-color);
   --mdz-outline-muted: var(--mdzip-muted-foreground-color);
@@ -1049,6 +1093,14 @@ export const WORKSPACE_CSS = `
     z-index: 5;
     width: min(var(--mdzip-outline-pane-width, 240px), 80%);
     box-shadow: -8px 0 24px rgba(0, 0, 0, 0.18);
+  }
+  .mdzip-root.outline-left .outline-pane {
+    right: auto;
+    left: 0;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.18);
+  }
+  .mdzip-root .outline-resizer {
+    display: none;
   }
 }
 
@@ -2680,6 +2732,7 @@ export const WORKSPACE_CSS = `
   .mdzip-root .nav-pane,
   .mdzip-root .nav-resizer,
   .mdzip-root .outline-pane,
+  .mdzip-root .outline-resizer,
   .mdzip-root .split-resizer,
   .mdzip-root .edit-pane,
   .mdzip-root .edit-toolbar,

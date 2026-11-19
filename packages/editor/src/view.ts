@@ -1170,6 +1170,8 @@ export interface MdzipWorkspaceViewOptions {
   outline?: boolean | MdzipOutlineViewOptions;
   /** Called when the outline panel is shown or hidden from the toolbar, so a host can remember the choice. */
   onOutlineVisibilityChanged?: (visible: boolean) => void;
+  /** Called when the reader finishes dragging the outline panel to a new width (pixels), so a host can remember it. */
+  onOutlineWidthChanged?: (width: number) => void;
   /**
    * Show spaces (as faint dots) and tabs (as arrows) in the source editor at
    * start. Default `false`. The toolbar button (`controls.whitespace`) and
@@ -1209,7 +1211,17 @@ export interface MdzipOutlineViewOptions {
   collapse?: boolean;
   /** Accessible name and title of the panel. Default "Outline". */
   label?: string;
+  /** Which side of the document the panel goes on. Default `'right'`. */
+  position?: MdzipOutlinePosition;
+  /**
+   * Width in pixels at start (the reader can drag the panel's edge). Default
+   * 240, or `--mdzip-outline-pane-width` when the host's styles set it.
+   */
+  width?: number;
 }
+
+/** Which side of the document the outline panel goes on. */
+export type MdzipOutlinePosition = 'left' | 'right';
 
 /** Options accepted by {@link MdzipWorkspaceView.setRenderingOptions}. */
 export interface MdzipRenderingOptions {
@@ -2493,6 +2505,10 @@ export class MdzipWorkspaceView {
   private findRevealTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly elOutlineBtn: HTMLButtonElement;
   private readonly elOutlinePane: HTMLElement;
+  private readonly elOutlineResizer: HTMLElement;
+  private outlinePosition: MdzipOutlinePosition = 'right';
+  // Null until set by the option or a drag: the style sheet's width applies.
+  private outlineWidth: number | null = null;
   private outlineVisible = false;
   private whitespaceVisible = false;
   // Which parts of the edit toolbar the last render showed (renderFormattingControls).
@@ -2610,6 +2626,10 @@ export class MdzipWorkspaceView {
     this.navVisible = options.navigationButtonActive ?? this.navVisible;
     this.outlineOptions = typeof options.outline === 'object' ? options.outline : {};
     this.outlineVisible = typeof options.outline === 'object' ? options.outline.visible ?? false : options.outline ?? false;
+    this.outlinePosition = this.outlineOptions.position === 'left' ? 'left' : 'right';
+    this.outlineWidth = typeof this.outlineOptions.width === 'number' && this.outlineOptions.width > 0
+      ? Math.round(this.outlineOptions.width)
+      : null;
     this.whitespaceVisible = options.showWhitespace ?? false;
     this.manifestLayout = options.manifestView === 'json' ? 'source' : 'preview';
     this.markdownRenderer = options.markdownRenderer;
@@ -2654,6 +2674,7 @@ export class MdzipWorkspaceView {
     this.elWhitespaceBtn = q('[data-ref="whitespace-btn"]');
     this.elFormatJsonBtn = q('[data-ref="format-json-btn"]');
     this.elOutlinePane = q('[data-ref="outline-pane"]');
+    this.elOutlineResizer = q('[data-ref="outline-resizer"]');
     this.elZoomBtn = q('[data-ref="zoom-btn"]');
     this.elWidthControls = q('[data-ref="width-controls"]');
     this.elWidthMenuBtn = q('[data-ref="width-menu-btn"]');
@@ -6567,6 +6588,39 @@ export class MdzipWorkspaceView {
       window.addEventListener('pointerup', onUp, { once: true });
     });
 
+    // The outline's edge: it's on the document side of the panel, so dragging
+    // toward the document widens it on either side.
+    this.elOutlineResizer.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) {
+        return;
+      }
+      e.preventDefault();
+      this.resizing = true;
+      this.elRoot.classList.add('resizing');
+      const start = this.outlineWidth;
+
+      const onMove = (me: PointerEvent): void => {
+        const shell = this.elWorkspaceShell.getBoundingClientRect();
+        const pane = this.elOutlinePane.getBoundingClientRect();
+        const raw = this.outlinePosition === 'left' ? me.clientX - pane.left : pane.right - me.clientX;
+        const max = Math.max(200, Math.floor(shell.width * 0.5));
+        this.outlineWidth = Math.max(160, Math.min(max, Math.round(raw)));
+        this.syncOutlineGeometry();
+      };
+
+      const onUp = (): void => {
+        this.resizing = false;
+        this.elRoot.classList.remove('resizing');
+        window.removeEventListener('pointermove', onMove);
+        if (this.outlineWidth !== null && this.outlineWidth !== start) {
+          this.options.onOutlineWidthChanged?.(this.outlineWidth);
+        }
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp, { once: true });
+    });
+
     this.elSplitResizer.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || this.layout !== 'split') {
         return;
@@ -7104,8 +7158,34 @@ export class MdzipWorkspaceView {
     this.render();
   }
 
+  /** Which side of the document the outline panel is on. */
+  public get outlineSide(): MdzipOutlinePosition {
+    return this.outlinePosition;
+  }
+
+  /** Puts the outline panel on the left or the right of the document. */
+  public setOutlinePosition(position: MdzipOutlinePosition): void {
+    this.outlinePosition = position === 'left' ? 'left' : 'right';
+    this.syncOutlineGeometry();
+  }
+
+  /** The outline panel's width in pixels, as last set or dragged; null while the style sheet's width applies. */
+  public get outlinePaneWidth(): number | null {
+    return this.outlineWidth;
+  }
+
+  private syncOutlineGeometry(): void {
+    this.elRoot.classList.toggle('outline-left', this.outlinePosition === 'left');
+    if (this.outlineWidth === null) {
+      this.elRoot.style.removeProperty('--mdzip-outline-pane-width');
+    } else {
+      this.elRoot.style.setProperty('--mdzip-outline-pane-width', `${this.outlineWidth}px`);
+    }
+  }
+
   private syncOutlinePane(show: boolean): void {
     this.elRoot.classList.toggle('outline-pane-visible', show);
+    this.syncOutlineGeometry();
     if (!show) {
       this.elOutlinePane.hidden = true;
       this.outline?.destroy();
@@ -7340,6 +7420,7 @@ export class MdzipWorkspaceView {
 
   private scrollPaneToElement(target: Element): void {
     this.elPreviewPane.scrollTop = this.paneTopOf(target);
+    this.syncScrollFromPreview(true);
   }
 
   /**
@@ -7356,6 +7437,7 @@ export class MdzipWorkspaceView {
     const distance = Math.abs(targetTop() - start);
     if (distance < 2) {
       pane.scrollTop = targetTop();
+      this.syncScrollFromPreview(true);
       return;
     }
     // Longer for longer trips, within limits that still feel quick.
@@ -7372,6 +7454,8 @@ export class MdzipWorkspaceView {
       const t = Math.min(1, Math.max(0, (now - startTime) / duration));
       const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
       pane.scrollTop = start + (targetTop() - start) * eased;
+      // In Split, the source follows along.
+      this.syncScrollFromPreview(true);
       this.previewGlide = t < 1 ? requestAnimationFrame(step) : null;
     };
     this.previewGlide = requestAnimationFrame(step);
@@ -10935,11 +11019,17 @@ export class MdzipWorkspaceView {
     return requested;
   }
 
-  private syncScrollFromPreview(): void {
+  /**
+   * In Split, scrolls the source to match the preview. Normally only after
+   * the reader scrolled the preview themselves; `driven` is for the editor's
+   * own moves (going to a heading from the outline or a link), which no
+   * gesture precedes.
+   */
+  private syncScrollFromPreview(driven = false): void {
     if (this.syncing || !this.cmEditor || this.layout !== 'split' || this.layoutIsManifest) {
       return;
     }
-    if (performance.now() - this.lastPreviewGestureTime > MdzipWorkspaceView.SCROLL_SYNC_GESTURE_WINDOW_MS) {
+    if (!driven && performance.now() - this.lastPreviewGestureTime > MdzipWorkspaceView.SCROLL_SYNC_GESTURE_WINDOW_MS) {
       return;
     }
     if (performance.now() - this.lastContentChangeTime < MdzipWorkspaceView.SCROLL_SYNC_SETTLE_MS) {
@@ -11601,6 +11691,8 @@ const SHELL_HTML = `
       <section class="pane entry-pane" data-ref="entry-pane"></section>
     </div>
     <aside class="outline-pane" data-ref="outline-pane" hidden></aside>
+    <div class="outline-resizer" data-ref="outline-resizer"
+      role="separator" aria-orientation="vertical" aria-label="Resize outline"></div>
   </div>
 
   <div class="title-dialog-backdrop" data-ref="title-dialog" hidden

@@ -16,11 +16,15 @@ $('secure').className = window.isSecureContext ? 'ok' : 'warn';
 // ?progressive=1 renders the preview in chunks near the viewport, as VS Code and
 // Studio do for large documents (e.g. a Google Voice export).
 const progressive = new URLSearchParams(location.search).get('progressive') === '1';
+// ?outline=left puts the outline panel on the left of the document.
+const outlineLeft = new URLSearchParams(location.search).get('outline') === 'left';
 
 const view = new MdzipWorkspaceView($('app'), {
   controls: 'standalone-editor',
   initialLayout: 'split',
   progressiveTextRendering: progressive,
+  outline: { position: outlineLeft ? 'left' : 'right' },
+  onOutlineWidthChanged: (width) => log(`onOutlineWidthChanged(${width})`),
   markdownExtensions: [mdzipMermaidExtension()],
   onColorSchemePreferenceChanged: (preference) => log(`onColorSchemePreferenceChanged('${preference}')`),
   onPreviewWidthChanged: (width) => log(`onPreviewWidthChanged('${width}')`),
@@ -87,6 +91,15 @@ const applyHostTheme = () => {
 };
 $('host-theme').addEventListener('change', applyHostTheme);
 $('host-scheme').addEventListener('change', () => { if ($('host-theme').checked) applyHostTheme(); });
+
+// Which side the outline panel is on (setOutlinePosition); ?outline=left starts it there.
+$('outline-side').value = outlineLeft ? 'left' : 'right';
+$('outline-side').addEventListener('change', () => {
+  const side = $('outline-side').value;
+  view.setOutlinePosition(side);
+  if (!view.isOutlineVisible) view.setOutlineVisible(true);
+  log(`setOutlinePosition('${side}')`);
+});
 
 const response = await fetch('dist/sample.mdz');
 await openBytes(new Uint8Array(await response.arrayBuffer()), 'sample.mdz');

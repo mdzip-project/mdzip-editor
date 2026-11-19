@@ -240,8 +240,14 @@ view.isOutlineVisible; // true
 `levels` defaults to `[1, 2, 3]`. With `collapse` (the default), deeper levels
 show only under the section being read. `controls: { outline: false }` hides
 the button; `outline: true` still opens the panel, for hosts with their own
-toggle. The panel is 240px wide (`--mdzip-outline-pane-width`); below 760px it
-floats over the preview. Its links use the `.mdz-outline*` classes and take
+toggle. The panel is 240px wide (`--mdzip-outline-pane-width`, or the
+`width` option), and the reader can drag its edge to resize it;
+`onOutlineWidthChanged(width)` reports the new width when they let go, so a
+host can pass it back as `width` next time. It goes on the right of the
+document; `position: 'left'` puts it on the left instead, between the
+contents pane and the document, and `setOutlinePosition('left' | 'right')`
+moves it later (`outlineSide` says where it is). Below 760px it floats over
+the preview, on its side. Its links use the `.mdz-outline*` classes and take
 their colors from `--mdz-outline-text`, `--mdz-outline-muted`,
 `--mdz-outline-rule` and `--mdz-outline-current`.
 

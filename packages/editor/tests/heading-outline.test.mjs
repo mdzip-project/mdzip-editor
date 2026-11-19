@@ -322,6 +322,86 @@ test('controls.outline: false hides the button but the host can still open the p
   }
 });
 
+test('the outline goes on the right by default, or on the left; setOutlinePosition moves it', async () => {
+  const { view, container, pane, cleanup } = await mountView('## A\n', { outline: { visible: true, position: 'left' } });
+  try {
+    const root = container.querySelector('.mdzip-root');
+    assert.equal(view.outlineSide, 'left');
+    assert.ok(root.classList.contains('outline-left'));
+    view.setOutlinePosition('right');
+    assert.equal(view.outlineSide, 'right');
+    assert.equal(root.classList.contains('outline-left'), false);
+    assert.equal(pane.hidden, false);
+    assert.ok(pane.nextElementSibling.matches('[data-ref="outline-resizer"]'), 'the edge follows the panel (hidden with it)');
+  } finally {
+    cleanup();
+  }
+});
+
+test('dragging the outline edge resizes it, on either side, and reports the width once', async () => {
+  const widths = [];
+  const { view, container, pane, cleanup } = await mountView('## A\n', {
+    outline: { visible: true, width: 300 },
+    onOutlineWidthChanged: (width) => widths.push(width)
+  });
+  try {
+    const root = container.querySelector('.mdzip-root');
+    const shell = container.querySelector('[data-ref="workspace-shell"]');
+    const edge = container.querySelector('[data-ref="outline-resizer"]');
+    assert.equal(root.style.getPropertyValue('--mdzip-outline-pane-width'), '300px', 'the width option');
+    assert.equal(view.outlinePaneWidth, 300);
+    shell.getBoundingClientRect = () => ({ left: 0, right: 1200, width: 1200, top: 0, bottom: 800 });
+    pane.getBoundingClientRect = () => ({ left: 900, right: 1200, width: 300, top: 0, bottom: 800 });
+    const drag = (fromX, toX) => {
+      edge.dispatchEvent(new window.MouseEvent('pointerdown', { button: 0, clientX: fromX, bubbles: true, cancelable: true }));
+      window.dispatchEvent(new window.MouseEvent('pointermove', { clientX: toX }));
+      window.dispatchEvent(new window.MouseEvent('pointerup', { clientX: toX }));
+    };
+    drag(900, 850);
+    assert.equal(view.outlinePaneWidth, 350, 'on the right, dragging left widens it');
+    drag(850, 100);
+    assert.equal(view.outlinePaneWidth, 600, 'at most half the editor');
+    view.setOutlinePosition('left');
+    pane.getBoundingClientRect = () => ({ left: 280, right: 880, width: 600, top: 0, bottom: 800 });
+    drag(880, 400);
+    assert.equal(view.outlinePaneWidth, 160, 'on the left, dragging left narrows it, to at least 160');
+    assert.equal(root.style.getPropertyValue('--mdzip-outline-pane-width'), '160px');
+    assert.deepEqual(widths, [350, 600, 160], 'reported when each drag ends');
+  } finally {
+    cleanup();
+  }
+});
+
+test('in Split, going to a heading from the outline scrolls the source too', async () => {
+  const { view, pane, previewPane, cleanup } = await mountView('# Top\n\nText.\n\n## Far Down\n\nMore.\n', {
+    outline: true, initialLayout: 'split'
+  });
+  const layout = fakeLayout();
+  try {
+    await waitFor(() => assert.ok(view.cmEditor));
+    const scroller = view.cmEditor.dom.querySelector('.cm-scroller');
+    // No real layout in jsdom: a preview 2000px tall over a source 1000px
+    // tall, both 500px high, so the sync falls back to the scroll ratio.
+    let previewTop = 0;
+    let sourceTop = 0;
+    const sized = (el, height, get, set) => {
+      Object.defineProperty(el, 'scrollHeight', { configurable: true, get: () => height });
+      Object.defineProperty(el, 'clientHeight', { configurable: true, get: () => 500 });
+      Object.defineProperty(el, 'scrollTop', { configurable: true, get, set });
+    };
+    sized(previewPane, 2000, () => previewTop, (v) => { previewTop = v; });
+    sized(scroller, 1000, () => sourceTop, (v) => { sourceTop = v; });
+    layout.set('user-content-far-down', () => 1500 - previewTop);
+    const link = [...pane.querySelectorAll('a')].find((a) => a.textContent === 'Far Down');
+    link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    await waitFor(() => assert.equal(Math.round(previewTop), 1500), 500);
+    assert.equal(Math.round(sourceTop), 500, 'the source followed (1500 of 1500 in the preview is 500 of 500 in the source)');
+  } finally {
+    layout.restore();
+    cleanup();
+  }
+});
+
 test('the outline follows edits to the document', async () => {
   const { view, texts, cleanup } = await mountView('## A\n', { outline: true });
   try {
@@ -357,7 +437,7 @@ test('with progressive rendering the outline lists unmounted headings, and a cli
     await waitFor(() => {
       assert.ok(previewContent.querySelector('#user-content-last-section'), 'target chunk got mounted');
       assert.equal(Math.round(scrollTop), 9000);
-    });
+    }, 500); // the glide takes up to 0.7 s, after the chunk is drawn
     assert.ok(visited.some((top) => top > 100 && top < 8900), 'it scrolls through the way there, not in one jump');
     assert.ok(link.classList.contains('is-current'));
   } finally {
