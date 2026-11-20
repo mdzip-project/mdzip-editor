@@ -230,7 +230,29 @@ test('clicking a #fragment link scrolls the preview to the matching heading', as
     await wait(0);
 
     assert.equal(notPrevented, false, 'the preview owns the click — no browser hash navigation');
-    assert.equal(previewPane.scrollTop, 640);
+    assert.equal(previewPane.scrollTop, 624, 'the heading lands 16px (its scroll-margin-top) below the top');
+  } finally {
+    cleanup();
+  }
+});
+
+test("going to a heading leaves its scroll-margin-top above it, as scrollIntoView does", async () => {
+  const { previewPane, previewContent, setOffset, cleanup } = await mountPreview(
+    '# Top\n\n[Jump](#section-two)\n\n## Section One\n\n## Section Two\n'
+  );
+  try {
+    previewContent.querySelector('#user-content-section-two').style.scrollMarginTop = '40px';
+    setOffset('user-content-section-two', 640);
+    clickLink(previewContent, 'Jump');
+    await wait(0);
+    assert.equal(previewPane.scrollTop, 600, 'a page can set its own margin');
+
+    // Never above the top of the document.
+    previewPane.scrollTop = 0;
+    setOffset('user-content-section-two', 10);
+    clickLink(previewContent, 'Jump');
+    await wait(0);
+    assert.equal(previewPane.scrollTop, 0);
   } finally {
     cleanup();
   }
@@ -244,7 +266,7 @@ test('#fragment matching ignores case and percent-encoding', async () => {
     setOffset('user-content-café-menu', 300);
     clickLink(previewContent, 'Jump');
     await wait(0);
-    assert.equal(previewPane.scrollTop, 300);
+    assert.equal(previewPane.scrollTop, 284);
   } finally {
     cleanup();
   }
@@ -300,7 +322,7 @@ test('a #fragment pointing into a not-yet-mounted chunk mounts up to it, then sc
 
     await waitFor(() => {
       assert.ok(previewContent.querySelector('#user-content-last-section'), 'target chunk got mounted');
-      assert.equal(previewPane.scrollTop, 9000);
+      assert.equal(previewPane.scrollTop, 8984);
     });
   } finally {
     cleanup();

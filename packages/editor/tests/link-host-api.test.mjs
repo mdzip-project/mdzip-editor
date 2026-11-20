@@ -200,7 +200,7 @@ test('onLinkActivated receives the parsed link, and unprevented clicks keep the 
     setOffset('user-content-section-two', 480);
     assert.equal(clickLink(previewContent, 'Jump'), false, 'anchor click still owned by the preview');
     await wait(0);
-    assert.equal(previewPane.scrollTop, 480, 'built-in anchor scroll still runs');
+    assert.equal(previewPane.scrollTop, 464, 'built-in anchor scroll still runs');
 
     clickLink(previewContent, 'Design', { ctrlKey: true });
     assert.deepEqual(unresolved, ['../design/foo.md#overview'], 'onUnresolvedLinkClick still runs');
@@ -293,7 +293,7 @@ test('a throwing onLinkActivated is reported and the built-in behavior continues
     clickLink(previewContent, 'Jump');
     await wait(0);
     assert.equal(failures.length, 1);
-    assert.equal(previewPane.scrollTop, 480);
+    assert.equal(previewPane.scrollTop, 464);
   } finally {
     cleanup();
   }
@@ -413,7 +413,7 @@ test('scrollToAnchor called before the document opens waits for the preview, the
     const result = view.scrollToAnchor('#Deep-Link');
     await view.open(new TextEncoder().encode('# Title\n\n## Deep Link\n'), { mode: 'read-only', fileName: 'a.md' });
     assert.equal(await result, true);
-    assert.equal(previewPane.scrollTop, 750);
+    assert.equal(previewPane.scrollTop, 734);
   } finally {
     cleanup();
   }
@@ -431,7 +431,7 @@ test('scrollToAnchor works when called from onPreviewRendered', async () => {
     await mounted.view.open(new TextEncoder().encode(LINKS_SOURCE), { mode: 'read-only', fileName: 'a.md' });
     await waitFor(() => assert.ok(pending));
     assert.equal(await pending, true);
-    assert.equal(mounted.previewPane.scrollTop, 320);
+    assert.equal(mounted.previewPane.scrollTop, 304);
   } finally {
     mounted.cleanup();
   }
@@ -468,7 +468,7 @@ test('scrollToAnchor mounts unmounted progressive chunks to reach the target', a
     assert.equal(previewContent.querySelector('#user-content-last-section'), null, 'sanity: target unmounted');
     setOffset('user-content-last-section', 9000);
     assert.equal(await view.scrollToAnchor('last-section'), true);
-    assert.equal(previewPane.scrollTop, 9000);
+    assert.equal(previewPane.scrollTop, 8984);
   } finally {
     cleanup();
   }
@@ -505,7 +505,7 @@ test('openPath opens another document and lands on its heading', async () => {
     assert.equal(await view.openPath('chapter1.md', { anchor: '#part-two' }), true);
     assert.equal(view.getCurrentPath(), 'chapter1.md');
     assert.ok(previewContent.querySelector('#user-content-part-two'));
-    assert.equal(previewPane.scrollTop, 640);
+    assert.equal(previewPane.scrollTop, 624);
   } finally {
     cleanup();
   }

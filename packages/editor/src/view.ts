@@ -7413,9 +7413,14 @@ export class MdzipWorkspaceView {
     return true;
   }
 
+  // The pane's scrollTop that puts `target` at the top, less its
+  // scroll-margin-top (preview headings have one), so a heading gone to stops
+  // a little below the top, as scrollIntoView() would leave it.
   private paneTopOf(target: Element): number {
     const pane = this.elPreviewPane;
-    return pane.scrollTop + target.getBoundingClientRect().top - pane.getBoundingClientRect().top;
+    const style = target.ownerDocument.defaultView?.getComputedStyle(target);
+    const margin = Number.parseFloat(style?.scrollMarginTop ?? '') || 0;
+    return Math.max(0, pane.scrollTop + target.getBoundingClientRect().top - pane.getBoundingClientRect().top - margin);
   }
 
   private scrollPaneToElement(target: Element): void {

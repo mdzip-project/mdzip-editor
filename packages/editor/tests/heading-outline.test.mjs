@@ -392,6 +392,8 @@ test('in Split, going to a heading from the outline scrolls the source too', asy
     sized(previewPane, 2000, () => previewTop, (v) => { previewTop = v; });
     sized(scroller, 1000, () => sourceTop, (v) => { sourceTop = v; });
     layout.set('user-content-far-down', () => 1500 - previewTop);
+    // Flush with the top, to keep the sums simple.
+    previewPane.querySelector('#user-content-far-down').style.scrollMarginTop = '0px';
     const link = [...pane.querySelectorAll('a')].find((a) => a.textContent === 'Far Down');
     link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
     await waitFor(() => assert.equal(Math.round(previewTop), 1500), 500);
@@ -436,7 +438,7 @@ test('with progressive rendering the outline lists unmounted headings, and a cli
     link.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
     await waitFor(() => {
       assert.ok(previewContent.querySelector('#user-content-last-section'), 'target chunk got mounted');
-      assert.equal(Math.round(scrollTop), 9000);
+      assert.equal(Math.round(scrollTop), 8984);
     }, 500); // the glide takes up to 0.7 s, after the chunk is drawn
     assert.ok(visited.some((top) => top > 100 && top < 8900), 'it scrolls through the way there, not in one jump');
     assert.ok(link.classList.contains('is-current'));

@@ -1526,6 +1526,8 @@ export const WORKSPACE_CSS = `
   margin-top: 1.4em;
   margin-bottom: 0.4em;
   line-height: 1.25;
+  /* Going to a heading (outline, #link) leaves this much space above it. */
+  scroll-margin-top: 16px;
 }
 
 .mdzip-root .preview-content h1 {

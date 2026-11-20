@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **Going to a heading leaves a little space above it.** Clicking an outline entry or a `#link`, or calling `scrollToAnchor()` or `openPath(path, { anchor })`, used to put the heading flush against the top of the preview. Preview headings now have `scroll-margin-top: 16px`, and the preview's own scrolling honours it, as `scrollIntoView()` does; a host's CSS can set a different margin.
+
 ## [2.5.1] - 2026-11-18
 
 The Angular, React and Vue wrappers only; `@mdzip/editor` and `@mdzip/renderer` are unchanged.
