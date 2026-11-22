@@ -44,6 +44,8 @@ import type {
   MdzWorkspace,
   MdzWorkspaceAsset,
   MdzipFileAction,
+  MdzipFileActionTarget,
+  MdzipFileCardHelp,
   MdzipExtractedFile,
   MdzipExtractRequest,
   MdzipJsonValidity,
@@ -177,6 +179,10 @@ export interface MdzipWorkspaceProps {
   inlineSvgLinks?: boolean;
   /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
   hostFileActions?: readonly MdzipFileAction[];
+  /** A line for the card of a file the preview can't show (see the view option). Whether there is one is read when the view is created. */
+  fileNote?: (file: MdzipFileActionTarget) => string | null;
+  /** A help link at the bottom of that card (see the view option). Read when the view is created. */
+  fileCardHelp?: MdzipFileCardHelp;
   navigationMode?: MdzipNavigationMode;
   navigationButtonActive?: boolean;
   onChanged?: (event: MdzipWorkspaceChange) => void;
@@ -308,6 +314,8 @@ export interface MdzipWorkspaceHandle {
   extractFiles(paths: readonly string[], options?: { includeFolders?: boolean }): Promise<MdzipExtractedFile[]>;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
+  /** Asks the file actions' labels and `fileNote` again (see the view's `refreshFileActions()`). */
+  refreshFileActions(): void;
   removeAsset(archivePath: string, options?: MdzipRemoveAssetOptions): Promise<boolean>;
   removeFile(archivePath: string): Promise<boolean>;
   renameFile(oldPath: string, newPath: string): Promise<boolean>;
@@ -343,6 +351,8 @@ function MdzipWorkspace({
   progressiveTextRendering,
   inlineSvgLinks,
   hostFileActions,
+  fileNote,
+  fileCardHelp,
   navigationMode,
   navigationButtonActive,
   onChanged,
@@ -465,6 +475,10 @@ function MdzipWorkspace({
   // Read when the view is created; a new array each render doesn't rebuild the view.
   const hostFileActionsRef = useRef(hostFileActions);
   hostFileActionsRef.current = hostFileActions;
+  const fileNoteRef = useRef(fileNote);
+  fileNoteRef.current = fileNote;
+  const fileCardHelpRef = useRef(fileCardHelp);
+  fileCardHelpRef.current = fileCardHelp;
 
   // Read when the view is created, like hostFileActions.
   const createOnlyRef = useRef({ outline, showWhitespace, manifestView, jsonStatus, hasExtract: onExtractFiles !== undefined });
@@ -507,6 +521,7 @@ function MdzipWorkspace({
       viewRef.current?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
     replaceAsset: (archivePath, fileBytes) =>
       viewRef.current?.replaceAsset(archivePath, fileBytes) ?? Promise.resolve(false),
+    refreshFileActions: () => viewRef.current?.refreshFileActions(),
     removeAsset: (archivePath, options) =>
       viewRef.current?.removeAsset(archivePath, options) ?? Promise.resolve(false),
     removeFile: (archivePath) =>
@@ -541,6 +556,8 @@ function MdzipWorkspace({
       progressiveTextRendering,
       inlineSvgLinks,
       hostFileActions: hostFileActionsRef.current,
+      fileNote: fileNoteRef.current ? (file) => fileNoteRef.current?.(file) ?? null : undefined,
+      fileCardHelp: fileCardHelpRef.current,
       navigationMode,
       navigationButtonActive,
       onChanged: (bytes, snapshot) => callbacksRef.current.onChanged?.({ bytes, snapshot }),

@@ -2,8 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- **A card for files the preview can't show.** A Word document, a ZIP or any other file that isn't Markdown, text or a picture used to show only "Binary file preview unavailable". It now shows a card with the file's name, what kind of file it is and its path, and buttons: the host's file actions that apply to it, then **Extract…** (or **Download**) and, in an editable document, **Replace…**. Under the buttons, a line for each says what it does (a host action's new `description`), and the new option `fileCardHelp` (`{ label, run }`) adds a link to the host's help. Desktop hosts use the card to open the file in the app the system opens it with.
+- **File actions can be named for the file and marked as the main one.** A `hostFileActions` item's `label` can be a function of the file (for example "Open in Word" for a `.docx`), and `primary: true` puts its button first on the card and makes it stand out. New option `fileNote(file)` adds a line to the card for what the host knows about the file (for example "Open in Word: changes come back each time you save there."), and `refreshFileActions()` asks for the labels and the note again when they change. The Angular, React and Vue wrappers take `fileNote` and have `refreshFileActions()`.
+
 ### Changed
 - **Going to a heading leaves a little space above it.** Clicking an outline entry or a `#link`, or calling `scrollToAnchor()` or `openPath(path, { anchor })`, used to put the heading flush against the top of the preview. Preview headings now have `scroll-margin-top: 16px`, and the preview's own scrolling honours it, as `scrollIntoView()` does; a host's CSS can set a different margin.
+
+### Fixed
+- **No dead end from the manifest form in preview-only hosts.** The form's **Edit as JSON** switches to the JSON editor, and the toolbar's View button brings the form back. A host without that button (`controls: 'preview'`, or `layout.preview: false`) left the reader in the JSON with no way back, so the link is now left out there. In a read-only document it says **View as JSON**.
 
 ## [2.5.1] - 2026-11-18
 

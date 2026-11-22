@@ -72,6 +72,7 @@ export class MdzipManifestForm {
   private readonly summary: HTMLElement;
   private readonly notice: HTMLElement;
   private readonly body: HTMLElement;
+  private readonly editJson: HTMLButtonElement;
   private readonly details: HTMLDListElement;
   private readonly custom: HTMLElement;
   private readonly controls = new Map<string, { input: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement; error: HTMLElement; spec: FieldSpec }>();
@@ -87,8 +88,10 @@ export class MdzipManifestForm {
     const header = this.el('div', 'mmf-header');
     const heading = this.el('h2', 'mmf-title');
     heading.textContent = 'Document properties';
-    const editJson = this.button('Edit as JSON', () => this.options.onEditJson());
+    // "View as JSON" when the values can't be changed: there's nothing to edit.
+    const editJson = this.button(options.editable ? 'Edit as JSON' : 'View as JSON', () => this.options.onEditJson());
     editJson.classList.add('mmf-link');
+    this.editJson = editJson;
     header.append(heading, editJson);
     this.summary = this.el('p', 'mmf-summary');
     this.summary.setAttribute('role', 'status');
@@ -143,6 +146,14 @@ export class MdzipManifestForm {
   }
 
   /** Shows `text` (the manifest as typed) and its validity. Fields being edited are left alone. */
+  /**
+   * Shows or hides Edit as JSON. The view hides it when nothing would bring
+   * the reader back to the form (a host without the toolbar's View button).
+   */
+  public setEditJsonAvailable(available: boolean): void {
+    this.editJson.hidden = !available;
+  }
+
   public update(validity: MdzipJsonValidity): void {
     const unreadable = validity.problems.find((p) => p.severity === 'error' && (p.code === 'syntax' || p.code === 'duplicate'));
     this.summary.textContent = validity.canSave

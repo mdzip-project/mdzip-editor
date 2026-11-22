@@ -848,10 +848,58 @@ export interface MdzipFileActionTarget {
 export interface MdzipFileAction {
   /** Unique within the list. */
   id: string;
-  label: string;
+  /**
+   * The item's text. A function names it for the file, for example "Open in
+   * Word" for a `.docx` from the app the system opens it with; after the
+   * answer changes, call {@link MdzipWorkspaceView.refreshFileActions}.
+   */
+  label: string | ((file: MdzipFileActionTarget) => string);
   /** Which files get the item. All files when omitted. */
   appliesTo?: (file: MdzipFileActionTarget) => boolean;
+  /**
+   * The main thing to do with a file the preview can't show: its button on
+   * the file's card comes first and stands out. The menu is unchanged.
+   */
+  primary?: boolean;
+  /**
+   * What the action does, in a sentence, under the buttons on the card of a
+   * file the preview can't show (for example "Opens it in Word. Each time
+   * you save there, the changes come back here."). A function describes it
+   * for the file. Not shown in the menu.
+   */
+  description?: string | ((file: MdzipFileActionTarget) => string);
   run: (file: MdzipFileActionTarget) => void | Promise<void>;
+}
+
+/** The link at the bottom of the card of a file the preview can't show; see {@link MdzipWorkspaceViewOptions.fileCardHelp}. */
+export interface MdzipFileCardHelp {
+  /** The link's text, such as "More about files in a document". */
+  label: string;
+  run: (file: MdzipFileActionTarget) => void | Promise<void>;
+}
+
+/** A host file action's text for a file. */
+function fileActionLabel(action: MdzipFileAction, file: MdzipFileActionTarget): string {
+  return typeof action.label === 'function' ? action.label(file) : action.label;
+}
+
+// What a file the preview can't show is, by extension, for its card.
+const FILE_KIND_NAMES: Record<string, string> = {
+  docx: 'Word document', doc: 'Word document', dotx: 'Word template', dot: 'Word template',
+  xlsx: 'Excel workbook', xls: 'Excel workbook', pptx: 'PowerPoint presentation', ppt: 'PowerPoint presentation',
+  odt: 'OpenDocument text', ods: 'OpenDocument spreadsheet', odp: 'OpenDocument presentation',
+  pdf: 'PDF document', rtf: 'Rich Text document', epub: 'EPUB book', zip: 'ZIP archive',
+  drawio: 'draw.io diagram', dio: 'draw.io diagram', psd: 'Photoshop image', ai: 'Illustrator file',
+  mp3: 'Audio', wav: 'Audio', mp4: 'Video', mov: 'Video', webm: 'Video',
+  ttf: 'Font', otf: 'Font', woff: 'Font', woff2: 'Font'
+};
+
+function fileKindName(path: string): string {
+  const name = path.split('/').pop() ?? path;
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return 'File';
+  const extension = name.slice(dot + 1).toLowerCase();
+  return FILE_KIND_NAMES[extension] ?? `${extension.toUpperCase()} file`;
 }
 
 /** A file taken out of the archive: its archive path and its bytes. */
@@ -1071,6 +1119,19 @@ export interface MdzipWorkspaceViewOptions {
    * host (for example "Open in VS Code Editor"). See {@link MdzipFileAction}.
    */
   hostFileActions?: readonly MdzipFileAction[];
+  /**
+   * A line for the card shown in place of a file the preview can't show (a
+   * Word document, say), for what the host knows about it: for example
+   * "Open in Word: changes come back each time you save there." Null for
+   * none. After the answer changes, call
+   * {@link MdzipWorkspaceView.refreshFileActions}.
+   */
+  fileNote?: (file: MdzipFileActionTarget) => string | null;
+  /**
+   * A link at the bottom of that card, to the host's help on files in a
+   * document (what the buttons do, which apps open what). None when omitted.
+   */
+  fileCardHelp?: MdzipFileCardHelp;
   /**
    * Writes files taken out of the archive (#69), for hosts that can write to
    * disk themselves, such as a desktop app. With it, the contents pane's
@@ -1794,6 +1855,8 @@ const NON_ARCHIVE_IMAGE_SOURCE_RE = /^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i;
 // image. `.drawio.svg` and `.drawio.png` end in .svg/.png and stay images.
 const DRAWIO_PATH_RE = /\.(?:drawio|dio)$/i;
 const DRAWIO_PLACEHOLDER_CLASS = 'mdzip-drawio-placeholder';
+// In place of a file the preview can't show (mountFileCard).
+const FILE_CARD_CLASS = 'mdzip-file-card';
 // Preview chrome the editor adds around rendered content: removed, or
 // unwrapped (children kept), when the selection is copied as HTML.
 const PREVIEW_CHROME_REMOVE_SELECTOR = [
@@ -3936,6 +3999,11 @@ export class MdzipWorkspaceView {
         this.mountManifestForm(snapshot);
         this.firePreviewRendered(snapshot, generation);
         this.fireAssetsHydrated(snapshot, generation);
+      } else if (snapshot.currentPathType === 'binary') {
+        this.manifestForm = null;
+        this.mountFileCard(snapshot);
+        this.firePreviewRendered(snapshot, generation);
+        this.fireAssetsHydrated(snapshot, generation);
       } else {
         this.manifestForm = null;
         this.elPreviewContent.innerHTML = renderMdzipPreviewHtml(snapshot);
@@ -4153,6 +4221,123 @@ export class MdzipWorkspaceView {
   }
 
   /**
+   * In place of a file the preview can't show (a Word document, a ZIP): a
+   * card naming it and what it is, with a button for each host file action
+   * that applies to it (the `primary` one first, such as "Open in Word"),
+   * then Extract… (or Download) and, in an editable document, Replace….
+   */
+  private mountFileCard(snapshot: MdzipWorkspaceSnapshot): void {
+    const doc = this.elPreviewContent.ownerDocument;
+    const el = <K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] => {
+      const node = doc.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+    const path = snapshot.currentPath;
+    const fileName = path.split('/').pop() ?? path;
+    const target: MdzipFileActionTarget = { path, isMarkdown: false, isImage: false, isManifest: false, isEntryPoint: false };
+
+    const card = el('div', FILE_CARD_CLASS);
+    card.setAttribute('role', 'group');
+    card.setAttribute('aria-label', fileName);
+    const icon = el('span', `${FILE_CARD_CLASS}-icon`);
+    icon.setAttribute('aria-hidden', 'true');
+    icon.innerHTML = '<svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">'
+      + '<path d="M14 2.5H6.5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V8z"/><path d="M14 2.5V8h5.5"/></svg>';
+
+    const body = el('div', `${FILE_CARD_CLASS}-body`);
+    body.append(
+      el('strong', `${FILE_CARD_CLASS}-title`, fileName),
+      el('span', `${FILE_CARD_CLASS}-file`, `${fileKindName(path)} · ${path}`),
+      el('span', `${FILE_CARD_CLASS}-text`, "The preview can't show this kind of file.")
+    );
+    const note = this.options.fileNote?.(target) ?? null;
+    if (note) {
+      const noteEl = el('span', `${FILE_CARD_CLASS}-note`, note);
+      noteEl.setAttribute('role', 'status');
+      body.append(noteEl);
+    }
+
+    const row = el('div', `${FILE_CARD_CLASS}-actions`);
+    // What each button does, listed under them in the same order.
+    const explained: Array<[string, string]> = [];
+    const addButton = (label: string, run: () => unknown, primary = false, action = '', description = ''): void => {
+      if (description) explained.push([label, description]);
+      const button = el('button', `${FILE_CARD_CLASS}-action${primary ? ` ${FILE_CARD_CLASS}-primary` : ''}`, label);
+      button.type = 'button';
+      if (action) button.dataset['fileCardAction'] = action;
+      button.addEventListener('click', () => {
+        void Promise.resolve()
+          .then(run)
+          .catch((error) => this.options.onFailed?.(error));
+      });
+      row.append(button);
+    };
+    const hostActions = (this.options.hostFileActions ?? [])
+      .filter((item) => item.appliesTo?.(target) ?? true)
+      .sort((a, b) => Number(!!b.primary) - Number(!!a.primary));
+    for (const action of hostActions) {
+      const description = typeof action.description === 'function' ? action.description(target) : (action.description ?? '');
+      addButton(fileActionLabel(action, target), () => action.run(target), !!action.primary, `${HOST_FILE_ACTION_PREFIX}${action.id}`, description);
+    }
+    const navTarget: Extract<MdzipNavMenuTarget, { kind: 'file' }> = { kind: 'file', orphaned: false, ...target };
+    for (const item of this.extractMenuItems('one', false)) {
+      addButton(item.label, () => item.action === 'download'
+        ? this.downloadArchiveFile(path)
+        : this.extractNavTarget(navTarget, item.action), false, item.action, item.action === 'download'
+        ? "Downloads a copy of the file. The document isn't changed."
+        : "Saves a copy of the file outside the document, to open or change in another app. The document isn't changed.");
+    }
+    if (this.allowFileActions(snapshot)) {
+      addButton('Replace…', () => {
+        this.pendingReplacePath = path;
+        this.elReplaceInput.click();
+      }, false, 'replace', `Puts a file you choose in its place, still named ${fileName}. Save the document to keep it.`);
+    }
+    body.append(row);
+
+    if (explained.length) {
+      const list = el('ul', `${FILE_CARD_CLASS}-explain`);
+      for (const [label, description] of explained) {
+        const item = el('li', '');
+        item.append(el('strong', '', label), doc.createTextNode(` ${description}`));
+        list.append(item);
+      }
+      body.append(list);
+    }
+
+    const help = this.options.fileCardHelp;
+    if (help) {
+      const link = el('button', `${FILE_CARD_CLASS}-help`, help.label);
+      link.type = 'button';
+      link.addEventListener('click', () => {
+        void Promise.resolve()
+          .then(() => help.run(target))
+          .catch((error) => this.options.onFailed?.(error));
+      });
+      body.append(link);
+    }
+
+    card.append(icon, body);
+    this.elPreviewContent.replaceChildren(card);
+  }
+
+  /**
+   * Asks the host's file actions and {@link MdzipWorkspaceViewOptions.fileNote}
+   * again, for the card of a file the preview can't show: call it when a
+   * label or note would now be different (the file was opened in another
+   * app, or the app that opens it is now known). The contents pane's menu
+   * asks each time it opens.
+   */
+  refreshFileActions(): void {
+    const snapshot = this.workspace?.snapshot();
+    if (snapshot?.currentPathType === 'binary' && this.elPreviewContent.querySelector(`.${FILE_CARD_CLASS}`)) {
+      this.mountFileCard(snapshot);
+    }
+  }
+
+  /**
    * Replaces an image of a raw draw.io diagram (`.drawio`, `.dio`) with a card
    * saying what it is, why the preview can't draw it yet (#59) and how to show
    * it anyway, plus a button for each host file action that applies to it
@@ -4200,7 +4385,7 @@ export class MdzipWorkspaceView {
     if (actions.length) {
       const row = el('span', `${DRAWIO_PLACEHOLDER_CLASS}-actions`);
       for (const action of actions) {
-        const button = el('button', `${DRAWIO_PLACEHOLDER_CLASS}-action`, action.label);
+        const button = el('button', `${DRAWIO_PLACEHOLDER_CLASS}-action`, fileActionLabel(action, target));
         button.type = 'button';
         button.addEventListener('click', () => {
           void Promise.resolve()
@@ -10239,7 +10424,7 @@ export class MdzipWorkspaceView {
     const file = fileActionTarget(target);
     return (this.options.hostFileActions ?? [])
       .filter((item) => item.appliesTo?.(file) ?? true)
-      .map((item) => ({ action: `${HOST_FILE_ACTION_PREFIX}${item.id}`, label: item.label }));
+      .map((item) => ({ action: `${HOST_FILE_ACTION_PREFIX}${item.id}`, label: fileActionLabel(item, file) }));
   }
 
   private async handleNavMenuAction(action: string): Promise<void> {
@@ -10983,6 +11168,9 @@ export class MdzipWorkspaceView {
       });
       this.elPreviewContent.replaceChildren(this.manifestForm.root);
     }
+    // Edit as JSON only with a way back to the form: the toolbar's View button.
+    // (In Split, where the JSON is beside the form, the CSS hides it anyway.)
+    this.manifestForm.setEditJsonAvailable(this.controlPolicy.layout.preview);
     const validity = workspace.validateJsonText(snapshot.currentPath, snapshot.currentText);
     this.manifestForm.update(validity);
     this.setJsonValidity(validity, snapshot.currentPath);

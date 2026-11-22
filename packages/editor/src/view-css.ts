@@ -1912,6 +1912,121 @@ export const WORKSPACE_CSS = `
   outline-offset: 1px;
 }
 
+/* In place of a file the preview can't show: what it is, and what you can do with it. */
+.mdzip-root .preview-content .mdzip-file-card {
+  display: flex;
+  gap: 1em;
+  align-items: flex-start;
+  max-width: 40em;
+  padding: 1em 1.15em;
+  border: 1px solid var(--mdzip-border-color);
+  border-radius: 6px;
+  background: var(--mdzip-widget-background-color);
+  color: var(--mdzip-editor-foreground-color);
+  line-height: 1.5;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--mdzip-muted-foreground-color);
+}
+
+.mdzip-root .preview-content .mdzip-file-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2em;
+  min-width: 0;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-title {
+  font-size: 1.05em;
+  overflow-wrap: anywhere;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-file,
+.mdzip-root .preview-content .mdzip-file-card-text {
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 0.92em;
+  overflow-wrap: anywhere;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-note {
+  margin-top: 0.25em;
+  font-size: 0.92em;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+  margin-top: 0.65em;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-action {
+  font: inherit;
+  font-size: 0.92em;
+  padding: 0.3em 0.85em;
+  border: 1px solid var(--mdzip-border-color);
+  border-radius: 4px;
+  background: var(--mdzip-editor-background-color);
+  color: var(--mdzip-editor-foreground-color);
+  cursor: pointer;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-explain {
+  margin: 0.75em 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3em;
+  color: var(--mdzip-muted-foreground-color);
+  font-size: 0.9em;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-explain strong {
+  color: var(--mdzip-editor-foreground-color);
+  font-weight: 600;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-help {
+  align-self: flex-start;
+  margin-top: 0.6em;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--mdzip-link-color);
+  font: inherit;
+  font-size: 0.9em;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-help:focus-visible {
+  outline: 2px solid var(--mdzip-focus-outline-color);
+  outline-offset: 2px;
+}
+
+.mdzip-root .preview-content .mdzip-file-card-action:hover {
+  background: var(--mdzip-control-hover-background-color);
+}
+
+.mdzip-root .preview-content .mdzip-file-card-action.mdzip-file-card-primary {
+  border-color: var(--mdzip-accent-color);
+  background: var(--mdzip-accent-color);
+  color: var(--mdzip-accent-foreground-color);
+}
+
+.mdzip-root .preview-content .mdzip-file-card-action.mdzip-file-card-primary:hover {
+  filter: brightness(1.08);
+}
+
+.mdzip-root .preview-content .mdzip-file-card-action:focus-visible {
+  outline: 2px solid var(--mdzip-focus-outline-color);
+  outline-offset: 1px;
+}
+
 /* Progressive image hydration. Each archive image mounts inside a collapsed
    slot so the text stays compact and immediately readable; when the image
    resolves, the slot eases open (0fr -> 1fr) to the height reserved from its

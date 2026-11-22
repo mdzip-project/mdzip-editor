@@ -58,6 +58,8 @@ import type {
   MdzipWorkspaceSave,
   MdzipWorkspaceSnapshot,
   MdzipFileAction,
+  MdzipFileActionTarget,
+  MdzipFileCardHelp,
   MdzipExtractedFile,
   MdzipExtractRequest,
   MdzipJsonValidity,
@@ -144,6 +146,10 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Input() inlineSvgLinks?: boolean;
   /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
   @Input() hostFileActions?: readonly MdzipFileAction[];
+  /** A line for the card of a file the preview can't show (see the view option). Read when the view is created. */
+  @Input() fileNote?: (file: MdzipFileActionTarget) => string | null;
+  /** A help link at the bottom of that card (see the view option). Read when the view is created. */
+  @Input() fileCardHelp?: MdzipFileCardHelp;
   @Input() navigationMode: MdzipNavigationMode = 'editor';
   @Input() navigationButtonActive = true;
   /**
@@ -416,6 +422,11 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
     return this.view?.replaceAsset(archivePath, fileBytes) ?? Promise.resolve(false);
   }
 
+  /** Asks the file actions' labels and `fileNote` again (see the view's `refreshFileActions()`). */
+  refreshFileActions(): void {
+    this.view?.refreshFileActions();
+  }
+
   removeAsset(archivePath: string, options?: MdzipRemoveAssetOptions): Promise<boolean> {
     return this.view?.removeAsset(archivePath, options) ?? Promise.resolve(false);
   }
@@ -484,6 +495,8 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       progressiveTextRendering: this.progressiveTextRendering,
       inlineSvgLinks: this.inlineSvgLinks,
       hostFileActions: this.hostFileActions,
+      fileNote: this.fileNote ? (file) => this.fileNote?.(file) ?? null : undefined,
+      fileCardHelp: this.fileCardHelp,
       navigationMode: this.navigationMode,
       navigationButtonActive: this.navigationButtonActive,
       onChanged: (bytes, snapshot) => this.changed.emit({ bytes, snapshot }),

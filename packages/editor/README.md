@@ -401,6 +401,35 @@ new MdzipWorkspaceView(container, {
 The items show in read-only workspaces too; the host decides what each one
 allows. The Angular, React and Vue wrappers take the same `hostFileActions`.
 
+**Files the preview can't show.** A Word document, a ZIP or any other file
+that isn't Markdown, text or a picture shows as a card: its name, what kind of
+file it is, and buttons for the `hostFileActions` that apply to it, then
+**Extract…** (or **Download**) and, in an editable document, **Replace…**. A
+desktop host can offer to open the file in the app the system opens it with,
+and put the changes back with `replaceAsset()` when it's saved there:
+
+```ts
+new MdzipWorkspaceView(container, {
+  hostFileActions: [{
+    id: 'open',
+    primary: true,                           // its button comes first and stands out
+    label: (file) => `Open in ${appFor(file.path) ?? 'Default App'}`,
+    appliesTo: (file) => !file.isMarkdown,
+    description: 'Opens it in that app. Each time you save there, the changes come back here.',
+    run: (file) => openInApp(file.path)
+  }],
+  // A link at the bottom of the card.
+  fileCardHelp: { label: 'More about files in a document', run: () => showHelp('files') },
+  // A line on the card, or null for none.
+  fileNote: (file) => isOpenElsewhere(file.path) ? 'Open in Word: changes come back each time you save there.' : null
+});
+
+// When a label or the note would now be different:
+view.refreshFileActions();
+```
+
+The menu on the file in the contents pane uses the same labels.
+
 **Selecting and extracting files.** Ctrl+click (Cmd+click on a Mac) adds a
 row of the tree to the selection or takes it off, Shift+click selects the rows
 in between, and Ctrl+A / Cmd+A with focus in the tree selects every row

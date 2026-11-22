@@ -57,6 +57,8 @@ import type {
   MdzWorkspaceAsset,
   MdzipWorkspaceSnapshot,
   MdzipFileAction,
+  MdzipFileActionTarget,
+  MdzipFileCardHelp,
   MdzipExtractedFile,
   MdzipExtractRequest,
   MdzipOutlinePosition,
@@ -132,6 +134,8 @@ export interface MdzipWorkspaceExposed {
   extractFiles(paths: readonly string[], options?: { includeFolders?: boolean }): Promise<MdzipExtractedFile[]>;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
   replaceAsset(archivePath: string, fileBytes: Uint8Array): Promise<boolean>;
+  /** Asks the file actions' labels and `fileNote` again (see the view's `refreshFileActions()`). */
+  refreshFileActions(): void;
   removeAsset(archivePath: string, options?: MdzipRemoveAssetOptions): Promise<boolean>;
   removeFile(archivePath: string): Promise<boolean>;
   renameFile(oldPath: string, newPath: string): Promise<boolean>;
@@ -189,6 +193,10 @@ export const MdzipWorkspace = defineComponent({
     inlineSvgLinks: { type: Boolean, default: true },
     /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
     hostFileActions: Array as PropType<readonly MdzipFileAction[]>,
+    /** A line for the card of a file the preview can't show (see the view option). Read when the view is created. */
+    fileNote: Function as PropType<(file: MdzipFileActionTarget) => string | null>,
+    /** A help link at the bottom of that card (see the view option). Read when the view is created. */
+    fileCardHelp: Object as PropType<MdzipFileCardHelp>,
     navigationMode: {
       type: String as PropType<MdzipNavigationMode>,
       default: 'editor'
@@ -393,6 +401,7 @@ export const MdzipWorkspace = defineComponent({
         view?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
       replaceAsset: (archivePath: string, fileBytes: Uint8Array) =>
         view?.replaceAsset(archivePath, fileBytes) ?? Promise.resolve(false),
+      refreshFileActions: () => view?.refreshFileActions(),
       removeAsset: (archivePath: string, options?: MdzipRemoveAssetOptions) =>
         view?.removeAsset(archivePath, options) ?? Promise.resolve(false),
       removeFile: (archivePath: string) =>
@@ -426,6 +435,8 @@ export const MdzipWorkspace = defineComponent({
         progressiveTextRendering: props.progressiveTextRendering,
         inlineSvgLinks: props.inlineSvgLinks,
         hostFileActions: props.hostFileActions,
+        fileNote: props.fileNote ? (file: MdzipFileActionTarget) => props.fileNote?.(file) ?? null : undefined,
+        fileCardHelp: props.fileCardHelp,
         navigationMode: props.navigationMode,
         navigationButtonActive: props.navigationButtonActive,
         onChanged: (bytes, snapshot) => emit('changed', { bytes, snapshot }),

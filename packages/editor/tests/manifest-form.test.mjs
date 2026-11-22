@@ -181,3 +181,24 @@ test('manifestView: "json" opens the manifest in the JSON editor; read-only show
     readOnly.cleanup();
   }
 });
+
+test('Edit as JSON says View as JSON when read-only, and is left out with no View button to come back by', async () => {
+  const link = (form) => form().querySelector('.mmf-link');
+  const readOnly = await openView({ initialLayout: 'preview' }, 'read-only');
+  try {
+    await readOnly.view.openPath('manifest.json');
+    assert.equal(link(readOnly.form).textContent, 'View as JSON');
+    assert.equal(link(readOnly.form).hidden, false);
+  } finally {
+    readOnly.cleanup();
+  }
+  // A reading host: preview only, no layout buttons.
+  const reading = await openView({ initialLayout: 'preview', controls: 'preview' }, 'read-only');
+  try {
+    await reading.view.openPath('manifest.json');
+    assert.ok(reading.form(), 'still a form');
+    assert.equal(link(reading.form).hidden, true, 'no way back from the JSON, so no way in');
+  } finally {
+    reading.cleanup();
+  }
+});

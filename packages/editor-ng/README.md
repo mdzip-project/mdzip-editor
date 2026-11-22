@@ -102,7 +102,9 @@ showUnchanged? }`) to opt any of them out.
 | `navigationMode` | `MdzipNavigationMode` | `'editor'` | Package navigation mode |
 | `navigationButtonActive` | `boolean` | `true` | Whether the navigation button is shown |
 | `inlineSvgLinks` | `boolean` | `true` | Shows archive SVGs that contain links inline, so the links can be clicked (draw.io `.drawio.svg` diagrams, for example); other SVGs stay images. Read when the view is created |
-| `hostFileActions` | `readonly MdzipFileAction[]` | — | The host's own items in the file tree's right-click menu on files (`{ id, label, appliesTo?, run }`), e.g. "Open in Another Editor". Also shown as buttons on the card that stands in for a `.drawio` image. Read when the view is created |
+| `hostFileActions` | `readonly MdzipFileAction[]` | — | The host's own items in the file tree's right-click menu on files (`{ id, label, appliesTo?, primary?, description?, run }`; `label` and `description` may be functions of the file), e.g. "Open in Another Editor". Also shown as buttons on the card that stands in for a `.drawio` image, and on the card for a file the preview can't show (a `primary` one first). Read when the view is created |
+| `fileNote` | `(file) => string \| null` | — | A line on the card for a file the preview can't show, e.g. "Open in Word: changes come back each time you save there." `refreshFileActions()` asks for it and the labels again. Read when the view is created |
+| `fileCardHelp` | `MdzipFileCardHelp` | — | A link at the bottom of that card (`{ label, run }`), to the host's help. Read when the view is created |
 | `markdownRenderer` | `MdzipMarkdownRenderer` | — | Custom markdown renderer (keep the reference stable) |
 | `markdownExtensions` | `readonly MdzipMarkdownRenderExtension[]` | `[]` | Markdown pipeline extensions, diffed by `name` — new array identities with the same names are safe |
 | `entryRenderers` | `readonly MdzipEntryRenderer[]` | `[]` | Entry renderers claiming the content area for matching entries, diffed by `id` — new array identities with the same ids are safe |
