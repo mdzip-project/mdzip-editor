@@ -32,6 +32,9 @@ editor has to handle.
 | Color scheme | Toolbar, right end | Light, Dark, System; switching keeps the preview in place and redraws the diagrams |
 | Host theme | **System follows a host theme**, then the dark/light list | System is renamed "Host theme" with a palette icon and follows the list, not the OS |
 | Page width | Toolbar, before the color scheme | Narrow, Default, Wide (with pixel widths), Full Width; hidden in edit layout |
+| Outline button | Toolbar; click it several times | Left, right, hidden in turn, animated; the icon shows the side; instant with reduced motion |
+| Empty table rows | "Empty table rows" section | Blank rows are a full line tall |
+| File card | Open `files/sample.zip` in the contents pane | A card with name, "ZIP archive", path, **Log This File (bench)**, Extract…/Download, Replace… |
 | Copying | Right-click the preview; Ctrl+A, Ctrl+C | See the "Copying" section of the sample; paste into Notepad and Word |
 | Task lists, rules, footnotes | Sample sections | As described in each section |
 | Diagrams | "Diagrams" section | ER and flowchart with right-angle lines; the `layout: dagre` one curved |

@@ -107,6 +107,11 @@ in the browser. When `onSaved` is provided, the host owns persistence and must
 call `markPersisted()` after a successful write. Failed writes should leave the
 workspace dirty.
 
+A document opens in `initialLayout` (Edit is `'source'`, then `'split'` and
+View is `'preview'`). `await view.setLayout('preview')` switches layout later,
+as the toolbar's buttons do, and `view.layoutMode` says which is showing. A
+file that can't be shown that way gets the nearest layout it can.
+
 ## Control Presets
 
 - `preview`: clean document preview with no toolbar or package navigation.
@@ -216,21 +221,25 @@ too.
 The outline panel is a table of contents built from the document's headings,
 beside the preview. It marks the section being read, and a click scrolls
 smoothly to that section (it jumps instead when the system asks for reduced
-motion). The toolbar's outline button (next to Find) shows and hides it; it
+motion). The toolbar's outline button (next to Find) shows it on the left,
+moves it to the right, then hides it, sliding it out and in rather than
+jumping (unless the system asks for reduced motion); its tooltip says which
+comes next. It
 appears while the preview of a Markdown document is visible, in View or Split
 layout. Under progressive rendering it lists every heading, including ones in
 chunks that haven't been drawn yet, and a click draws the chunks up to the
 heading first, as `scrollToAnchor()` does.
 
 The panel is closed at start. `outline` opens it and configures it, and
-`onOutlineVisibilityChanged(visible)` reports the button so a host can
-remember the choice:
+`onOutlineVisibilityChanged(visible)` and `onOutlinePositionChanged(position)`
+report the button so a host can remember the choice:
 
 ```ts
 const view = new MdzipWorkspaceView(container, {
   controls: 'hosted-editor',
   outline: { visible: savedOutline ?? false, levels: [1, 2, 3], collapse: true, label: 'Outline' },
-  onOutlineVisibilityChanged: (visible) => saveOutline(visible)
+  onOutlineVisibilityChanged: (visible) => saveOutline(visible),
+  onOutlinePositionChanged: (position) => saveOutlineSide(position)
 });
 
 view.setOutlineVisible(true);
@@ -875,6 +884,24 @@ In live-editing hosts where the preview re-renders frequently, pass
 `imageHydrationAnimation: 'initial'` to keep the first-load reveal but snap
 images open on same-document edits. Use `'off'` to disable the loading pulse
 and slide-open animation entirely.
+
+Images load as they come near the visible part of the preview, so a long
+document doesn't decode every picture up front. A preview nobody scrolls,
+such as an off-screen copy rendered for printing or a PDF, would then never
+load the images further down, and `onAssetsHydrated` would never fire: pass
+`eagerImages: true` (with `progressiveTextRendering: false`, so all the text
+mounts too) to load them all as soon as the preview mounts. `onAssetsProgress`
+reports `{ loaded, total }` as they load, for a progress bar:
+
+```ts
+const printCopy = new MdzipWorkspaceView(offscreen, {
+  controls: 'preview',
+  progressiveTextRendering: false,
+  eagerImages: true,
+  onAssetsProgress: ({ loaded, total }) => showProgress(loaded / total),
+  onAssetsHydrated: () => print()
+});
+```
 
 ## Links and anchors
 

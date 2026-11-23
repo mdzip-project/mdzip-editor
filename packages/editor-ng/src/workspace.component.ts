@@ -18,6 +18,7 @@ import { MdzipEntryRendererDirective } from './entry-renderer.directive';
 import { PACKAGE_INFO } from './package-info.js';
 import { MdzipWorkspaceView } from '@mdzip/editor';
 import type {
+  MdzipAssetsProgress,
   MdzipControlPolicy,
   MdzipControlPreset,
   MdzipContentDensity,
@@ -144,6 +145,12 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
    * clicked (see the view option). Defaults to `true`. Constructor-only.
    */
   @Input() inlineSvgLinks?: boolean;
+  /**
+   * Loads every image as soon as the preview mounts, for a preview nobody
+   * scrolls, such as an off-screen copy for printing (see the view option).
+   * Defaults to `false`. Constructor-only.
+   */
+  @Input() eagerImages?: boolean;
   /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
   @Input() hostFileActions?: readonly MdzipFileAction[];
   /** A line for the card of a file the preview can't show (see the view option). Read when the view is created. */
@@ -232,6 +239,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Output() readonly previewRendered = new EventEmitter<MdzipWorkspaceSnapshot>();
   /** Emits once the mounted preview's images have finished loading. */
   @Output() readonly assetsHydrated = new EventEmitter<MdzipWorkspaceSnapshot>();
+  @Output() readonly assetsProgress = new EventEmitter<MdzipAssetsProgress>();
   /**
    * Emits for every click on a preview link, before the view's own handling.
    * Call `event.preventDefault()` in the handler to take over navigation.
@@ -240,6 +248,8 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   @Output() readonly failed = new EventEmitter<unknown>();
   /** Emits when the reader shows or hides the outline from the toolbar. */
   @Output() readonly outlineVisibilityChanged = new EventEmitter<boolean>();
+  /** Emits the outline panel's side when the reader moves it from the toolbar. */
+  @Output() readonly outlinePositionChanged = new EventEmitter<MdzipOutlinePosition>();
   /** Emits the outline panel's width (pixels) when the reader finishes dragging its edge. */
   @Output() readonly outlineWidthChanged = new EventEmitter<number>();
   /** Emits when the reader shows or hides whitespace from the toolbar. */
@@ -272,7 +282,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   }
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (this.view && (changes['initialLayout'] || changes['initialColorScheme'] || changes['progressiveTextRendering'] || changes['inlineSvgLinks']
+    if (this.view && (changes['initialLayout'] || changes['initialColorScheme'] || changes['progressiveTextRendering'] || changes['inlineSvgLinks'] || changes['eagerImages']
       || changes['navigationMode'] || changes['navigationButtonActive'])) {
       this.createView();
       this.syncView();
@@ -360,6 +370,11 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
   /** Puts the outline panel on the left or the right of the document. */
   setOutlinePosition(position: MdzipOutlinePosition): void {
     this.view?.setOutlinePosition(position);
+  }
+
+  /** Switches to Edit (`'source'`), Split or View (`'preview'`), as the toolbar's buttons do. */
+  async setLayout(layout: MdzipWorkspaceLayout): Promise<void> {
+    await this.view?.setLayout(layout);
   }
 
   /** The archive's files as `{ path, bytes }`, by file or folder path (see the view's `extractFiles()`). */
@@ -494,6 +509,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       systemColorScheme: this.systemColorScheme,
       progressiveTextRendering: this.progressiveTextRendering,
       inlineSvgLinks: this.inlineSvgLinks,
+      eagerImages: this.eagerImages,
       hostFileActions: this.hostFileActions,
       fileNote: this.fileNote ? (file) => this.fileNote?.(file) ?? null : undefined,
       fileCardHelp: this.fileCardHelp,
@@ -515,6 +531,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
       onPreviewWidthChanged: (width: MdzipPreviewWidthChoice) => this.previewWidthChanged.emit(width),
       onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => this.previewRendered.emit(snapshot),
       onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => this.assetsHydrated.emit(snapshot),
+      onAssetsProgress: (progress: MdzipAssetsProgress) => this.assetsProgress.emit(progress),
       onLinkActivated: (event: MdzipLinkActivatedEvent) => this.linkActivated.emit(event),
       externalLinks: this.externalLinks,
       onFailed: (e: unknown) => this.failed.emit(e),
@@ -523,6 +540,7 @@ export class MdzipWorkspaceComponent implements AfterContentInit, AfterViewInit,
         : undefined,
       outline: this.outline,
       onOutlineVisibilityChanged: (visible) => this.outlineVisibilityChanged.emit(visible),
+      onOutlinePositionChanged: (position) => this.outlinePositionChanged.emit(position),
       onOutlineWidthChanged: (width) => this.outlineWidthChanged.emit(width),
       showWhitespace: this.showWhitespace,
       onWhitespaceVisibilityChanged: (visible) => this.whitespaceVisibilityChanged.emit(visible),

@@ -22,3 +22,10 @@ test('right/center-aligned cells hold their line; the table is not forced to max
     'the table should not be forced to its unwrapped content width — that is what forced horizontal scroll'
   );
 });
+
+test('an empty cell holds a line, so a row of empty cells is as tall as one with text', () => {
+  const rule = WORKSPACE_CSS.match(/\.preview-content td:empty::after\s*\{([^}]*)\}/)?.[1] ?? '';
+  // The CSS escape for a no-break space: one backslash, then 00a0.
+  assert.match(rule, /content:\s*'\\00a0'/);
+  assert.match(WORKSPACE_CSS, /\.preview-content th:empty::after,/);
+});

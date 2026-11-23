@@ -99,6 +99,7 @@ prop (`{ navigation?, changeTraversal?, showUnchanged? }`) to opt any out.
 | `navigationMode` | `MdzipNavigationMode` | `'editor'` | Package navigation mode |
 | `navigationButtonActive` | `boolean` | `true` | Whether the navigation button is shown |
 | `inlineSvgLinks` | `boolean` | `true` | Shows archive SVGs that contain links inline, so the links can be clicked (draw.io `.drawio.svg` diagrams, for example); other SVGs stay images. Read when the view is created |
+| `eagerImages` | `boolean` | `false` | Loads every image as soon as the preview mounts, not only those near the visible part; for a preview nobody scrolls, such as an off-screen copy for printing (use with `progressiveTextRendering: false`). Read when the view is created |
 | `hostFileActions` | `readonly MdzipFileAction[]` | — | The host's own items in the file tree's right-click menu on files (`{ id, label, appliesTo?, primary?, description?, run }`; `label` and `description` may be functions of the file), e.g. "Open in Another Editor". Also shown as buttons on the card that stands in for a `.drawio` image, and on the card for a file the preview can't show (a `primary` one first). Read when the view is created |
 | `fileNote` | `(file) => string \| null` | — | A line on the card for a file the preview can't show, e.g. "Open in Word: changes come back each time you save there." `refreshFileActions()` asks for it and the labels again. Read when the view is created |
 | `fileCardHelp` | `MdzipFileCardHelp` | — | A link at the bottom of that card (`{ label, run }`), to the host's help. Read when the view is created |
@@ -154,9 +155,11 @@ reactive, and the tree unmounts on selection change.
 | `previewWidthChanged` | `MdzipPreviewWidthChoice` | Emitted when the user picks a width in the toolbar's page-width menu |
 | `previewRendered` | `MdzipWorkspaceSnapshot` | Emitted when the preview HTML is mounted |
 | `assetsHydrated` | `MdzipWorkspaceSnapshot` | Emitted once the mounted preview's images have loaded |
+| `assetsProgress` | `MdzipAssetsProgress` | `{ loaded, total }` as those images load, for a progress bar (not emitted when there are none) |
 | `linkActivated` | `MdzipLinkActivatedEvent` | Emitted for every preview link click before built-in handling; call `event.preventDefault()` to take over |
 | `failed` | `unknown` | Emitted on unrecoverable errors |
 | `outlineVisibilityChanged` | `boolean` | Emitted when the reader shows or hides the outline from the toolbar |
+| `outlinePositionChanged` | `'left' \| 'right'` | Emitted when the reader moves the outline to the other side from the toolbar |
 | `outlineWidthChanged` | `number` | Emitted with the outline panel's width (pixels) when the reader finishes dragging its edge |
 | `whitespaceVisibilityChanged` | `boolean` | Emitted when the reader shows or hides whitespace from the toolbar |
 | `jsonValidityChanged` | `{ validity, path }` | Emitted (debounced while typing) with the open `.json` file's validity; `null`s for other files |
@@ -218,7 +221,7 @@ async function save() {
 </template>
 ```
 
-Also: `setOutlineVisible(visible)` and `setOutlinePosition('left' | 'right')` move the outline panel, and `extractFiles(paths, { includeFolders })` returns the archive's files as `{ path, bytes }`.
+Also: `setOutlineVisible(visible)` and `setOutlinePosition('left' | 'right')` move the outline panel, `setLayout('source' | 'split' | 'preview')` switches the layout, and `extractFiles(paths, { includeFolders })` returns the archive's files as `{ path, bytes }`.
 
 The handle also exposes `whenRendered()`, which resolves once the current preview (including
 its images) is mounted — useful for revealing or animating read-only preview content.

@@ -56,6 +56,7 @@ import type {
   MdzWorkspace,
   MdzWorkspaceAsset,
   MdzipWorkspaceSnapshot,
+  MdzipAssetsProgress,
   MdzipFileAction,
   MdzipFileActionTarget,
   MdzipFileCardHelp,
@@ -130,6 +131,8 @@ export interface MdzipWorkspaceExposed {
   setOutlineVisible(visible: boolean): void;
   /** Puts the outline panel on the left or the right of the document. */
   setOutlinePosition(position: MdzipOutlinePosition): void;
+  /** Switches to Edit (`'source'`), Split or View (`'preview'`), as the toolbar's buttons do. */
+  setLayout(layout: MdzipWorkspaceLayout): Promise<void>;
   /** The archive's files as `{ path, bytes }`, by file or folder path (see the view's `extractFiles()`). */
   extractFiles(paths: readonly string[], options?: { includeFolders?: boolean }): Promise<MdzipExtractedFile[]>;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
@@ -191,6 +194,12 @@ export const MdzipWorkspace = defineComponent({
      * clicked (see the view option). Defaults to `true`. Constructor-only.
      */
     inlineSvgLinks: { type: Boolean, default: true },
+    /**
+     * Loads every image as soon as the preview mounts, for a preview nobody
+     * scrolls, such as an off-screen copy for printing (see the view option).
+     * Defaults to `false`. Constructor-only.
+     */
+    eagerImages: Boolean,
     /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
     hostFileActions: Array as PropType<readonly MdzipFileAction[]>,
     /** A line for the card of a file the preview can't show (see the view option). Read when the view is created. */
@@ -309,6 +318,7 @@ export const MdzipWorkspace = defineComponent({
     'previewWidthChanged',
     'previewRendered',
     'assetsHydrated',
+    'assetsProgress',
     /**
      * Every click on a preview link, before the view's own handling. Call
      * `event.preventDefault()` in the handler to take over navigation.
@@ -317,6 +327,8 @@ export const MdzipWorkspace = defineComponent({
     'failed',
     /** The reader showed or hid the outline from the toolbar. */
     'outlineVisibilityChanged',
+    /** The reader moved the outline panel to the other side from the toolbar. */
+    'outlinePositionChanged',
     /** The reader finished dragging the outline panel to a new width (pixels). */
     'outlineWidthChanged',
     /** The reader showed or hid whitespace from the toolbar. */
@@ -395,6 +407,7 @@ export const MdzipWorkspace = defineComponent({
       markPersisted: () => view?.markPersisted(),
       setOutlineVisible: (visible: boolean) => view?.setOutlineVisible(visible),
       setOutlinePosition: (position: MdzipOutlinePosition) => view?.setOutlinePosition(position),
+      setLayout: (layout: MdzipWorkspaceLayout) => view?.setLayout(layout) ?? Promise.resolve(),
       extractFiles: (paths: readonly string[], options?: { includeFolders?: boolean }) =>
         view?.extractFiles(paths, options) ?? Promise.resolve([]),
       addAsset: (archivePath: string, fileBytes: Uint8Array) =>
@@ -434,6 +447,7 @@ export const MdzipWorkspace = defineComponent({
         systemColorScheme: props.systemColorScheme,
         progressiveTextRendering: props.progressiveTextRendering,
         inlineSvgLinks: props.inlineSvgLinks,
+        eagerImages: props.eagerImages,
         hostFileActions: props.hostFileActions,
         fileNote: props.fileNote ? (file: MdzipFileActionTarget) => props.fileNote?.(file) ?? null : undefined,
         fileCardHelp: props.fileCardHelp,
@@ -455,6 +469,7 @@ export const MdzipWorkspace = defineComponent({
         onPreviewWidthChanged: (width: MdzipPreviewWidthChoice) => emit('previewWidthChanged', width),
         onPreviewRendered: (snapshot: MdzipWorkspaceSnapshot) => emit('previewRendered', snapshot),
         onAssetsHydrated: (snapshot: MdzipWorkspaceSnapshot) => emit('assetsHydrated', snapshot),
+        onAssetsProgress: (progress: MdzipAssetsProgress) => emit('assetsProgress', progress),
         onLinkActivated: (event: MdzipLinkActivatedEvent) => emit('linkActivated', event),
         externalLinks: props.externalLinks,
         onFailed: (e: unknown) => emit('failed', e),
@@ -463,6 +478,7 @@ export const MdzipWorkspace = defineComponent({
           : undefined,
         outline: props.outline,
         onOutlineVisibilityChanged: (visible: boolean) => emit('outlineVisibilityChanged', visible),
+        onOutlinePositionChanged: (position: string) => emit('outlinePositionChanged', position),
         onOutlineWidthChanged: (width: number) => emit('outlineWidthChanged', width),
         showWhitespace: props.showWhitespace,
         onWhitespaceVisibilityChanged: (visible: boolean) => emit('whitespaceVisibilityChanged', visible),
@@ -529,6 +545,7 @@ export const MdzipWorkspace = defineComponent({
       () => props.initialColorScheme,
       () => props.progressiveTextRendering,
       () => props.inlineSvgLinks,
+      () => props.eagerImages,
       () => props.navigationMode,
       () => props.navigationButtonActive
     ], () => {

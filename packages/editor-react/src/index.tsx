@@ -41,6 +41,7 @@ import type {
   MdzipWorkspaceMode,
   MdzipWorkspaceSave,
   MdzipWorkspaceSnapshot,
+  MdzipAssetsProgress,
   MdzWorkspace,
   MdzWorkspaceAsset,
   MdzipFileAction,
@@ -177,6 +178,12 @@ export interface MdzipWorkspaceProps {
    * clicked (see the view option). Defaults to `true`. Constructor-only.
    */
   inlineSvgLinks?: boolean;
+  /**
+   * Loads every image as soon as the preview mounts, for a preview nobody
+   * scrolls, such as an off-screen copy for printing (see the view option).
+   * Defaults to `false`. Constructor-only.
+   */
+  eagerImages?: boolean;
   /** Extra file tree menu items for files, run by the host (see the view option). Read when the view is created. */
   hostFileActions?: readonly MdzipFileAction[];
   /** A line for the card of a file the preview can't show (see the view option). Whether there is one is read when the view is created. */
@@ -204,6 +211,7 @@ export interface MdzipWorkspaceProps {
   onPreviewRendered?: (snapshot: MdzipWorkspaceSnapshot) => void;
   /** Fires once the mounted preview's images have finished loading. */
   onAssetsHydrated?: (snapshot: MdzipWorkspaceSnapshot) => void;
+  onAssetsProgress?: (progress: MdzipAssetsProgress) => void;
   /**
    * Fires for every click on a preview link, before the view's own handling.
    * Call `event.preventDefault()` to take over navigation.
@@ -232,6 +240,8 @@ export interface MdzipWorkspaceProps {
   outline?: boolean | MdzipOutlineViewOptions;
   /** The reader showed or hid the outline from the toolbar. */
   onOutlineVisibilityChanged?: (visible: boolean) => void;
+  /** The reader moved the outline panel to the other side from the toolbar. */
+  onOutlinePositionChanged?: (position: MdzipOutlinePosition) => void;
   /** The reader finished dragging the outline panel to a new width (pixels). */
   onOutlineWidthChanged?: (width: number) => void;
   /** Shows spaces and tabs in the source editor. Applies live. */
@@ -310,6 +320,8 @@ export interface MdzipWorkspaceHandle {
   setOutlineVisible(visible: boolean): void;
   /** Puts the outline panel on the left or the right of the document. */
   setOutlinePosition(position: MdzipOutlinePosition): void;
+  /** Switches to Edit (`'source'`), Split or View (`'preview'`), as the toolbar's buttons do. */
+  setLayout(layout: MdzipWorkspaceLayout): Promise<void>;
   /** The archive's files as `{ path, bytes }`, by file or folder path (see the view's `extractFiles()`). */
   extractFiles(paths: readonly string[], options?: { includeFolders?: boolean }): Promise<MdzipExtractedFile[]>;
   addAsset(archivePath: string, fileBytes: Uint8Array): Promise<void>;
@@ -350,6 +362,7 @@ function MdzipWorkspace({
   systemColorScheme,
   progressiveTextRendering,
   inlineSvgLinks,
+  eagerImages,
   hostFileActions,
   fileNote,
   fileCardHelp,
@@ -370,12 +383,14 @@ function MdzipWorkspace({
   onPreviewWidthChanged,
   onPreviewRendered,
   onAssetsHydrated,
+  onAssetsProgress,
   onLinkActivated,
   externalLinks,
   onFailed,
   onExtractFiles,
   outline,
   onOutlineVisibilityChanged,
+  onOutlinePositionChanged,
   onOutlineWidthChanged,
   showWhitespace,
   onWhitespaceVisibilityChanged,
@@ -418,10 +433,12 @@ function MdzipWorkspace({
     onPreviewWidthChanged,
     onPreviewRendered,
     onAssetsHydrated,
+    onAssetsProgress,
     onLinkActivated,
     onFailed,
     onExtractFiles,
     onOutlineVisibilityChanged,
+    onOutlinePositionChanged,
     onOutlineWidthChanged,
     onWhitespaceVisibilityChanged,
     onJsonValidityChanged,
@@ -446,10 +463,12 @@ function MdzipWorkspace({
     onPreviewWidthChanged,
     onPreviewRendered,
     onAssetsHydrated,
+    onAssetsProgress,
     onLinkActivated,
     onFailed,
     onExtractFiles,
     onOutlineVisibilityChanged,
+    onOutlinePositionChanged,
     onOutlineWidthChanged,
     onWhitespaceVisibilityChanged,
     onJsonValidityChanged,
@@ -516,6 +535,7 @@ function MdzipWorkspace({
     markPersisted: () => viewRef.current?.markPersisted(),
     setOutlineVisible: (visible) => viewRef.current?.setOutlineVisible(visible),
     setOutlinePosition: (position) => viewRef.current?.setOutlinePosition(position),
+    setLayout: (layout) => viewRef.current?.setLayout(layout) ?? Promise.resolve(),
     extractFiles: (paths, options) => viewRef.current?.extractFiles(paths, options) ?? Promise.resolve([]),
     addAsset: (archivePath, fileBytes) =>
       viewRef.current?.addAsset(archivePath, fileBytes) ?? Promise.resolve(),
@@ -555,6 +575,7 @@ function MdzipWorkspace({
       systemColorScheme: controlsRef.current.systemColorScheme,
       progressiveTextRendering,
       inlineSvgLinks,
+      eagerImages,
       hostFileActions: hostFileActionsRef.current,
       fileNote: fileNoteRef.current ? (file) => fileNoteRef.current?.(file) ?? null : undefined,
       fileCardHelp: fileCardHelpRef.current,
@@ -576,6 +597,7 @@ function MdzipWorkspace({
       onPreviewWidthChanged: (width) => callbacksRef.current.onPreviewWidthChanged?.(width),
       onPreviewRendered: (snapshot) => callbacksRef.current.onPreviewRendered?.(snapshot),
       onAssetsHydrated: (snapshot) => callbacksRef.current.onAssetsHydrated?.(snapshot),
+      onAssetsProgress: (progress) => callbacksRef.current.onAssetsProgress?.(progress),
       onLinkActivated: (event) => callbacksRef.current.onLinkActivated?.(event),
       externalLinks: externalLinksRef.current,
       onFailed: (e) => callbacksRef.current.onFailed?.(e),
@@ -584,6 +606,7 @@ function MdzipWorkspace({
         : undefined,
       outline: createOnlyRef.current.outline,
       onOutlineVisibilityChanged: (visible) => callbacksRef.current.onOutlineVisibilityChanged?.(visible),
+      onOutlinePositionChanged: (position) => callbacksRef.current.onOutlinePositionChanged?.(position),
       onOutlineWidthChanged: (width) => callbacksRef.current.onOutlineWidthChanged?.(width),
       showWhitespace: createOnlyRef.current.showWhitespace,
       onWhitespaceVisibilityChanged: (visible) => callbacksRef.current.onWhitespaceVisibilityChanged?.(visible),
@@ -632,6 +655,7 @@ function MdzipWorkspace({
     initialColorScheme,
     progressiveTextRendering,
     inlineSvgLinks,
+    eagerImages,
     navigationMode,
     navigationButtonActive
   ]);

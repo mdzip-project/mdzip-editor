@@ -276,25 +276,57 @@ test('outline: true opens the panel with the document\'s headings (levels 1-3 by
   }
 });
 
-test('the toolbar button toggles the panel and reports it; source layout hides both', async () => {
+test('the toolbar button cycles the panel off, left, right and reports it; source layout hides both', async () => {
   const changes = [];
+  const sides = [];
   const { view, pane, button, texts, cleanup } = await mountView('## A\n\n## B\n', {
-    onOutlineVisibilityChanged: (visible) => changes.push(visible)
+    onOutlineVisibilityChanged: (visible) => changes.push(visible),
+    onOutlinePositionChanged: (position) => sides.push(position)
   });
+  const root = pane.closest('.mdzip-root');
   try {
     assert.equal(pane.hidden, true, 'closed by default');
     assert.equal(view.isOutlineVisible, false);
+    assert.equal(button.dataset.tooltip, 'Outline: show on the left');
+    assert.equal(button.dataset.outlineState, 'off');
+    const offIcon = button.innerHTML;
     button.click();
     assert.equal(pane.hidden, false);
+    assert.equal(view.outlineSide, 'left');
+    assert.equal(button.dataset.outlineState, 'left', 'the icon shows the side');
+    const leftIcon = button.innerHTML;
+    assert.notEqual(leftIcon, offIcon);
+    assert.equal(root.classList.contains('outline-left'), true);
     assert.deepEqual(texts(), ['A', 'B']);
+    assert.equal(button.dataset.tooltip, 'Outline: move to the right');
+    button.click();
+    assert.equal(pane.hidden, false);
+    assert.equal(view.outlineSide, 'right');
+    assert.equal(root.classList.contains('outline-left'), false);
+    assert.equal(button.dataset.tooltip, 'Outline: hide');
+    assert.equal(button.dataset.outlineState, 'right');
+    assert.notEqual(button.innerHTML, leftIcon);
+    assert.ok(button.querySelector('svg'));
     button.click();
     assert.equal(pane.hidden, true);
+    assert.equal(button.innerHTML, offIcon);
+    assert.equal(view.outlineSide, 'right', 'hiding keeps the side');
     assert.deepEqual(changes, [true, false]);
+    assert.deepEqual(sides, ['left', 'right']);
+
+    view.setOutlinePosition('left');
+    assert.equal(button.dataset.tooltip, 'Outline: show on the left');
+    button.click();
+    assert.deepEqual(sides, ['left', 'right'], 'already on the left: no side change to report');
+    view.setOutlinePosition('right');
+    assert.equal(button.dataset.tooltip, 'Outline: hide', 'setOutlinePosition updates the tooltip');
+    button.click();
+    assert.deepEqual(changes, [true, false, true, false]);
+    assert.deepEqual(sides, ['left', 'right'], 'setOutlinePosition does not report');
 
     view.setOutlineVisible(true);
     assert.equal(pane.hidden, false);
-    assert.deepEqual(changes, [true, false], 'setOutlineVisible does not report');
-    const root = pane.closest('.mdzip-root');
+    assert.deepEqual(changes, [true, false, true, false], 'setOutlineVisible does not report');
     root.querySelector('[data-ref="source-btn"]').click();
     await waitFor(() => {
       assert.equal(pane.hidden, true);
@@ -302,6 +334,58 @@ test('the toolbar button toggles the panel and reports it; source layout hides b
     });
     root.querySelector('[data-ref="split-btn"]').click();
     await waitFor(() => assert.equal(pane.hidden, false));
+  } finally {
+    cleanup();
+  }
+});
+
+test('the outline button animates the panel out and in, and quick clicks each take their turn', async () => {
+  const proto = window.HTMLElement.prototype;
+  const had = Object.prototype.hasOwnProperty.call(proto, 'animate');
+  const original = proto.animate;
+  const calls = [];
+  proto.animate = function (keyframes) {
+    calls.push({ ref: this.dataset.ref, from: keyframes[0], to: keyframes[keyframes.length - 1] });
+    return { finished: new Promise((resolve) => setTimeout(resolve, 5)), cancel() {} };
+  };
+  const { view, pane, button, cleanup } = await mountView('## A\n\n## B\n');
+  try {
+    button.click();
+    assert.equal(pane.hidden, false, 'nothing to slide out first: shown at once');
+    assert.deepEqual(calls.map((c) => [c.ref, c.from.opacity, c.to.opacity]), [['outline-pane', 0, 1]]);
+    assert.match(calls[0].from.transform, /translateX\(-16px\)/, 'comes in from the left');
+    await waitFor(() => assert.equal(button.dataset.outlineState, 'left'));
+
+    calls.length = 0;
+    button.click(); // to the right
+    button.click(); // then hidden, after it
+    assert.equal(view.outlineSide, 'left', 'the panel slides out before it moves');
+    await waitFor(() => assert.equal(pane.hidden, true));
+    assert.equal(view.outlineSide, 'right');
+    assert.deepEqual(calls.map((c) => [c.ref, c.from.opacity, c.to.opacity]), [
+      ['outline-pane', 1, 0], // out on the left
+      ['outline-pane', 0, 1], // in on the right
+      ['outline-pane', 1, 0]  // out on the right, and hidden
+    ]);
+    assert.match(calls[1].from.transform, /translateX\(16px\)/, 'comes in from the right');
+  } finally {
+    if (had) proto.animate = original; else delete proto.animate;
+    cleanup();
+  }
+});
+
+test('setLayout() switches the layout as the toolbar does; layoutMode says which', async () => {
+  const { view, container, cleanup } = await mountView('## A\n', { initialLayout: 'split' });
+  const pressed = (ref) => container.querySelector(`[data-ref="${ref}"]`).getAttribute('aria-pressed');
+  try {
+    assert.equal(view.layoutMode, 'split');
+    await view.setLayout('preview');
+    assert.equal(view.layoutMode, 'preview');
+    assert.equal(pressed('preview-btn'), 'true');
+    assert.equal(pressed('split-btn'), 'false');
+    await view.setLayout('source');
+    assert.equal(view.layoutMode, 'source');
+    assert.equal(pressed('source-btn'), 'true');
   } finally {
     cleanup();
   }

@@ -220,6 +220,20 @@ const FIND_NEXT_ICON_HTML = lucideIcon(ChevronDown, FIND_ICON_CLASS);
 const FIND_CASE_ICON_HTML = lucideIcon(CaseSensitive, FIND_ICON_CLASS);
 const FIND_CLOSE_ICON_HTML = lucideIcon(X, FIND_ICON_CLASS);
 const OUTLINE_ICON_HTML = lucideIcon(TableOfContents, TOOLBAR_ICON_CLASS);
+// The outline button while the panel shows: a page with the outline's column,
+// and its lines, on the side the panel is on. (Not Lucide's panel-left: that's
+// the contents pane's button.)
+const OUTLINE_SIDE_ICON = (side: MdzipOutlinePosition): LucideIconNode => {
+  const divider = side === 'left' ? 11 : 13;
+  const [from, to] = side === 'left' ? [5.5, 8.5] : [15.5, 18.5];
+  return [
+    ['rect', { x: 3, y: 3, width: 18, height: 18, rx: 2 }],
+    ['path', { d: `M${divider} 3v18` }],
+    ...[8, 12, 16].map((y): [string, Record<string, number | string>] => ['path', { d: `M${from} ${y}h${to - from}` }])
+  ];
+};
+const OUTLINE_LEFT_ICON_HTML = lucideIcon(OUTLINE_SIDE_ICON('left'), `${TOOLBAR_ICON_CLASS} outline-side-icon`);
+const OUTLINE_RIGHT_ICON_HTML = lucideIcon(OUTLINE_SIDE_ICON('right'), `${TOOLBAR_ICON_CLASS} outline-side-icon`);
 const WHITESPACE_ICON_HTML = lucideIcon(Pilcrow, TOOLBAR_ICON_CLASS);
 const FORMAT_JSON_ICON_HTML = lucideIcon(Braces, TOOLBAR_ICON_CLASS);
 const ZOOM_ICON_HTML = lucideIcon(ZoomIn, TOOLBAR_ICON_CLASS);
@@ -902,6 +916,16 @@ function fileKindName(path: string): string {
   return FILE_KIND_NAMES[extension] ?? `${extension.toUpperCase()} file`;
 }
 
+// hydrateImages' onSettled for image batches that don't drive onAssetsHydrated
+// (later lazy chunks, Copy All's drain): no progress reported for them.
+const NO_SETTLE = (): void => {};
+
+/** How many of the preview's images have loaded; see {@link MdzipWorkspaceViewOptions.onAssetsProgress}. */
+export interface MdzipAssetsProgress {
+  loaded: number;
+  total: number;
+}
+
 /** A file taken out of the archive: its archive path and its bytes. */
 export interface MdzipExtractedFile {
   path: string;
@@ -1115,6 +1139,16 @@ export interface MdzipWorkspaceViewOptions {
    */
   inlineSvgLinks?: boolean;
   /**
+   * Loads every archive image in the preview as soon as it mounts, instead
+   * of only those near the visible part of the preview. For a preview
+   * nobody scrolls, such as an off-screen copy rendered for printing or a
+   * PDF: without it, images far down a long document never load, so
+   * {@link onAssetsHydrated} never fires. Use with
+   * `progressiveTextRendering: false` so all the text is mounted too.
+   * Defaults to `false`. Read when the view is created.
+   */
+  eagerImages?: boolean;
+  /**
    * Extra items for the file tree's right-click menu on files, run by the
    * host (for example "Open in VS Code Editor"). See {@link MdzipFileAction}.
    */
@@ -1168,6 +1202,13 @@ export interface MdzipWorkspaceViewOptions {
    * preview contains no images. See also {@link MdzipWorkspaceView.whenRendered}.
    */
   onAssetsHydrated?: (snapshot: MdzipWorkspaceSnapshot) => void;
+  /**
+   * Reports the images {@link onAssetsHydrated} waits for as they load:
+   * `{ loaded: 0, total }` when loading starts, then after each image, ending
+   * with `loaded === total` just before `onAssetsHydrated`. Not called when
+   * there are none. For a host's progress bar, as when printing.
+   */
+  onAssetsProgress?: (progress: MdzipAssetsProgress) => void;
   onFailed?: (error: unknown) => void;
   /**
    * Lets the host take over the markdown→MDZ conversion flow (triggered by the
@@ -1231,6 +1272,8 @@ export interface MdzipWorkspaceViewOptions {
   outline?: boolean | MdzipOutlineViewOptions;
   /** Called when the outline panel is shown or hidden from the toolbar, so a host can remember the choice. */
   onOutlineVisibilityChanged?: (visible: boolean) => void;
+  /** Called when the toolbar button moves the outline panel to the other side, so a host can remember the choice. */
+  onOutlinePositionChanged?: (position: MdzipOutlinePosition) => void;
   /** Called when the reader finishes dragging the outline panel to a new width (pixels), so a host can remember it. */
   onOutlineWidthChanged?: (width: number) => void;
   /**
@@ -2573,6 +2616,9 @@ export class MdzipWorkspaceView {
   // Null until set by the option or a drag: the style sheet's width applies.
   private outlineWidth: number | null = null;
   private outlineVisible = false;
+  // The outline button's clicks, one after another (see animateOutlineChange).
+  private outlineButtonTurn: Promise<void> = Promise.resolve();
+  private outlineButtonPending = 0;
   private whitespaceVisible = false;
   // Which parts of the edit toolbar the last render showed (renderFormattingControls).
   private formattingShown = false;
@@ -4506,12 +4552,25 @@ export class MdzipWorkspaceView {
 
     const document = this.elPreviewContent.ownerDocument;
     let remaining = pending.length;
+    // Progress only for the batch that drives onAssetsHydrated (a later lazy
+    // chunk's images pass a no-op onSettled; see the doc comment above).
+    const reportsProgress = onSettled !== NO_SETTLE;
+    const progress = (): void => {
+      if (!reportsProgress || generation !== this.previewGeneration) return;
+      try {
+        this.options.onAssetsProgress?.({ loaded: pending.length - remaining, total: pending.length });
+      } catch (error) {
+        this.options.onFailed?.(error);
+      }
+    };
     const settle = (): void => {
       remaining -= 1;
+      progress();
       if (remaining === 0) {
         onSettled();
       }
     };
+    progress();
     const createImageSlot = (image: HTMLImageElement): HTMLElement => {
       const slot = document.createElement('span');
       slot.className = animateImageHydration
@@ -4588,6 +4647,26 @@ export class MdzipWorkspaceView {
       for (const { image, source } of pending) {
         hydrate(image, createImageSlot(image), source);
       }
+      return;
+    }
+
+    // eagerImages: every image now, not as it nears the visible area; still
+    // a few at a time per frame, as below, so a long document stays responsive.
+    if (this.options.eagerImages === true) {
+      let next = 0;
+      const hydrateChunk = (): void => {
+        if (generation !== this.previewGeneration || context.signal.aborted) return;
+        const chunkStart = observerWindow.performance.now();
+        while (next < pending.length && observerWindow.performance.now() - chunkStart < 8) {
+          const item = pending[next];
+          next += 1;
+          hydrate(item.image, createImageSlot(item.image), item.source);
+        }
+        if (next < pending.length) {
+          observerWindow.requestAnimationFrame(hydrateChunk);
+        }
+      };
+      hydrateChunk();
       return;
     }
 
@@ -5218,7 +5297,7 @@ export class MdzipWorkspaceView {
         this.chunkedRenderState.mounting = true;
         liveContext = this.chunkedRenderState.context;
       }
-      void this.mountChunkBatch(records, nextCursor, liveContext, generation, animateImageHydration, () => {})
+      void this.mountChunkBatch(records, nextCursor, liveContext, generation, animateImageHydration, NO_SETTLE)
         .then((newCursor) => {
           // Record whatever this batch actually mounted regardless of
           // whether a newer edit has since landed — recordChunkProgress's
@@ -6037,8 +6116,7 @@ export class MdzipWorkspaceView {
     this.elSearchBtn.setAttribute('aria-label', findLabel);
     this.elWhitespaceBtn.setAttribute('aria-pressed', String(this.whitespaceVisible));
     this.elOutlineBtn.hidden = !showOutlineControl;
-    this.elOutlineBtn.classList.toggle('active', this.outlineVisible);
-    this.elOutlineBtn.setAttribute('aria-pressed', String(this.outlineVisible));
+    this.syncOutlineButton();
     this.elZoomBtn.hidden = !showZoomControl;
     this.elWidthControls.hidden = !showWidthControl;
     this.elThemeControls.hidden = !showColorSchemeControl;
@@ -6513,9 +6591,30 @@ export class MdzipWorkspaceView {
       }
     });
 
+    // Off, then on the left, then on the right, then off again. Clicks in
+    // quick succession each take their turn, so none is lost mid-animation.
+    // (Without animation the change is done when the click returns.)
     this.elOutlineBtn.addEventListener('click', () => {
-      this.setOutlineVisible(!this.outlineVisible);
-      this.options.onOutlineVisibilityChanged?.(this.outlineVisible);
+      const change = (): void => {
+        if (!this.outlineVisible) {
+          this.setOutlineSideFromButton('left');
+          this.setOutlineVisible(true);
+          this.options.onOutlineVisibilityChanged?.(true);
+        } else if (this.outlinePosition === 'left') {
+          this.setOutlineSideFromButton('right');
+        } else {
+          this.setOutlineVisible(false);
+          this.options.onOutlineVisibilityChanged?.(false);
+        }
+      };
+      if (this.outlineButtonPending === 0 && !this.canAnimateOutline()) {
+        change();
+        return;
+      }
+      const turn = (): Promise<void> => this.animateOutlineChange(change).catch(() => {});
+      this.outlineButtonPending += 1;
+      const started = this.outlineButtonPending > 1 ? this.outlineButtonTurn.then(turn) : turn();
+      this.outlineButtonTurn = started.finally(() => { this.outlineButtonPending -= 1; });
     });
 
     this.elFormatJsonBtn.addEventListener('click', () => {
@@ -7348,10 +7447,83 @@ export class MdzipWorkspaceView {
     return this.outlinePosition;
   }
 
-  /** Puts the outline panel on the left or the right of the document. */
+  /** Puts the outline panel on the left or the right of the document (without calling `onOutlinePositionChanged`). */
   public setOutlinePosition(position: MdzipOutlinePosition): void {
     this.outlinePosition = position === 'left' ? 'left' : 'right';
     this.syncOutlineGeometry();
+    this.syncOutlineButton();
+  }
+
+  private setOutlineSideFromButton(position: MdzipOutlinePosition): void {
+    if (this.outlinePosition === position) {
+      return;
+    }
+    this.setOutlinePosition(position);
+    this.options.onOutlinePositionChanged?.(position);
+  }
+
+  /**
+   * Runs `change` (which shows, hides or moves the outline panel) with
+   * movement instead of a jump: the panel slides out toward its side and
+   * fades, the document glides to where it now sits, and the panel slides in
+   * on its new side. The layout changes once, in the middle, so a long
+   * document isn't laid out again on every frame. Instant when the system
+   * asks for reduced motion, or where elements can't animate.
+   */
+  private canAnimateOutline(): boolean {
+    return typeof this.elOutlinePane.animate === 'function' && !this.prefersReducedMotion();
+  }
+
+  private async animateOutlineChange(change: () => void): Promise<void> {
+    const pane = this.elOutlinePane;
+    const stack = this.elPaneStack;
+    if (!this.canAnimateOutline()) {
+      change();
+      return;
+    }
+    const away = (): number => (this.outlinePosition === 'left' ? -16 : 16);
+    // The slide-out holds its last frame until the change is made, so the
+    // panel can't flash back in between.
+    let out: Animation | null = null;
+    if (!pane.hidden) {
+      out = pane.animate(
+        [{ opacity: 1, transform: 'translateX(0)' }, { opacity: 0, transform: `translateX(${away()}px)` }],
+        { duration: 120, easing: 'ease-in', fill: 'forwards' }
+      );
+      await out.finished;
+    }
+    const before = stack.getBoundingClientRect().left;
+    change();
+    const dx = before - stack.getBoundingClientRect().left;
+    const moves: Promise<unknown>[] = [];
+    if (Math.abs(dx) >= 1) {
+      moves.push(stack.animate(
+        [{ transform: `translateX(${dx}px)` }, { transform: 'translateX(0)' }],
+        { duration: 220, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' }
+      ).finished);
+    }
+    if (!pane.hidden) {
+      moves.push(pane.animate(
+        [{ opacity: 0, transform: `translateX(${away()}px)` }, { opacity: 1, transform: 'translateX(0)' }],
+        { duration: 200, delay: 40, easing: 'ease-out', fill: 'backwards' }
+      ).finished);
+    }
+    out?.cancel();
+    await Promise.all(moves);
+  }
+
+  // The button cycles off, left, right; its icon shows where the panel is, and
+  // its tooltip says what a click does next.
+  private syncOutlineButton(): void {
+    const state = !this.outlineVisible ? 'off' : this.outlinePosition;
+    if (this.elOutlineBtn.dataset['outlineState'] !== state) {
+      this.elOutlineBtn.dataset['outlineState'] = state;
+      this.elOutlineBtn.innerHTML = state === 'off' ? OUTLINE_ICON_HTML : state === 'left' ? OUTLINE_LEFT_ICON_HTML : OUTLINE_RIGHT_ICON_HTML;
+    }
+    const next = !this.outlineVisible ? 'show on the left' : this.outlinePosition === 'left' ? 'move to the right' : 'hide';
+    this.elOutlineBtn.classList.toggle('active', this.outlineVisible);
+    this.elOutlineBtn.setAttribute('aria-pressed', String(this.outlineVisible));
+    setTooltip(this.elOutlineBtn, `Outline: ${next}`);
   }
 
   /** The outline panel's width in pixels, as last set or dragged; null while the style sheet's width applies. */
@@ -9658,7 +9830,7 @@ export class MdzipWorkspaceView {
         this.chunkedRenderState.mounting = false;
       }
       if (generation === this.previewGeneration && !context.signal.aborted) {
-        this.hydrateImages(allPending, context, generation, animateImageHydration, () => {});
+        this.hydrateImages(allPending, context, generation, animateImageHydration, NO_SETTLE);
       }
     }
   }
@@ -10265,7 +10437,17 @@ export class MdzipWorkspaceView {
     }
   }
 
-  private async setLayout(requested: MdzipWorkspaceLayout): Promise<void> {
+  /** The layout showing: `'source'` (Edit), `'split'` or `'preview'` (View). */
+  public get layoutMode(): MdzipWorkspaceLayout {
+    return this.layout;
+  }
+
+  /**
+   * Switches to Edit (`'source'`), Split or View (`'preview'`), as the
+   * toolbar's buttons do, for example to show an imported document in View.
+   * A file that can't be shown that way gets the nearest layout it can.
+   */
+  public async setLayout(requested: MdzipWorkspaceLayout): Promise<void> {
     const snapshot = this.workspace?.snapshot();
     this.layout = snapshot ? this.validLayoutForSnapshot(requested, snapshot) : requested;
     await this.ensureCmEditor();

@@ -1771,6 +1771,15 @@ export const WORKSPACE_CSS = `
   vertical-align: top;
 }
 
+/* An empty cell holds a line, as in Word and LibreOffice: with no text it
+   has no line box, so a row of empty cells (blank rows in a log or a form)
+   was only as tall as its padding. A no-break space as generated content
+   gives it the height without changing the cell; it isn't copied. */
+.mdzip-root .preview-content th:empty::after,
+.mdzip-root .preview-content td:empty::after {
+  content: '\\00a0';
+}
+
 .mdzip-root .preview-content th {
   background: var(--mdzip-widget-background-color);
   font-weight: 600;

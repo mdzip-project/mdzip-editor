@@ -14,6 +14,13 @@ The bench page has buttons for the ones only reachable through the API.
 - **Page width** (page icon, between zoom and color scheme): Narrow, Default,
   Wide or Full Width, labeled with the pixel width each gives at the current
   zoom. Hidden in edit layout.
+- **Outline** (table-of-contents icon): each click goes to the next of outline
+  on the left, on the right, hidden. The icon shows the side the outline is on
+  (a page with a column on that side); the tooltip says what the next click
+  does. The panel slides out, the document glides over, and the panel slides
+  in on its new side; with the system's reduced motion on, it's instant.
+  Clicking quickly several times ends on the right state. The log shows
+  `onOutlinePositionChanged` and `onOutlineVisibilityChanged`.
 
 ## Task lists
 
@@ -123,8 +130,26 @@ action is on the file's right-click menu in the contents pane. Copying this sect
 
 ![How an agent and the editor share an archive](diagrams/flow.drawio)
 
+## Empty table rows
+
+The blank rows of a form or revision log are a full line tall, as in Word,
+not thin strips. Copying the table doesn't copy anything into the empty cells.
+
+| Version | Date | Change |
+|---|---|---|
+| 1.0 | 2026-11-01 | First issue |
+| | | |
+| | | |
+
+## Files the preview can't show
+
+Open `files/sample.zip` in the contents pane. Instead of "Binary file preview
+unavailable" it shows a card: the file's name, "ZIP archive" and its path, then
+the bench's **Log This File (bench)** button, **Extract…** (or **Download**)
+and **Replace…**, each with a line saying what it does.
+
 ## Deep link into another file
 
 [Chapter, deep section](docs/chapter.md#deep-section) opens the chapter and
-lands on its "Deep section" heading. The bench's **openPath** button does the
-same through the API.
+lands on its "Deep section" heading, with a little space above it. The bench's
+**openPath** button does the same through the API.
