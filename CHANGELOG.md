@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.6.0] - 2026-11-23
 
 ### Added
 - **A card for files the preview can't show.** A Word document, a ZIP or any other file that isn't Markdown, text or a picture used to show only "Binary file preview unavailable". It now shows a card with the file's name, what kind of file it is and its path, and buttons: the host's file actions that apply to it, then **Extract…** (or **Download**) and, in an editable document, **Replace…**. Under the buttons, a line for each says what it does (a host action's new `description`), and the new option `fileCardHelp` (`{ label, run }`) adds a link to the host's help. Desktop hosts use the card to open the file in the app the system opens it with.
